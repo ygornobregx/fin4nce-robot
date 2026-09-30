@@ -236,22 +236,6 @@ def calcular_status_categoria(conn, user_id, nome, inicio_ciclo):
     orcamento = (limite_fixo or 0.0) + recebido - enviado
     return orcamento, gasto, orcamento - gasto + receitas
 
-def obter_metodo_mais_usado(conn, user_id, clausula_periodo, *params_periodo):
-    """Método de pagamento mais frequente (maior contagem de transações, não
-    maior soma) entre as despesas do período informado. 'clausula_periodo' é
-    um trecho SQL de filtro de data/fatura, com seus parâmetros em
-    'params_periodo'. Retorna None se nenhuma despesa do período tiver
-    método registrado (ex: só receitas, recorrentes automáticos ou parcelas
-    2+, que não carregam método próprio)."""
-    linha = conn.execute(
-        f'''SELECT metodo_pagamento, COUNT(*) c FROM transacoes
-            WHERE user_id = ? AND valor > 0 AND metodo_pagamento IS NOT NULL
-              AND {clausula_periodo}
-            GROUP BY metodo_pagamento ORDER BY c DESC LIMIT 1''',
-        (user_id, *params_periodo)
-    ).fetchone()
-    return linha[0] if linha else None
-
 def debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento, metodo_pagamento=None):
     """Lançamento único usado por todo gasto que impacta uma categoria (comum,
     parcelado ou recorrente): grava a transação e mantém 'saldo_atual' em dia
@@ -360,16 +344,11 @@ def categoria_existia_no_mes(data_criacao, ano_mes, dia_fechamento):
         return True
     return calcular_ciclo_fatura(criada, dia_fechamento) <= ano_mes
 
-def montar_texto_painel(titulo, renda, dia_fechamento, categorias, rotulo_gastos="Gastos Atuais", metodo_mais_usado=None, mostrar_aviso_excedido=True):
+def montar_texto_painel(titulo, renda, dia_fechamento, categorias, rotulo_gastos="Gastos Atuais"):
     """Painel compartilhado pelo 'Ver Resumo' e pelo detalhe de cada mês do
     histórico (mesmo layout). 'categorias' é uma lista de (nome, limite, sobra,
     gasto): 'limite' e 'sobra' são None para categorias já excluídas (só
-    mostram o gasto). O gasto é sempre o total consolidado da categoria.
-    'metodo_mais_usado' é opcional: quando None, a linha correspondente é
-    omitida (nenhuma despesa do período tinha método registrado).
-    'mostrar_aviso_excedido=False' tira só os avisos visuais de "excedido"
-    (tag por categoria e agregado do cabeçalho) — o abate automático na
-    sobra do mês continua calculado normalmente, só o texto some."""
+    mostram o gasto). O gasto é sempre o total consolidado da categoria."""
     comprometido = sum(limite for _, limite, _, _ in categorias if limite is not None)
     total_gastos = sum(gasto for _, _, _, gasto in categorias)
     total_excedido = sum(
@@ -379,18 +358,15 @@ def montar_texto_painel(titulo, renda, dia_fechamento, categorias, rotulo_gastos
 
     # O abate automático na sobra do mês só ocorre se houver estouro
     sobra_mes = (renda - comprometido) - total_excedido
-    alerta_gastos = f" (Excedido: {formatar_real(total_excedido)})" if mostrar_aviso_excedido and total_excedido > 0 else ""
-    linha_metodo = f"└ Método de Pagamento Mais Usado: {metodo_mais_usado}\n" if metodo_mais_usado else ""
 
     texto = (
         f"{titulo}\n\n"
         f"{DIVISOR}\n\n"
         f"Receita: {formatar_real(renda)}\n"
         f"Comprometido: {formatar_real(comprometido)}\n"
-        f"{rotulo_gastos}: {formatar_real(total_gastos)}{alerta_gastos}\n"
+        f"{rotulo_gastos}: {formatar_real(total_gastos)}\n"
         f"Sobra do Mês: {formatar_real(sobra_mes)}\n"
-        f"Fechamento Fatura: Dia {dia_fechamento}\n"
-        f"{linha_metodo}\n"
+        f"Fechamento Fatura: Dia {dia_fechamento}\n\n"
         f"{DIVISOR}\n\n"
         "Categorias ↓\n\n"
         f"{DIVISOR}\n"
@@ -403,8 +379,7 @@ def montar_texto_painel(titulo, renda, dia_fechamento, categorias, rotulo_gastos
             linhas.append(f"Orçamento: {formatar_real(limite)}")
         linhas.append(f"Gastos: {formatar_real(gasto)}")
         if limite is not None:
-            tag_excedido = " [Excedido]" if mostrar_aviso_excedido and gasto > limite else ""
-            linhas.append(f"Sobra: {formatar_real(sobra)}{tag_excedido}")
+            linhas.append(f"Sobra: {formatar_real(sobra)}")
         blocos.append("\n".join(linhas))
     if not blocos:
         blocos.append("Nenhuma categoria neste mês.")
@@ -3040,8 +3015,7 @@ async def botao_clicado(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
 
         texto = montar_texto_painel(
-            f"Painel Financeiro de {nome}", renda, dia_fechamento, gastos_por_categoria,
-            mostrar_aviso_excedido=False
+            f"Painel Financeiro de {nome}", renda, dia_fechamento, gastos_por_categoria
         )
 
         teclado = InlineKeyboardMarkup([
@@ -3090,9 +3064,14 @@ async def ver_meses_do_ano(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await atualizar_callback(query, context, "Conta não configurada. Use /start", reply_markup=obter_teclado_menu())
         return
 
+    _, dia_fechamento, meses = dados
+    ciclo_atual = obter_ciclo_atual(dia_fechamento)
+
     botoes = [
+        InlineKeyboardButton("Mês Atual", callback_data=f"select_month_history_{m}", style="success")
+        if m == ciclo_atual else
         InlineKeyboardButton(rotulo_mes(m), callback_data=f"select_month_history_{m}")
-        for m in dados[2] if m.startswith(ano)
+        for m in meses if m.startswith(ano)
     ]
     # Retorna para a escolha do ano (etapa imediatamente anterior).
     teclado = montar_grade(botoes) + [linha_voltar_com_menu('history_years')]
@@ -3138,7 +3117,6 @@ async def ver_mes_historico(update: Update, context: ContextTypes.DEFAULT_TYPE):
            WHERE e.ano_mes = ? GROUP BY p.categoria_nome''',
         (user_id, None, None, ano_mes)
     ).fetchall()
-    metodo_mais_usado = obter_metodo_mais_usado(conn, user_id, f'{_SQL_FATURA_TRANSACAO} = ?', dia_fechamento, ano_mes)
     conn.close()
 
     gasto_avulso = dict(avulsos)
@@ -3175,8 +3153,7 @@ async def ver_mes_historico(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     texto = montar_texto_painel(
         titulo, renda, dia_fechamento, categorias,
-        rotulo_gastos="Gastos Atuais" if mes_atual else "Gastos do Mês",
-        metodo_mais_usado=metodo_mais_usado
+        rotulo_gastos="Gastos Atuais" if mes_atual else "Gastos do Mês"
     )
 
     # Limite de 4096 caracteres por mensagem do Telegram.
