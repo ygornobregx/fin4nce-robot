@@ -1,31 +1,28 @@
-# TASK: Menus e Botões Mais Largos
+# TASK: Bug — Menu Principal Não Aparece na Notificação de Resumo Diário
 
-## 🎯 Visão Geral da Feature
-O menu principal e outras telas do bot estão com aparência "fina" — os botões não preenchem bem a largura do chat. O objetivo é deixar os botões mais largos, preenchendo melhor o espaço horizontal, sem quebra de linha em nenhum texto.
+## 🐞 Descrição do Bug
+Na notificação de **Resumo Financeiro de Hoje** (o resumo automático enviado diariamente — diferente do Alerta Diário/Financeiro, que já tem outra correção em andamento), ao clicar em "Menu Principal", o bot apaga a mensagem da notificação, mas não mostra nada depois. O chat fica vazio, sem o Menu Principal aparecer.
 
-## ⚠️ Restrição Técnica a Considerar
-A largura da "bolha" de mensagem de texto no Telegram é controlada automaticamente pelo cliente, com base no conteúdo (a linha mais longa do texto) — o bot não consegue forçar isso além de ajustar o próprio texto. Já a largura dos **botões do teclado inline** é controlável de verdade: quanto menos botões numa mesma linha, mais largo cada um fica (o Telegram estica os botões pra preencher a linha inteira). O foco prático e eficaz dessa tarefa deve ser o **layout de linhas/colunas dos botões**, não tentar forçar largura artificial no texto das mensagens.
+## 🔍 Comportamento Esperado vs Atual
 
-## 🛠️ Objetivos e Regras de Negócio (UI/UX)
+**Atual (errado):** Clicar em "Menu Principal" → a notificação some → nada aparece depois, chat vazio.
 
-**1. Menu Principal:**
-*   Reduzir a quantidade de botões por linha (ex: se hoje tem 2 por linha, deixar 1 por linha), fazendo cada botão ocupar mais a largura da tela.
+**Esperado (correto):** Clicar em "Menu Principal" → a notificação some → o Menu Principal aparece logo em seguida.
 
-**2. Outras Telas:**
-*   Aplicar o mesmo princípio nas demais telas do bot que tenham múltiplos botões numa linha e pareçam "finas" (ex: Ver Resumo, Categorias, Gastos Recorrentes) — usando bom senso: nem toda tela precisa virar 1 botão por linha, algumas fazem mais sentido com 2 (ex: pares de ação como "Categorias | Transferir").
+## ⚠️ Cuidado para Não Repetir o Bug de Duplicação
+Já corrigimos um bug parecido no Alerta Diário, onde a solução foi só apagar a notificação (porque já existia um Menu Principal fixo em outro lugar do chat). Aqui parece ser diferente: como o resultado atual é "nada aparece", é provável que **não exista** um Menu Principal já visível nesse momento — então a correção certa aqui é apagar a notificação **e também mostrar/enviar o Menu Principal em seguida**, não só apagar.
 
-**3. Sem Quebra de Linha:**
-*   Confirmar que nenhum texto de botão quebra linha ao ficar mais largo.
+Antes de implementar, confirme: nesse ponto específico (logo após a notificação de Resumo Diário), já existe algum Menu Principal fixo em algum lugar do chat, ou realmente não tem nenhum? Isso decide se a correção é "só mostrar" ou "mostrar, cuidando pra não duplicar".
 
 ## 💻 Instruções de Implementação para o `bot.py`
-1. Localize o `InlineKeyboardMarkup` do menu principal e ajuste a quantidade de botões por linha.
-2. Faça um levantamento das demais telas com múltiplos botões numa linha e proponha, para cada uma, se deve virar 1 por linha ou manter agrupado — sem aplicar ainda.
-3. Depois da minha aprovação, aplique as mudanças e teste visualmente no bot de teste (Telegram) para confirmar que ficou mais largo e sem quebra de linha.
+1. Localize o handler do botão "Menu Principal" especificamente na notificação de **Resumo Financeiro Diário** (não confundir com o do Alerta Diário/Financeiro, que é uma função separada).
+2. Confirme o ponto ⚠️ acima antes de aplicar a correção.
+3. Ajuste para que, após apagar a mensagem da notificação, o bot **exiba o Menu Principal** (reaproveitando a função central já usada em outros lugares do bot para mostrar o menu).
+4. Teste o fluxo completo: recebe o Resumo Diário → clica em Menu Principal → notificação some → Menu Principal aparece, sem duplicar nada.
 
 ## 📋 Regra de Resposta (Economia de Tokens)
-Antes de aplicar qualquer código:
-1. Liste todas as telas/menus que serão alteradas e a proposta de novo layout (quantos botões por linha em cada uma).
-2. Aguarde minha aprovação — é uma mudança visual, quero decidir o layout antes de você aplicar em massa.
+1. Confirme em 2 linhas o que encontrou sobre o ponto ⚠️ (existe ou não um Menu Principal já visível nesse momento).
+2. Aguarde minha aprovação antes de aplicar a correção.
 
 ## Entregável
-Retorne a lista de telas com a proposta de layout e, após aprovação, o código atualizado de cada uma.
+Retorne apenas o código atualizado do handler do botão "Menu Principal" da notificação de Resumo Financeiro Diário.

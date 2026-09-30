@@ -37,9 +37,6 @@ def obter_conexao_db():
 
 # Fuso horário usado para agendar o resumo diário (independente do fuso do servidor)
 FUSO_BRASILIA = ZoneInfo("America/Sao_Paulo")
-# Configuração do cronômetro de autodestruição do resumo diário
-SEGUNDOS_AUTODESTRUICAO_RESUMO = 45
-INTERVALO_CRONOMETRO = 5
 
 # Automação de gastos recorrentes: horário padrão de disparo e espaçamento
 # entre lançamentos que caem no mesmo dia (evita rajada de mensagens). 09:00
@@ -669,6 +666,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.delete()
     except Exception:
         pass
+
+    user_id = update.effective_user.id
+    conn = obter_conexao_db()
+    ja_cadastrado = conn.execute('SELECT 1 FROM usuarios WHERE user_id = ?', (user_id,)).fetchone()
+    conn.close()
+
+    if ja_cadastrado:
+        # Conta já existe: nunca refaz o cadastro (a etapa final apaga e
+        # recria as categorias do zero) — um '/start' acidental só reabre o
+        # Menu Principal, sem tocar nos dados já configurados.
+        texto_menu = await montar_texto_menu_principal(user_id)
+        await enviar_fluxo(context, update.effective_chat.id, texto_menu, reply_markup=obter_teclado_menu())
+        return ConversationHandler.END
+
     await enviar_fluxo(
         context, update.effective_chat.id,
         "Boas-vindas ao seu Gestor Financeiro!\n\nPara começarmos, como você gostaria de ser chamado?"
@@ -2474,15 +2485,15 @@ def agendar_tarefa_alerta(job_queue, user_id, horario_str):
     except Exception as e:
         print(f"Erro ao agendar alerta para o usuário {user_id}: {e}")
 
-def _montar_mensagem_resumo_diario(nome, gastos_hoje, metodo_mais_usado=None):
+def _montar_mensagem_resumo_diario(nome, gastos_hoje, sobras_categoria):
     """
-    Monta a mensagem do resumo diário de forma direta, sem IA: apenas o
-    total gasto, a lista de categorias com movimentação e a de maior gasto
-    em destaque. Sem depender do Gemini, a formatação é sempre limpa e
+    Monta a mensagem do resumo diário de forma direta, sem IA: o total
+    gasto, a categoria de maior gasto em destaque (só o nome, o valor já
+    aparece na lista abaixo) e a lista de categorias com gasto e sobra do
+    ciclo. Sem depender do Gemini, a formatação é sempre limpa e
     consistente, e a mensagem nunca atrasa por causa de instabilidade ou
-    alta demanda do Google. 'metodo_mais_usado' é opcional: quando None, a
-    linha correspondente é omitida (nenhuma despesa de hoje tinha método
-    registrado).
+    alta demanda do Google. 'sobras_categoria' é um dict {categoria: sobra}
+    com a sobra do ciclo vigente de cada categoria que teve gasto hoje.
     """
     if not gastos_hoje:
         return (
@@ -2492,26 +2503,28 @@ def _montar_mensagem_resumo_diario(nome, gastos_hoje, metodo_mais_usado=None):
 
     total_gasto = sum(valor for _, valor in gastos_hoje)
     categorias_ordenadas = sorted(gastos_hoje, key=lambda item: item[1], reverse=True)
-    categoria_maior, valor_maior = categorias_ordenadas[0]
+    categoria_maior, _ = categorias_ordenadas[0]
 
-    linhas_categorias = "\n".join(
-        f"• {cat} — <b>{formatar_real(valor)}</b>" for cat, valor in categorias_ordenadas
+    linhas_categorias = "\n\n".join(
+        f"{cat}:\n"
+        f"└ Gasto: <b>{formatar_real(valor)}</b>\n"
+        f"└ Sobra: <b>{formatar_real(sobras_categoria.get(cat, 0.0))}</b>"
+        for cat, valor in categorias_ordenadas
     )
-    linha_metodo = f"\n\nMétodo de Pagamento Mais Usado: {metodo_mais_usado}" if metodo_mais_usado else ""
 
     return (
         "<b>Resumo Financeiro de Hoje</b>\n\n"
         f"Total Gasto: <b>{formatar_real(total_gasto)}</b>\n\n"
-        f"📂 <b>Categorias:</b>\n\n{linhas_categorias}\n\n"
-        f"🔺 Maior Gasto: <b>{categoria_maior}</b>: ({formatar_real(valor_maior)}){linha_metodo}"
+        f"Maior Gasto: <b>{categoria_maior}</b>\n\n"
+        f"Categorias:\n\n{linhas_categorias}"
     )
 
 async def enviar_resumo_diario(context: ContextTypes.DEFAULT_TYPE):
     """
     Notificação diária agendada, independente do fluxo de conversa em
-    andamento. Fica visível por 1 minuto e depois se apaga sozinha, virando
-    a mensagem de menu - assim funciona como uma notificação avulsa e não
-    acumula no chat.
+    andamento. Fica fixa na tela até o usuário clicar em '← Menu Principal'
+    - assim ela continua acessível mesmo se o usuário não puder checar o
+    celular no momento em que o alerta chega.
     """
     user_id = context.job.chat_id
     agora_brasilia = datetime.now(FUSO_BRASILIA)
@@ -2534,99 +2547,39 @@ async def enviar_resumo_diario(context: ContextTypes.DEFAULT_TYPE):
            GROUP BY categoria_nome''',
         (user_id, data_brasilia_str)
     ).fetchall()
-    metodo_mais_usado = obter_metodo_mais_usado(conn, user_id, 'DATE(data_transacao) = ?', data_brasilia_str)
+    sobras_categoria = {
+        cat: calcular_sobra_categoria(conn, user_id, cat) for cat, _ in gastos_hoje
+    }
 
     conn.close()
 
-    mensagem = _montar_mensagem_resumo_diario(nome, gastos_hoje, metodo_mais_usado)
+    mensagem = _montar_mensagem_resumo_diario(nome, gastos_hoje, sobras_categoria)
 
     # Limpa qualquer mensagem antiga de fluxo (igual mostrar_resumo_temporario
     # fazia), pra o resumo aparecer como a única mensagem do chat.
     await limpar_historico_mensagens(context, user_id)
 
-    teclado = InlineKeyboardMarkup([[InlineKeyboardButton("Pular", callback_data='pular_resumo')]])
-    texto_inicial = f"{mensagem}\n\n⏳ <i>Apagando em {SEGUNDOS_AUTODESTRUICAO_RESUMO}s...</i>"
+    teclado = InlineKeyboardMarkup([[
+        InlineKeyboardButton("← Menu Principal", callback_data='resumo_diario_menu', style="danger")
+    ]])
 
     resumo_msg = await context.bot.send_message(
-        chat_id=user_id, text=texto_inicial, reply_markup=teclado, parse_mode='HTML'
+        chat_id=user_id, text=mensagem, reply_markup=teclado, parse_mode='HTML'
     )
     context.user_data['ultima_msg_bot'] = resumo_msg.message_id
     context.user_data['msgs_fluxo'] = [resumo_msg.message_id]
 
-    nome_job = f"cronometro_resumo_{user_id}"
-    for job in context.job_queue.get_jobs_by_name(nome_job):
-        job.schedule_removal()
-
-    context.job_queue.run_repeating(
-        _tick_cronometro_resumo,
-        interval=INTERVALO_CRONOMETRO,
-        first=INTERVALO_CRONOMETRO,
-        chat_id=user_id,
-        user_id=user_id,
-        data={
-            'msg_id': resumo_msg.message_id,
-            'texto_base': mensagem,
-            'restante': SEGUNDOS_AUTODESTRUICAO_RESUMO,
-        },
-        name=nome_job
-    )
-
-async def _tick_cronometro_resumo(context: ContextTypes.DEFAULT_TYPE):
+async def resumo_diario_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Job repetido a cada INTERVALO_CRONOMETRO segundos enquanto o resumo
-    diário estiver na tela. A cada execução decrementa o tempo restante,
-    reescreve a mensagem com a contagem atualizada e, ao chegar a zero,
-    apaga a mensagem e cancela a si mesmo (schedule_removal), substituindo
-    o resumo pelo menu principal.
-    """
-    job = context.job
-    chat_id = job.chat_id
-    dados = job.data
-    dados['restante'] -= INTERVALO_CRONOMETRO
-
-    if dados['restante'] <= 0:
-        job.schedule_removal()
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=dados['msg_id'])
-        except Exception:
-            pass
-        nova_msg = await context.bot.send_message(
-            chat_id=chat_id,
-            text=await montar_texto_menu_principal(chat_id),
-            reply_markup=obter_teclado_menu(),
-            parse_mode='HTML'
-        )
-        context.user_data['ultima_msg_bot'] = nova_msg.message_id
-        context.user_data['msgs_fluxo'] = [nova_msg.message_id]
-        return
-
-    teclado = InlineKeyboardMarkup([[InlineKeyboardButton("Pular", callback_data='pular_resumo')]])
-    try:
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=dados['msg_id'],
-            text=f"{dados['texto_base']}\n\n⏳ <i>Apagando em {dados['restante']}s...</i>",
-            reply_markup=teclado,
-            parse_mode='HTML'
-        )
-    except Exception:
-        # Mensagem já apagada pelo usuário ou editada em cima da hora — a
-        # próxima execução (ou o clique em "Pular") resolve o estado.
-        pass
-
-async def pular_resumo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Callback do botão 'Pular ⏭️': cancela o job do cronômetro (pra ele não
-    tentar editar/apagar uma mensagem que já não existe mais) e apaga o
-    resumo na hora, trocando-o pelo menu principal.
+    Callback do botão '← Menu Principal' (vermelho) do resumo diário: apaga
+    a notificação e mostra o Menu Principal em seguida. Não há garantia de
+    que exista um Menu Principal fixo por trás dessa notificação (ela não
+    sabe o que estava no chat antes de ser enviada), então precisa exibi-lo
+    explicitamente para não deixar o chat vazio.
     """
     query = update.callback_query
     await responder_callback(query)
     chat_id = query.message.chat_id
-
-    nome_job = f"cronometro_resumo_{chat_id}"
-    for job in context.job_queue.get_jobs_by_name(nome_job):
-        job.schedule_removal()
 
     try:
         await query.message.delete()
@@ -2914,9 +2867,11 @@ async def recorrente_diario_menu(update: Update, context: ContextTypes.DEFAULT_T
 
 async def _fechar_recorrente_diario(context, chat_id, message_id):
     """Apaga a mensagem diária de cobranças recorrentes e mostra o Menu
-    Principal numa mensagem nova. Mantém o histórico ('itens') de cobranças
-    já lançadas hoje — só limpa o 'message_id': se uma nova cobrança disparar
-    depois no mesmo dia, ela reabre com uma mensagem nova."""
+    Principal em seguida — ela não sabe o que estava no chat antes de ser
+    enviada, então não há garantia de um Menu Principal fixo por trás.
+    Mantém o histórico ('itens') de cobranças já lançadas hoje — só limpa o
+    'message_id': se uma nova cobrança disparar depois no mesmo dia, ela
+    reabre com uma mensagem nova."""
     estado = context.user_data.get('recorrente_diario')
     if estado:
         estado['message_id'] = None
@@ -3462,7 +3417,7 @@ if __name__ == '__main__':
     )
 
     app.add_handler(CallbackQueryHandler(excluir_categoria_botao, pattern='^acao_excluir_'))
-    app.add_handler(CallbackQueryHandler(pular_resumo_callback, pattern='^pular_resumo$'))
+    app.add_handler(CallbackQueryHandler(resumo_diario_menu_callback, pattern='^resumo_diario_menu$'))
 
     # Mensagem diária de cobranças recorrentes: solta (enviada por job), não
     # faz parte de nenhum ConversationHandler — registrada antes deles para
