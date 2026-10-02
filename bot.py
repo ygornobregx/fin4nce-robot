@@ -171,11 +171,16 @@ def _somar_meses(ciclo_str, n):
 def calcular_ciclo_fatura(data, dia_fechamento):
     """
     Retorna a fatura ('YYYY-MM') à qual uma compra pertence, dado o dia de
-    fechamento do cartão: compras feitas depois do fechamento já entram na
-    fatura do mês seguinte; antes ou no próprio dia, ficam na fatura atual.
+    fechamento do cartão: compras feitas no próprio dia de fechamento ou
+    depois já entram na fatura do mês seguinte; antes dele, ficam na fatura
+    atual (o dia_fechamento é o primeiro dia do ciclo novo). Ajusta para
+    meses mais curtos que o dia configurado (ex: fechamento dia 31 num mês
+    com 30 dias, ou fevereiro) — mesma regra usada em obter_inicio_ciclo_atual.
     """
+    ultimo_dia_mes = calendar.monthrange(data.year, data.month)[1]
+    dia_alvo = min(dia_fechamento, ultimo_dia_mes)
     base = f"{data.year:04d}-{data.month:02d}"
-    return _somar_meses(base, 1) if data.day > dia_fechamento else base
+    return _somar_meses(base, 1) if data.day >= dia_alvo else base
 
 def obter_inicio_ciclo_atual(dia_fechamento, agora):
     """Calcula o início do ciclo mensal baseado no dia_fechamento do usuário:
@@ -285,8 +290,11 @@ _SQL_PARCELAS_EXPANDIDAS = '''
 
 # Espelho em SQL de calcular_ciclo_fatura, aplicado a 'data_transacao': devolve
 # a fatura ('YYYY-MM') de cada transação. Recebe 1 parâmetro (dia_fechamento).
+# MIN(?, último_dia_do_mês_da_transação) replica o ajuste de mês mais curto
+# que o dia configurado (ex: fechamento dia 31 num mês de 30 dias).
 _SQL_FATURA_TRANSACAO = '''(CASE
-        WHEN CAST(substr(data_transacao, 9, 2) AS INTEGER) > ?
+        WHEN CAST(substr(data_transacao, 9, 2) AS INTEGER) >= MIN(?,
+            CAST(strftime('%d', date(substr(data_transacao, 1, 7) || '-01', '+1 month', '-1 day')) AS INTEGER))
         THEN strftime('%Y-%m', substr(data_transacao, 1, 7) || '-01', '+1 month')
         ELSE substr(data_transacao, 1, 7) END)'''
 
