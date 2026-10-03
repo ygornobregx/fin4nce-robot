@@ -1,27 +1,74 @@
-# TASK: Valor Divergente entre "Ver Resumo" e "Ver Meses Anteriores e Futuros" (Mês Atual)
+# TASK: Resumo Mensal Sem Histórico e Com Texto Reformulado
+
+## 🎯 Visão Geral da Feature
+A mensagem de Resumo Mensal fica guardada no histórico do chat, diferente do Resumo Financeiro Diário e das outras notificações. Ela deve se comportar igual às demais: ocupar o lugar do Menu Principal, sem deixar duas mensagens no chat, e voltar ao Menu Principal ao clicar em "Pular". Além disso, o texto deve ser reformulado para trazer o ranking dos 3 maiores gastos por categoria, o total gasto no mês inteiro e a sobra do mês.
 
 ## 🐞 Descrição do Bug
-Dentro de "Ver Resumo" (padrão), o Gasto e a Sobra da categoria "Alimentação" mostram um valor. Ao navegar por "Ver Meses Anteriores e Futuros" e clicar em "Mês Atual", que deveria mostrar essencialmente os mesmos dados (já que ambos representam o mês/ciclo atual), o valor aparece **diferente**. Não está confirmado se isso afeta só "Alimentação" ou todas as categorias.
+**Atual (errado):** O Resumo Mensal permanece no histórico do chat depois de enviado.
+**Esperado (correto):** Mesmo comportamento do Resumo Financeiro Diário: uma única mensagem no chat, e o botão "Pular" apaga o resumo e mostra o Menu Principal.
 
-## 🔍 Comportamento Esperado vs Atual
+## 🛠️ Objetivos e Regras de Negócio (UI/UX)
 
-**Atual (errado):** "Ver Resumo" e "Mês Atual" (dentro da navegação de meses) mostram valores diferentes de Gasto/Sobra para a mesma categoria, no mesmo período.
+**1. Comportamento Igual às Outras Notificações:**
+*   Reaproveitar exatamente o mesmo mecanismo e o mesmo botão já usados no Resumo Financeiro Diário, sem criar uma lógica nova.
+*   Nunca ficar duas mensagens no chat (resumo + menu antigo).
 
-**Esperado (correto):** Os dois devem mostrar exatamente os mesmos números, já que representam a mesma coisa — o resumo do ciclo/mês atual.
+**2. Novo Texto da Mensagem (reproduzir exatamente, inclusive as linhas em branco):**
 
-## 🔗 Possível Relação com Outra Tarefa em Andamento
-Isso pode ser sintoma do mesmo problema da tarefa **"Correção do Fechamento Automático de Fatura"**: se "Ver Resumo" e a navegação de "Meses Anteriores e Futuros" calculam o período usando lógicas diferentes (uma considerando o `dia_fechamento`, outra usando mês de calendário puro), os valores vão divergir naturalmente. Investigue isso ANTES de tratar como um bug isolado — pode ser resolvido como parte da mesma correção central de ciclo.
+```
+Olá, (USUÁRIO)! Tudo bem? Segue abaixo o seu Resumo Mensal de Gastos no Mês (MÊS VIGENTE)!
+
+
+1º Maior Gasto no Mês de (MÊS): (CATEGORIA COM MAIOR GASTO)
+└ Total Gasto: (VALOR GASTO NA CATEGORIA)
+
+──────────
+
+2º Maior Gasto no Mês de (MÊS): (CATEGORIA)
+└ Total Gasto: (VALOR GASTO NA CATEGORIA)
+
+──────────
+
+3º Maior Gasto no Mês de (MÊS): (CATEGORIA)
+└ Total Gasto: (VALOR GASTO NA CATEGORIA)
+
+──────────
+
+Total Gasto do Mês Inteiro: (VALOR)
+Sobra do Mês: (VALOR)
+
+──────────
+
+Hoje, suas categorias zeram os valores de gastos e voltam à estaca zero, seguindo a lógica de fechamento da sua fatura.
+```
+
+**3. Regras de Conteúdo:**
+*   `(USUÁRIO)` é o nome cadastrado do usuário.
+*   Os 3 maiores gastos são ordenados por valor total gasto na categoria dentro do ciclo.
+*   ✏️ **Interpretação aplicada:** a numeração "primeiro a terceiro, tipo 1, 2, 3 em colocação" foi entendida como **1º, 2º, 3º**.
+*   Linhas "Total Gasto" sob cada colocação usam o prefixo `└`, igual às outras telas do bot. As duas linhas finais (Total Gasto do Mês Inteiro e Sobra do Mês) ficam sem `└`, como as linhas do topo do Resumo Diário.
+*   Se houver menos de 3 categorias com gasto, mostrar apenas as existentes. Se nenhuma categoria teve gasto, omitir os blocos numerados e manter a saudação, os totais e a frase final.
+*   O nome do mês sempre capitalizado, em português, e sem quebra de linha (mesmo padrão da tarefa "Nome do Mês Dinâmico").
+*   Separadores: reaproveitar o mesmo tipo de separador já usado no Resumo Diário, evitando sempre quebra de linhas.
+
+## ⚠️ Pontos a Confirmar Antes de Implementar
+*   **Cálculo da "Sobra do Mês":** é a soma das sobras de todas as categorias (usando a função central de Orçamento/Gasto/Sobra), ou renda mensal menos o total gasto? Confirmar com o Ygor antes de implementar.
+*   **Qual mês exibir:** o esperado é o mês do ciclo que acabou de fechar, usando a lógica central de ciclo da tarefa "Fechamento Automático de Fatura". Confirmar com o Ygor.
+
+## 🔗 Dependência
+Este resumo depende do cálculo correto do ciclo/fatura (tarefa "Correção do Fechamento Automático de Fatura"). Reutilizar a mesma função central de ciclo e de Orçamento/Gasto/Sobra, sem duplicar lógica.
 
 ## 💻 Instruções de Implementação para o `bot.py`
-1. Localize as duas funções: a que monta "Ver Resumo" (padrão) e a que monta "Mês Atual" dentro de "Ver Meses Anteriores e Futuros".
-2. Compare como cada uma calcula o período de referência (datas de início/fim do mês/ciclo) e como soma Gasto/Sobra por categoria.
-3. Confirme se essa divergência é a mesma causa raiz da tarefa de Fechamento de Fatura — se for, trate como parte daquela correção central (não duplique a lógica).
-4. Se for uma causa diferente, identifique e corrija separadamente, garantindo que ambas as telas usem a mesma fonte de cálculo.
-5. Teste em TODAS as categorias que tiverem gasto, não só Alimentação, pra confirmar que o problema (ou a correção) é geral.
+1. Localize a função ou job que envia o Resumo Mensal.
+2. Localize como o Resumo Financeiro Diário é enviado (ele já segue o padrão correto) e reaproveite o mesmo mecanismo. Remova qualquer parte do código que mantenha o Resumo Mensal no histórico.
+3. Reescreva a montagem do texto seguindo o template acima, calculando o ranking, o total e a sobra pela função central de cálculo.
+4. Sugira uma forma de disparar o resumo manualmente no ambiente de teste, para validar sem esperar o dia de fechamento. Não deixar nenhum comando de teste permanente no bot de produção.
+5. Teste: o resumo chega, ocupa o lugar do menu, "Pular" volta ao Menu Principal e fica só uma mensagem no chat.
 
 ## 📋 Regra de Resposta (Economia de Tokens)
-1. Confirme em 2 linhas se essa divergência tem a mesma causa raiz da tarefa de Fechamento de Fatura ou é algo separado.
-2. Aguarde minha aprovação antes de aplicar qualquer correção.
+1. Antes de qualquer código, me pergunte sobre os dois pontos marcados com ⚠️.
+2. Confirme em 2 linhas como o Resumo Diário faz hoje o envio e qual função envia o Resumo Mensal.
+3. Aguarde minha aprovação antes de aplicar as alterações.
 
 ## Entregável
-Diagnóstico da causa raiz + código corrigido (unificado com a tarefa de Fechamento de Fatura, se for o caso).
+Retorne apenas o código atualizado da função de envio e da montagem do texto do Resumo Mensal.

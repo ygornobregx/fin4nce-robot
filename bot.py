@@ -4,8 +4,9 @@ import json
 import libsql
 import asyncio
 import calendar
-from datetime import time, datetime
+from datetime import time, datetime, timedelta
 from html import escape
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from google import genai
@@ -210,30 +211,33 @@ def obter_inicio_ciclo_usuario(conn, user_id):
         return None
     return obter_inicio_ciclo_atual(linha[0], datetime.now(FUSO_BRASILIA))
 
-def calcular_status_categoria(conn, user_id, nome, inicio_ciclo):
+def calcular_status_categoria(conn, user_id, nome, inicio_ciclo, fim_ciclo=None):
     """Fonte única de Orçamento, Gasto e Sobra de uma categoria no ciclo
     vigente, calculados na hora a partir do banco:
       - Orçamento = limite fixo + transferências recebidas − enviadas no ciclo
       - Gasto     = soma das despesas (valores positivos) do ciclo
       - Sobra     = Orçamento − Gasto + receitas do ciclo
+    'fim_ciclo' ('YYYY-MM-DD', exclusivo) só é usado para consultar um ciclo
+    já fechado (ex: Resumo Mensal); sem ele, o ciclo vai até hoje.
     Retorna (orcamento, gasto, sobra), ou None se a categoria não existir."""
     inicio = inicio_ciclo or '0000-01-01'
+    fim = fim_ciclo or '9999-12-31'
     linha = conn.execute(
         '''SELECT c.orcamento_mensal,
                   (SELECT COALESCE(SUM(t.valor), 0) FROM transacoes t
                     WHERE t.user_id = c.user_id AND t.categoria_nome = c.nome
-                      AND DATE(t.data_transacao) >= ? AND t.valor > 0),
+                      AND DATE(t.data_transacao) >= ? AND DATE(t.data_transacao) < ? AND t.valor > 0),
                   (SELECT COALESCE(SUM(-t.valor), 0) FROM transacoes t
                     WHERE t.user_id = c.user_id AND t.categoria_nome = c.nome
-                      AND DATE(t.data_transacao) >= ? AND t.valor < 0),
+                      AND DATE(t.data_transacao) >= ? AND DATE(t.data_transacao) < ? AND t.valor < 0),
                   (SELECT COALESCE(SUM(tr.valor), 0) FROM transferencias tr
                     WHERE tr.user_id = c.user_id AND tr.categoria_destino = c.nome
-                      AND DATE(tr.data_transferencia) >= ?),
+                      AND DATE(tr.data_transferencia) >= ? AND DATE(tr.data_transferencia) < ?),
                   (SELECT COALESCE(SUM(tr.valor), 0) FROM transferencias tr
                     WHERE tr.user_id = c.user_id AND tr.categoria_origem = c.nome
-                      AND DATE(tr.data_transferencia) >= ?)
+                      AND DATE(tr.data_transferencia) >= ? AND DATE(tr.data_transferencia) < ?)
            FROM categorias c WHERE c.user_id = ? AND c.nome = ?''',
-        (inicio, inicio, inicio, inicio, user_id, nome)
+        (inicio, fim, inicio, fim, inicio, fim, inicio, fim, user_id, nome)
     ).fetchone()
     if not linha:
         return None
@@ -2578,8 +2582,70 @@ async def resumo_diario_menu_callback(update: Update, context: ContextTypes.DEFA
     context.user_data['ultima_msg_bot'] = nova_msg.message_id
     context.user_data['msgs_fluxo'] = [nova_msg.message_id]
 
+# --- RESUMO MENSAL (ENVIADO NO FECHAMENTO DA FATURA) ---
+def _calcular_dados_resumo_mensal(conn, user_id, dia_fechamento, agora):
+    """Ciclo que acabou de fechar (o de ontem, já que o resumo sai no dia de
+    fechamento), calculado pela mesma função central de Orçamento/Gasto/Sobra.
+    Retorna (nome_do_mes, top3, total_gasto, sobra_total), com top3 como lista
+    [(categoria, gasto)] só das categorias com gasto, do maior para o menor."""
+    ontem = agora - timedelta(days=1)
+    inicio = obter_inicio_ciclo_atual(dia_fechamento, ontem)
+    fim = obter_inicio_ciclo_atual(dia_fechamento, agora)
+    nome_mes = NOMES_MESES[int(calcular_ciclo_fatura(ontem, dia_fechamento).split('-')[1]) - 1]
+
+    gastos, sobra_total = [], 0.0
+    for (cat,) in conn.execute('SELECT nome FROM categorias WHERE user_id = ?', (user_id,)).fetchall():
+        _, gasto, sobra = calcular_status_categoria(conn, user_id, cat, inicio, fim)
+        sobra_total += sobra
+        if gasto > 0:
+            gastos.append((cat, gasto))
+
+    gastos.sort(key=lambda item: item[1], reverse=True)
+    return nome_mes, gastos[:3], sum(g for _, g in gastos), sobra_total
+
+def _montar_mensagem_resumo_mensal(nome, nome_mes, top3, total_gasto, sobra_total):
+    """Texto do Resumo Mensal, direto e sem IA, seguindo o template aprovado.
+    Com menos de 3 categorias com gasto mostra só as existentes; sem nenhuma,
+    omite os blocos numerados."""
+    texto = f"Olá, {escape(nome)}! Tudo bem? Segue abaixo o seu Resumo Mensal de Gastos no Mês {nome_mes}!\n\n\n"
+    for posicao, (cat, valor) in enumerate(top3, start=1):
+        texto += (
+            f"{posicao}º Maior Gasto no Mês de {nome_mes}: {escape(cat)}\n"
+            f"└ Total Gasto: {formatar_real(valor)}\n\n"
+            f"{DIVISOR}\n\n"
+        )
+    texto += (
+        f"Total Gasto do Mês Inteiro: {formatar_real(total_gasto)}\n"
+        f"Sobra do Mês: {formatar_real(sobra_total)}\n\n"
+        f"{DIVISOR}\n\n"
+        "Hoje, suas categorias zeram os valores de gastos e voltam à estaca zero, "
+        "seguindo a lógica de fechamento da sua fatura."
+    )
+    return texto
+
+async def enviar_resumo_mensal(bot, user_data, user_id, nome, dia_fechamento, agora):
+    """Envia o Resumo Mensal pelo mesmo mecanismo do Resumo Diário: limpa o
+    histórico rastreado, manda uma única mensagem com o botão '← Menu
+    Principal' (callback 'resumo_diario_menu') e registra o id dela."""
+    conn = obter_conexao_db()
+    try:
+        dados = _calcular_dados_resumo_mensal(conn, user_id, dia_fechamento, agora)
+    finally:
+        conn.close()
+    mensagem = _montar_mensagem_resumo_mensal(nome, *dados)
+
+    # limpar_historico_mensagens só usa .bot e .user_data do contexto.
+    await limpar_historico_mensagens(SimpleNamespace(bot=bot, user_data=user_data), user_id)
+
+    teclado = InlineKeyboardMarkup([[
+        InlineKeyboardButton("← Menu Principal", callback_data='resumo_diario_menu', style="danger")
+    ]])
+    resumo_msg = await bot.send_message(chat_id=user_id, text=mensagem, reply_markup=teclado, parse_mode='HTML')
+    user_data['ultima_msg_bot'] = resumo_msg.message_id
+    user_data['msgs_fluxo'] = [resumo_msg.message_id]
+
 # --- RESET DE SALDOS NO DIA DE VENCIMENTO ---
-async def _executar_verificacao_resets(bot, job_queue=None):
+async def _executar_verificacao_resets(bot, user_data_global):
     """
     Lógica central do reset: para cada usuário, verifica se hoje (no fuso de
     Brasília) é o dia de vencimento configurado e, se for e ainda não tiver
@@ -2623,18 +2689,9 @@ async def _executar_verificacao_resets(bot, job_queue=None):
         resets_feitos += 1
 
         try:
-            await bot.send_message(
-                chat_id=user_id,
-                text=(
-                    f"Novo Ciclo Iniciado!\n\n"
-                    f"Hoje é o vencimento do seu cartão, {nome}. Todas as transferências e "
-                    f"gastos temporários entre categorias foram zerados e seus saldos "
-                    f"voltaram aos valores fixos originais. Bom ciclo!"
-                ),
-                parse_mode='HTML'
-            )
+            await enviar_resumo_mensal(bot, user_data_global[user_id], user_id, nome, dia_fechamento, agora)
         except Exception as e:
-            print(f"⚠️ Não consegui notificar o usuário {user_id} sobre o reset de vencimento: {e}")
+            print(f"⚠️ Não consegui enviar o Resumo Mensal ao usuário {user_id}: {e}")
 
     conn.close()
     if resets_feitos:
@@ -2643,7 +2700,7 @@ async def _executar_verificacao_resets(bot, job_queue=None):
 async def verificar_resets_vencimento(context: ContextTypes.DEFAULT_TYPE):
     """Job diário (agendado às 00:05 de Brasília) que aciona a verificação
     de reset de saldos para todos os usuários."""
-    await _executar_verificacao_resets(context.bot)
+    await _executar_verificacao_resets(context.bot, context.application.user_data)
 
 # --- AUTOMAÇÃO DE GASTOS RECORRENTES ---
 async def verificar_gastos_recorrentes(context: ContextTypes.DEFAULT_TYPE):
@@ -3239,7 +3296,7 @@ if __name__ == '__main__':
         # ficado fora do ar bem no horário do reset, isso evita perder o
         # reset daquele dia (a idempotência por 'ultimo_reset' garante que
         # não vai duplicar se o job das 00:05 também disparar depois).
-        await _executar_verificacao_resets(application.bot)
+        await _executar_verificacao_resets(application.bot, application.user_data)
 
     app.post_init = post_init
 
