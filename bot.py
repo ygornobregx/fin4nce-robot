@@ -43,7 +43,7 @@ FUSO_BRASILIA = ZoneInfo("America/Sao_Paulo")
 # Automação de gastos recorrentes: horário padrão de disparo. 05:00 reduz a
 # chance de coincidir com o horário do Resumo Diário, que é configurável por
 # usuário e não tem um valor fixo a checar.
-HORARIO_COBRANCA_RECORRENTE = time(hour=17, minute=49, tzinfo=FUSO_BRASILIA)
+HORARIO_COBRANCA_RECORRENTE = time(hour=5, minute=0, tzinfo=FUSO_BRASILIA)
 
 # Estados das conversas
 NOME_USUARIO, RENDA_MENSAL, NOMES_CATEGORIAS, VALORES_CATEGORIAS, DIA_FECHAMENTO = range(5)
