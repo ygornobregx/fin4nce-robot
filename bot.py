@@ -40,11 +40,11 @@ def obter_conexao_db():
 FUSO_BRASILIA = ZoneInfo("America/Sao_Paulo")
 
 # Automação de gastos recorrentes: horário padrão de disparo e espaçamento
-# entre lançamentos que caem no mesmo dia (evita rajada de mensagens). 09:00
-# (em vez de 12:00) reduz a chance de coincidir com o horário do Resumo
-# Diário, que é configurável por usuário e não tem um valor fixo a checar.
-HORARIO_COBRANCA_RECORRENTE = time(hour=9, minute=0, tzinfo=FUSO_BRASILIA)
-INTERVALO_ESPACAMENTO_RECORRENTE = 30 * 60
+# entre lançamentos que caem no mesmo dia (evita rajada de mensagens). 05:00
+# reduz a chance de coincidir com o horário do Resumo Diário, que é
+# configurável por usuário e não tem um valor fixo a checar.
+HORARIO_COBRANCA_RECORRENTE = time(hour=5, minute=0, tzinfo=FUSO_BRASILIA)
+INTERVALO_ESPACAMENTO_RECORRENTE = 15 * 60
 
 # Estados das conversas
 NOME_USUARIO, RENDA_MENSAL, NOMES_CATEGORIAS, VALORES_CATEGORIAS, DIA_FECHAMENTO = range(5)
@@ -2705,11 +2705,11 @@ async def verificar_resets_vencimento(context: ContextTypes.DEFAULT_TYPE):
 # --- AUTOMAÇÃO DE GASTOS RECORRENTES ---
 async def verificar_gastos_recorrentes(context: ContextTypes.DEFAULT_TYPE):
     """
-    Job diário (agendado às 09:00 de Brasília): identifica, entre todos os
+    Job diário (agendado às 05:00 de Brasília): identifica, entre todos os
     usuários, os gastos recorrentes com vencimento hoje e ainda não cobrados
     neste ciclo, e agenda o lançamento de cada um via job_queue.run_once,
-    espaçados em INTERVALO_ESPACAMENTO_RECORRENTE (30min) entre si, na ordem
-    de criação (mais antigo dispara primeiro, às 09:00 em ponto).
+    espaçados em INTERVALO_ESPACAMENTO_RECORRENTE (15min) entre si, na ordem
+    de criação (mais antigo dispara primeiro, às 05:00 em ponto).
 
     Vencimento no dia 31 (ou 30/29) num mês mais curto dispara no último dia
     do mês, mesma regra já usada em _executar_verificacao_resets.
@@ -2821,10 +2821,10 @@ async def _lancar_gasto_recorrente_job(context: ContextTypes.DEFAULT_TYPE):
         f"Resta na Categoria: <b>{formatar_real(novo_saldo)}</b>"
     )
 
-    # Estado guardado numa chave própria (fora de 'ultima_msg_bot'/'msgs_fluxo'),
-    # pra nenhuma limpeza genérica do fluxo de conversa normal apagar essa
-    # mensagem sem o usuário clicar em "← Menu Principal". Reseta sozinho
-    # quando muda o dia (Brasília).
+    # Estado (itens/paginação) guardado numa chave própria. A mensagem em si
+    # também é registrada em 'msgs_fluxo' ao ser criada (igual ao Resumo
+    # Diário), pra ser substituída/limpa como as demais notificações. Reseta
+    # sozinho quando muda o dia (Brasília).
     hoje_str = datetime.now(FUSO_BRASILIA).strftime('%Y-%m-%d')
     estado = context.user_data.get('recorrente_diario')
     if not estado or estado['data'] != hoje_str:
@@ -2848,11 +2848,16 @@ async def _lancar_gasto_recorrente_job(context: ContextTypes.DEFAULT_TYPE):
             pass  # mensagem de hoje não existe mais (ex: apagada manualmente) — manda uma nova abaixo
 
     if not editado:
+        # Mesmo mecanismo do Resumo Diário: limpa qualquer mensagem de fluxo
+        # (ex: Menu Principal antigo) pra notificação ser a única no chat.
+        await limpar_historico_mensagens(context, user_id)
         try:
             nova_msg = await context.bot.send_message(
                 chat_id=user_id, text=texto, reply_markup=teclado, parse_mode='HTML'
             )
             estado['message_id'] = nova_msg.message_id
+            context.user_data['ultima_msg_bot'] = nova_msg.message_id
+            context.user_data['msgs_fluxo'] = [nova_msg.message_id]
         except Exception as e:
             print(f"⚠️ Não consegui notificar o usuário {user_id} sobre o gasto recorrente {gr_id}: {e}")
 
@@ -3334,7 +3339,7 @@ if __name__ == '__main__':
             ],
             # Retorna do estado de escolha de parcelas para a confirmação "foi parcelado?".
             ESCOLHER_PARCELAS: [
-                CallbackQueryHandler(escolher_numero_parcelas, pattern='^parcela_(n_\d+|custom)$'),
+                CallbackQueryHandler(escolher_numero_parcelas, pattern=r'^parcela_(n_\d+|custom)$'),
                 CallbackQueryHandler(voltar_confirmar_parcela, pattern='^voltar_confirmar_parcela$'),
             ],
             # Retorna do estado de digitar o total de parcelas para a escolha de parcelas.
