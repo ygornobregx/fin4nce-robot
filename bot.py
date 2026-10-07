@@ -4,6 +4,7 @@ import json
 import libsql
 import asyncio
 import calendar
+import unicodedata
 from datetime import time, datetime, timedelta
 from html import escape
 from types import SimpleNamespace
@@ -51,6 +52,7 @@ GASTO_VALOR = 30
 CONFIRMAR_PARCELA, ESCOLHER_PARCELAS, DIGITAR_PARCELAS = range(31, 34)
 EDITAR_ULTIMO_GASTO = 34
 METODO_PAGAMENTO = 35
+EDITAR_GASTO_ESCOLHA, EDITAR_CATEGORIA_GASTO = range(36, 38)
 TRANSFERIR_VALOR = 40
 ALERTA_ESCOLHA, ALERTA_CUSTOM, ALERTA_VISUALIZACAO = range(50, 53)
 EDITAR_NOME_CAT, EDITAR_VALOR_CAT = range(60, 62)
@@ -1072,8 +1074,145 @@ async def iniciar_editar_ultimo_gasto(update: Update, context: ContextTypes.DEFA
         await atualizar_callback(query, context, "Sessão expirada. Registre o gasto novamente.", reply_markup=obter_teclado_menu())
         return ConversationHandler.END
 
+    # Tela intermediária: o usuário escolhe o que quer corrigir no gasto.
+    teclado = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Editar Valor", callback_data='editar_gasto_valor')],
+        [InlineKeyboardButton("Editar Categoria", callback_data='editar_gasto_categoria')],
+        [InlineKeyboardButton("← Voltar", callback_data='voltar_menu', style="danger")]
+    ])
+    await atualizar_callback(query, context, "O Que Você Deseja Editar Neste Gasto?", reply_markup=teclado)
+    return EDITAR_GASTO_ESCOLHA
+
+async def iniciar_editar_valor_ultimo_gasto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await responder_callback(query)
+
+    if not context.user_data.get('ultimo_gasto'):
+        await atualizar_callback(query, context, "Sessão expirada. Registre o gasto novamente.", reply_markup=obter_teclado_menu())
+        return ConversationHandler.END
+
     await atualizar_callback(query, context, "Envie o valor correto para este gasto:", reply_markup=TECLADO_VOLTAR)
     return EDITAR_ULTIMO_GASTO
+
+def _normalizar_texto(texto):
+    """Forma de comparação sem maiúsculas, acentos e espaços repetidos
+    ('  Alimentação ' -> 'alimentacao')."""
+    sem_acento = ''.join(
+        c for c in unicodedata.normalize('NFKD', texto) if not unicodedata.combining(c)
+    )
+    return ' '.join(sem_acento.casefold().split())
+
+def _montar_tela_editar_categoria_gasto(valor, categorias, aviso=""):
+    """Texto da tela 'Editar Categoria': lista todas as categorias do usuário,
+    uma por bloco. 'aviso' (opcional) vai no topo, para os erros de digitação."""
+    lista = "\n\n".join(f"└ {escape(nome)}" for nome in categorias)
+    valor_fmt = formatar_real(valor)
+    return (
+        f"{aviso}"
+        f"Atualize a Categoria do Gasto Atual de <b>{valor_fmt}</b> para uma das categorias abaixo:\n\n"
+        f"{lista}\n\n"
+        f"Digite em qual das categorias acima deseja enviar o gasto de: <b>{valor_fmt}</b>"
+    )
+
+async def iniciar_editar_categoria_ultimo_gasto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await responder_callback(query)
+    user_id = query.from_user.id
+
+    ultimo_gasto = context.user_data.get('ultimo_gasto')
+    conn = obter_conexao_db()
+    linha = conn.execute(
+        'SELECT valor FROM transacoes WHERE id = ? AND user_id = ?',
+        (ultimo_gasto['transacao_id'], user_id)
+    ).fetchone() if ultimo_gasto else None
+    conn.close()
+
+    if not linha:
+        await atualizar_callback(query, context, "Sessão expirada. Registre o gasto novamente.", reply_markup=obter_teclado_menu())
+        return ConversationHandler.END
+
+    texto = _montar_tela_editar_categoria_gasto(abs(linha[0]), obter_categorias_usuario(user_id))
+    await atualizar_callback(query, context, texto, reply_markup=TECLADO_VOLTAR)
+    return EDITAR_CATEGORIA_GASTO
+
+async def salvar_categoria_editada_gasto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    digitado = update.message.text
+    user_id = update.effective_user.id
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+
+    ultimo_gasto = context.user_data.get('ultimo_gasto')
+    if not ultimo_gasto:
+        await enviar_fluxo(context, user_id, "Sessão expirada. Registre o gasto novamente.", reply_markup=obter_teclado_menu())
+        return ConversationHandler.END
+
+    conn = obter_conexao_db()
+    try:
+        cursor = conn.cursor()
+        transacao = cursor.execute(
+            'SELECT valor, categoria_nome FROM transacoes WHERE id = ? AND user_id = ?',
+            (ultimo_gasto['transacao_id'], user_id)
+        ).fetchone()
+        if not transacao:
+            await enviar_fluxo(context, user_id, "Gasto não encontrado. Registre novamente.", reply_markup=obter_teclado_menu())
+            return ConversationHandler.END
+        valor_armazenado, categoria_origem = transacao
+
+        categorias = obter_categorias_usuario(user_id)
+        alvo = _normalizar_texto(digitado)
+        categoria_destino = next((nome for nome in categorias if _normalizar_texto(nome) == alvo), None)
+
+        if not categoria_destino:
+            texto = _montar_tela_editar_categoria_gasto(
+                abs(valor_armazenado), categorias,
+                aviso=f"Categoria <b>{escape(digitado.strip())}</b> não encontrada. Digite uma das categorias abaixo.\n\n"
+            )
+            await enviar_fluxo(context, user_id, texto, reply_markup=TECLADO_VOLTAR)
+            return EDITAR_CATEGORIA_GASTO
+
+        if categoria_destino == categoria_origem:
+            texto = _montar_tela_editar_categoria_gasto(
+                abs(valor_armazenado), categorias,
+                aviso=f"Este gasto já está na categoria <b>{escape(categoria_origem)}</b>. Digite outra categoria.\n\n"
+            )
+            await enviar_fluxo(context, user_id, texto, reply_markup=TECLADO_VOLTAR)
+            return EDITAR_CATEGORIA_GASTO
+
+        # Gasto e Sobra são calculados a partir de 'transacoes.categoria_nome'
+        # (calcular_status_categoria), então mover a transação já corrige as
+        # duas categorias. 'saldo_atual' (legado) é ajustado dos dois lados:
+        # a origem recupera o valor que foi debitado e o destino o recebe.
+        cursor.execute(
+            'UPDATE transacoes SET categoria_nome = ? WHERE id = ? AND user_id = ?',
+            (categoria_destino, ultimo_gasto['transacao_id'], user_id)
+        )
+        cursor.execute(
+            'UPDATE categorias SET saldo_atual = saldo_atual + ? WHERE user_id = ? AND nome = ?',
+            (valor_armazenado, user_id, categoria_origem)
+        )
+        cursor.execute(
+            'UPDATE categorias SET saldo_atual = saldo_atual - ? WHERE user_id = ? AND nome = ?',
+            (valor_armazenado, user_id, categoria_destino)
+        )
+        conn.commit()
+        sobra_destino = calcular_sobra_categoria(conn, user_id, categoria_destino)
+        sobra_origem = calcular_sobra_categoria(conn, user_id, categoria_origem)
+    finally:
+        conn.close()
+
+    context.user_data.pop('ultimo_gasto', None)
+
+    await mostrar_resumo_temporario(
+        context, user_id,
+        f"Gasto Corrigido com Sucesso!\n\n"
+        f"Categoria: <b>{escape(categoria_destino)}</b>\n"
+        f"Valor: <b>{formatar_real(abs(valor_armazenado))}</b>\n"
+        f"Resta na Categoria: <b>{formatar_real(sobra_destino)}</b>\n\n"
+        f"Resta em {escape(categoria_origem)}: <b>{formatar_real(sobra_origem)}</b>"
+    )
+    return ConversationHandler.END
 
 async def salvar_valor_editado_gasto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
@@ -3438,7 +3577,13 @@ if __name__ == '__main__':
                 MessageHandler(filters.TEXT & ~filters.COMMAND, digitar_numero_parcelas),
                 CallbackQueryHandler(voltar_escolher_parcelas, pattern='^voltar_escolher_parcelas$'),
             ],
+            # Tela intermediária do "Editar Gasto": escolhe entre valor e categoria.
+            EDITAR_GASTO_ESCOLHA: [
+                CallbackQueryHandler(iniciar_editar_valor_ultimo_gasto, pattern='^editar_gasto_valor$'),
+                CallbackQueryHandler(iniciar_editar_categoria_ultimo_gasto, pattern='^editar_gasto_categoria$'),
+            ],
             EDITAR_ULTIMO_GASTO: [MessageHandler(filters.TEXT & ~filters.COMMAND, salvar_valor_editado_gasto)],
+            EDITAR_CATEGORIA_GASTO: [MessageHandler(filters.TEXT & ~filters.COMMAND, salvar_categoria_editada_gasto)],
         },
         # Manipulador para cancelar o fluxo e voltar ao menu, disponível em qualquer estado.
         fallbacks=[CallbackQueryHandler(voltar_para_menu, pattern='^voltar_menu$'), CommandHandler('cancelar', cancelar)],

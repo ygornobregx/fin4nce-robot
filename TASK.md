@@ -1,41 +1,62 @@
-# TASK: Editar o Nome da Cobrança Recorrente
+# TASK: Botão "Editar Gasto" com Opções "Editar Valor" e "Editar Categoria"
 
 ## 🎯 Visão Geral da Feature
-Hoje, o título que aparece no botão de cada cobrança recorrente na lista (ex: "Bike Itau") não pode ser alterado depois de criado. Adicionar a opção de **editar o nome**, caso o usuário ache melhor ajustá-lo, para ter um controle mais certeiro das cobranças.
+Ao registrar um gasto e escolher a forma de pagamento, a mensagem final tem o botão **"Editar Gasto"**, que hoje só permite editar o valor. Esse botão passa a abrir duas opções: **"Editar Valor"** (comportamento atual) e **"Editar Categoria"** (novo), para corrigir a categoria do gasto recém-registrado sem precisar apagar e refazer.
 
 ## 🛠️ Objetivos e Regras de Negócio (UI/UX)
 
-**1. Novo Botão no Submenu de Edição:**
-*   Na tela "Qual edição deseja realizar?", adicionar o botão **"Editar Nome da Cobrança"** junto de "Editar Data da Cobrança", "Editar Valor da Cobrança" e "Excluir Cobrança Recorrente", seguindo o layout de botões já usado nessa tela.
+**1. Botão "Editar Gasto" Abre Duas Opções:**
+*   Ao clicar em "Editar Gasto", mostrar uma tela com dois botões: **"Editar Valor"** e **"Editar Categoria"**, mais o botão de voltar no padrão do bot.
+*   ✏️ O ticket não define o texto dessa tela. Sugestão: **"O Que Você Deseja Editar Neste Gasto?"**.
 
-**2. Fluxo:**
-*   Ao clicar, o bot pede o novo nome. Reaproveitar o padrão dos fluxos de "Editar Data" e "Editar Valor": mesmo tipo de entrada, mesmo botão de voltar e mesmo tratamento das mensagens do chat (apagar o prompt e a resposta do usuário, se for o padrão dos outros fluxos).
-*   Depois de salvar, mostrar **"Gasto Recorrente Atualizado com Sucesso!"** e voltar à lista, já com o novo nome no botão.
+**2. "Editar Valor" (comportamento atual, sem mudanças):**
+*   Texto: `Atualize o Valor da Sua Cobrança Enviando o Novo Valor...` (manter o texto que já existe hoje, se for diferente).
 
-**3. Validações do Nome:**
-*   Nome vazio é rejeitado.
-*   Tamanho máximo razoável (sugerir cerca de 30 caracteres), para o botão não quebrar linha. Se passar, avisar e pedir de novo.
+**3. "Editar Categoria" (novo). Texto da mensagem:**
 
-**4. Onde o Novo Nome Aparece:**
-*   No botão da lista, no topo da tela de detalhes e nas próximas notificações de cobrança, todos lendo do mesmo campo.
-*   Transações já lançadas por essa cobrança **não são alteradas**: o histórico continua como estava.
+```
+Atualize a Categoria do Gasto Atual de R$ (VALOR DO GASTO) para uma das categorias abaixo:
 
-**5. Sem Mudanças no Banco (a confirmar):**
-*   O nome já existe como campo da cobrança, então nenhuma coluna nova deve ser necessária. Se for preciso, usar a rotina de migração automática já existente.
+└ Lazer
 
-## ⚠️ Decisão a Confirmar
-*   **Nome repetido na mesma categoria:** bloquear (recomendado, evita confusão na lista de botões) ou permitir? Pergunte ao Ygor antes de implementar.
+└ Alimentação
+
+└ Casa
+
+(demais categorias do usuário, no mesmo formato)
+
+Digite em qual das categorias acima deseja enviar o gasto de: R$ (VALOR DO GASTO)
+```
+
+*   A lista traz **todas** as categorias existentes do usuário, uma por bloco, com uma linha em branco entre elas.
+
+**4. Entrada do Usuário:**
+*   O usuário digita o nome da categoria, com o mesmo tipo de entrada dos outros campos de edição.
+*   A comparação ignora maiúsculas/minúsculas e acentos.
+*   Se não encontrar a categoria: avisar, mostrar a lista de novo e manter o fluxo, sem quebrar.
+*   Se for a mesma categoria que o gasto já tem: avisar que ele já está nela, sem alterar nada.
+
+**5. Efeito da Troca:**
+*   O gasto atual (o recém-registrado) passa para a nova categoria. O Gasto e a Sobra das **duas** categorias (a de origem e a de destino) devem refletir a mudança, usando a função central de cálculo de Orçamento/Gasto/Sobra, sem duplicar lógica. Se existirem valores guardados em vez de calculados, atualizar os dois lados.
+
+**6. Fim do Fluxo e Chat Limpo:**
+*   Depois de salvar, terminar do mesmo jeito que o "Editar Valor" termina hoje (reaproveitar), mostrando o gasto já atualizado.
+*   Seguir o padrão do bot de chat limpo: substituir/editar a mensagem, sem deixar duplicatas.
+
+## ⚠️ Pontos a Verificar Antes de Implementar
+*   **Gasto parcelado:** se o gasto for no crédito, com parcelas, verifique como ele é guardado (transação, parcelamento, parcelas). Trocar a categoria deve atualizar **todos** os registros ligados a ele, não só um. Relate o que encontrou antes de implementar.
+*   **"Editar Gasto" hoje:** verifique como esse botão funciona atualmente (estado do fluxo e handler) para não quebrar o "Editar Valor" ao colocar as duas opções.
 
 ## 💻 Instruções de Implementação para o `bot.py`
-1. Localize a função que monta a tela "Qual edição deseja realizar?" e os handlers de "Editar Data" e "Editar Valor".
-2. Adicione o botão "Editar Nome da Cobrança", o novo estado do fluxo e o handler, reaproveitando o padrão desses fluxos.
-3. Atualize o nome no banco apenas na cobrança recorrente, sem tocar em transações já lançadas.
-4. Aplique as validações da regra 3 e a decisão sobre nomes repetidos.
-5. Teste: renomear e conferir o novo nome na lista, na tela de detalhes e na próxima notificação; testar nome vazio, nome muito longo e nome repetido.
+1. Localize o botão "Editar Gasto" no fim do registro de gasto e o handler do "Editar Valor".
+2. Crie a tela intermediária com os dois botões e o botão de voltar.
+3. Implemente o fluxo de "Editar Categoria": mensagem com a lista de categorias, novo estado de entrada, busca da categoria digitada (sem diferenciar maiúsculas e acentos) e a troca no banco.
+4. Garanta o recálculo de Gasto/Sobra das duas categorias e o tratamento do caso parcelado (ponto ⚠️).
+5. Teste: gasto à vista e gasto parcelado; categoria digitada com letra diferente e sem acento; categoria inexistente; mesma categoria; conferir Gasto/Sobra das duas categorias antes e depois.
 
 ## 📋 Regra de Resposta (Economia de Tokens)
-1. Antes de qualquer código, confirme em 2 linhas quais funções e estados serão alterados e me pergunte sobre o ponto marcado com ⚠️.
+1. Antes de qualquer código, relate o que encontrou sobre os dois pontos ⚠️ e confirme em 2 linhas quais funções serão alteradas.
 2. Aguarde minha aprovação antes de aplicar.
 
 ## Entregável
-Retorne apenas o código novo ou alterado: o botão no submenu, o handler de edição do nome e as validações.
+Retorne apenas o código novo ou alterado: a tela intermediária, o fluxo "Editar Categoria" e a atualização no banco.
