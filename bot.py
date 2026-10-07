@@ -56,7 +56,9 @@ ALERTA_ESCOLHA, ALERTA_CUSTOM, ALERTA_VISUALIZACAO = range(50, 53)
 EDITAR_NOME_CAT, EDITAR_VALOR_CAT = range(60, 62)
 EDITAR_DIA_VENCIMENTO = 70
 RECORRENTE_TEXTO_LIVRE, RECORRENTE_COMPLETAR = range(80, 82)
-RECORRENTE_EDITAR_DIA, RECORRENTE_EDITAR_VALOR = range(82, 84)
+RECORRENTE_EDITAR_DIA, RECORRENTE_EDITAR_VALOR, RECORRENTE_EDITAR_NOME = range(82, 85)
+# Tamanho máximo do nome de uma cobrança recorrente (cabe em um botão sem quebrar linha).
+TAMANHO_MAX_NOME_RECORRENTE = 30
 
 # Colunas que cada tabela deve ter, além das já presentes no CREATE TABLE.
 # Para adicionar uma coluna nova no futuro: acrescente aqui uma linha
@@ -2029,6 +2031,7 @@ async def ver_item_recorrente(update: Update, context: ContextTypes.DEFAULT_TYPE
     teclado = [
         [InlineKeyboardButton("Editar Data da Cobrança", callback_data=f"rec_editdia_{gr_id}")],
         [InlineKeyboardButton("Editar Valor da Cobrança", callback_data=f"rec_editvalor_{gr_id}")],
+        [InlineKeyboardButton("Editar Nome da Cobrança", callback_data=f"rec_editnome_{gr_id}")],
         [InlineKeyboardButton("Excluir Cobrança Recorrente", callback_data=f"rec_excluir_{gr_id}")],
         linha_voltar_com_menu(f"rec_ver_{cat_id}")
     ]
@@ -2144,6 +2147,84 @@ async def salvar_novo_valor_recorrente(update: Update, context: ContextTypes.DEF
 
     conn = obter_conexao_db()
     conn.execute('UPDATE gastos_recorrentes SET valor = ? WHERE id = ? AND user_id = ?', (valor, gr_id, user_id))
+    conn.commit()
+    conn.close()
+
+    context.user_data.pop('recorrente_item_editando', None)
+    texto_lista, teclado_lista = _montar_tela_listagem_recorrentes(user_id, cat_id, aviso="Gasto Recorrente Atualizado com Sucesso!\n\n")
+    await enviar_fluxo(context, user_id, texto_lista, reply_markup=teclado_lista)
+    return ConversationHandler.END
+
+async def iniciar_editar_nome_recorrente(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await responder_callback(query)
+    gr_id = int(query.data.replace('rec_editnome_', ''))
+    context.user_data['recorrente_item_editando'] = gr_id
+
+    # '← Voltar' retorna para o submenu do item (etapa imediatamente anterior).
+    await atualizar_callback(
+        query, context,
+        f"Envie o <b>novo nome</b> da cobrança (até {TAMANHO_MAX_NOME_RECORRENTE} caracteres, ex: <code>Bike Itau</code>):",
+        reply_markup=InlineKeyboardMarkup([linha_voltar_com_menu(f"rec_item_{gr_id}")])
+    )
+    return RECORRENTE_EDITAR_NOME
+
+async def salvar_novo_nome_recorrente(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    nome = update.message.text.strip()
+    user_id = update.effective_user.id
+    gr_id = context.user_data.get('recorrente_item_editando')
+
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+
+    teclado_erro = InlineKeyboardMarkup([linha_voltar_com_menu(f"rec_item_{gr_id}")]) if gr_id else TECLADO_VOLTAR
+
+    if not gr_id:
+        await enviar_fluxo(context, user_id, "Sessão expirada. Volte ao menu.", reply_markup=obter_teclado_menu())
+        return ConversationHandler.END
+
+    if not nome:
+        await enviar_fluxo(context, user_id, "O nome não pode ficar vazio. Envie o novo nome:", reply_markup=teclado_erro)
+        return RECORRENTE_EDITAR_NOME
+
+    if len(nome) > TAMANHO_MAX_NOME_RECORRENTE:
+        await enviar_fluxo(
+            context, user_id,
+            f"Nome muito longo ({len(nome)} caracteres). Use no máximo <b>{TAMANHO_MAX_NOME_RECORRENTE}</b>. Envie o novo nome:",
+            reply_markup=teclado_erro
+        )
+        return RECORRENTE_EDITAR_NOME
+
+    item = _buscar_item_recorrente(user_id, gr_id)
+    if not item:
+        await enviar_fluxo(context, user_id, "Gasto recorrente não encontrado.", reply_markup=obter_teclado_menu())
+        return ConversationHandler.END
+    cat_id = item[4]
+
+    # Nome repetido na mesma categoria é bloqueado (dois botões iguais na lista
+    # não se distinguem). Comparação feita em Python com casefold(): o LOWER()
+    # do SQLite só ignora maiúsculas ASCII e deixaria passar "ÁGUA" vs "água".
+    # A própria cobrança fica de fora, então salvar o nome que ela já tem não dá erro.
+    conn = obter_conexao_db()
+    outros_nomes = conn.execute(
+        '''SELECT descricao FROM gastos_recorrentes
+           WHERE user_id = ? AND id != ?
+             AND categoria_nome = (SELECT categoria_nome FROM gastos_recorrentes WHERE id = ? AND user_id = ?)''',
+        (user_id, gr_id, gr_id, user_id)
+    ).fetchall()
+    if any((outro[0] or '').strip().casefold() == nome.casefold() for outro in outros_nomes):
+        conn.close()
+        await enviar_fluxo(
+            context, user_id,
+            "Já existe uma cobrança com esse nome nesta categoria. Envie outro nome:",
+            reply_markup=teclado_erro
+        )
+        return RECORRENTE_EDITAR_NOME
+
+    # Só a cobrança recorrente é alterada: transações já lançadas ficam como estão.
+    conn.execute('UPDATE gastos_recorrentes SET descricao = ? WHERE id = ? AND user_id = ?', (nome, gr_id, user_id))
     conn.commit()
     conn.close()
 
@@ -3449,6 +3530,7 @@ if __name__ == '__main__':
             CallbackQueryHandler(ver_item_recorrente, pattern=r'^rec_item_\d+$'),
             CallbackQueryHandler(iniciar_editar_dia_recorrente, pattern=r'^rec_editdia_\d+$'),
             CallbackQueryHandler(iniciar_editar_valor_recorrente, pattern=r'^rec_editvalor_\d+$'),
+            CallbackQueryHandler(iniciar_editar_nome_recorrente, pattern=r'^rec_editnome_\d+$'),
             CallbackQueryHandler(excluir_recorrente_botao, pattern=r'^rec_excluir_\d+$'),
             # Telas desta conversa costumam ficar sem estado rastreado (retornam None),
             # então o botão "← Voltar ao Menu" também precisa estar nos entry_points
@@ -3460,13 +3542,14 @@ if __name__ == '__main__':
             RECORRENTE_COMPLETAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_campo_faltante_recorrente)],
             RECORRENTE_EDITAR_DIA: [MessageHandler(filters.TEXT & ~filters.COMMAND, salvar_novo_dia_recorrente)],
             RECORRENTE_EDITAR_VALOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, salvar_novo_valor_recorrente)],
+            RECORRENTE_EDITAR_NOME: [MessageHandler(filters.TEXT & ~filters.COMMAND, salvar_novo_nome_recorrente)],
         },
         fallbacks=[
             CallbackQueryHandler(voltar_para_menu, pattern='^voltar_menu$'),
             # Retorna dos estados de texto (RECORRENTE_TEXTO_LIVRE, RECORRENTE_COMPLETAR)
             # para a tela de ações da categoria (Registrar/Visualizar).
             CallbackQueryHandler(recorrente_escolher_acao, pattern=r'^rec_cat_\d+$'),
-            # Retorna dos estados de edição (RECORRENTE_EDITAR_DIA, RECORRENTE_EDITAR_VALOR)
+            # Retorna dos estados de edição (RECORRENTE_EDITAR_DIA, _VALOR, _NOME)
             # para o submenu do item.
             CallbackQueryHandler(ver_item_recorrente, pattern=r'^rec_item_\d+$'),
             CommandHandler('cancelar', cancelar),
