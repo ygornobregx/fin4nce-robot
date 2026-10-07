@@ -39,12 +39,10 @@ def obter_conexao_db():
 # Fuso horário usado para agendar o resumo diário (independente do fuso do servidor)
 FUSO_BRASILIA = ZoneInfo("America/Sao_Paulo")
 
-# Automação de gastos recorrentes: horário padrão de disparo e espaçamento
-# entre lançamentos que caem no mesmo dia (evita rajada de mensagens). 05:00
-# reduz a chance de coincidir com o horário do Resumo Diário, que é
-# configurável por usuário e não tem um valor fixo a checar.
-HORARIO_COBRANCA_RECORRENTE = time(hour=5, minute=0, tzinfo=FUSO_BRASILIA)
-INTERVALO_ESPACAMENTO_RECORRENTE = 15 * 60
+# Automação de gastos recorrentes: horário padrão de disparo. 05:00 reduz a
+# chance de coincidir com o horário do Resumo Diário, que é configurável por
+# usuário e não tem um valor fixo a checar.
+HORARIO_COBRANCA_RECORRENTE = time(hour=17, minute=49, tzinfo=FUSO_BRASILIA)
 
 # Estados das conversas
 NOME_USUARIO, RENDA_MENSAL, NOMES_CATEGORIAS, VALORES_CATEGORIAS, DIA_FECHAMENTO = range(5)
@@ -2707,16 +2705,17 @@ async def verificar_gastos_recorrentes(context: ContextTypes.DEFAULT_TYPE):
     """
     Job diário (agendado às 05:00 de Brasília): identifica, entre todos os
     usuários, os gastos recorrentes com vencimento hoje e ainda não cobrados
-    neste ciclo, e agenda o lançamento de cada um via job_queue.run_once,
-    espaçados em INTERVALO_ESPACAMENTO_RECORRENTE (15min) entre si, na ordem
-    de criação (mais antigo dispara primeiro, às 05:00 em ponto).
+    neste ciclo, e agenda UM job por usuário (job_queue.run_once) que lança
+    todas as cobranças dele de uma vez, na ordem de criação (mais antigo
+    primeiro).
+
+    Lançar tudo junto (em vez de espaçar) mantém o indicador "X-Y" sempre
+    verdadeiro: quando o usuário clica em "Próxima", a cobrança seguinte já
+    existe. Um job por usuário (e não um por cobrança) também evita que dois
+    lançamentos do mesmo usuário rodem intercalados e mandem duas mensagens.
 
     Vencimento no dia 31 (ou 30/29) num mês mais curto dispara no último dia
     do mês, mesma regra já usada em _executar_verificacao_resets.
-
-    Cada item já sai agendado sabendo sua posição e o total do dia (pro
-    indicador de página "X-Y"), e com user_id/chat_id associados ao job para
-    _lancar_gasto_recorrente_job poder usar context.user_data.
     """
     agora = datetime.now(FUSO_BRASILIA)
     dia_hoje = agora.day
@@ -2732,26 +2731,24 @@ async def verificar_gastos_recorrentes(context: ContextTypes.DEFAULT_TYPE):
     ).fetchall()
     conn.close()
 
-    itens = [
-        (gr_id, user_id) for gr_id, dia_cobranca, user_id in candidatos
-        if min(dia_cobranca, ultimo_dia_mes) == dia_hoje
-    ]
-    total_do_dia = len(itens)
+    por_usuario = {}
+    for gr_id, dia_cobranca, user_id in candidatos:
+        if min(dia_cobranca, ultimo_dia_mes) == dia_hoje:
+            por_usuario.setdefault(user_id, []).append(gr_id)
 
-    for indice, (gr_id, user_id) in enumerate(itens):
-        atraso = indice * INTERVALO_ESPACAMENTO_RECORRENTE
+    for user_id, gr_ids in por_usuario.items():
         context.job_queue.run_once(
-            _lancar_gasto_recorrente_job,
-            atraso,
+            _lancar_gastos_recorrentes_job,
+            0,
             chat_id=user_id,
             user_id=user_id,
-            data={'gr_id': gr_id, 'ciclo': ciclo_atual, 'posicao': indice + 1, 'total_dia': total_do_dia},
-            name=f"recorrente_{gr_id}_{ciclo_atual}"
+            data={'gr_ids': gr_ids, 'ciclo': ciclo_atual},
+            name=f"recorrentes_{user_id}_{ciclo_atual}"
         )
 
-    if itens:
-        print(f"🔁 {len(itens)} gasto(s) recorrente(s) agendado(s) para hoje, espaçados em "
-              f"{INTERVALO_ESPACAMENTO_RECORRENTE // 60}min entre si.")
+    total = sum(len(gr_ids) for gr_ids in por_usuario.values())
+    if total:
+        print(f"🔁 {total} gasto(s) recorrente(s) de {len(por_usuario)} usuário(s) agendado(s) para lançamento imediato.")
 
 def _montar_texto_recorrente_diario(item):
     """Texto de uma página da mensagem diária de cobranças recorrentes:
@@ -2764,62 +2761,72 @@ def _teclado_recorrente_diario():
         InlineKeyboardButton("← Menu Principal", callback_data='rec_diario_menu', style="danger")
     ]])
 
-async def _lancar_gasto_recorrente_job(context: ContextTypes.DEFAULT_TYPE):
+def _lancar_item_recorrente(conn, user_id, gr_id, ciclo):
     """
-    Executa o lançamento de um único gasto recorrente: debita a categoria,
-    grava a transação (mesma lógica de um "Registrar Gasto" comum) e
-    notifica o usuário. Todas as cobranças do mesmo dia (Brasília) editam a
-    MESMA mensagem (paginável com "Próxima -->"), em vez de uma mensagem
-    nova por cobrança; ela só é apagada por clique explícito em "← Menu
-    Principal" ou ao passar da última página — nunca sozinha.
-
-    Reconfirma 'ultimo_ciclo_cobrado' na hora de rodar (não só no momento em
-    que verificar_gastos_recorrentes agendou o job), pra nunca cobrar duas
-    vezes no mesmo ciclo. 'posicao'/'total_dia' (indicador de página) já
-    vêm prontos de verificar_gastos_recorrentes, que conhece o total do dia
-    desde o agendamento.
+    Lança um único gasto recorrente: debita a categoria e grava a transação
+    (mesma lógica de um "Registrar Gasto" comum). Reconfirma
+    'ultimo_ciclo_cobrado' na hora de rodar (não só no momento em que
+    verificar_gastos_recorrentes agendou o job), pra nunca cobrar duas vezes
+    no mesmo ciclo. Devolve o corpo (HTML) da notificação, ou None se a
+    cobrança não foi lançada.
     """
-    gr_id = context.job.data['gr_id']
-    ciclo = context.job.data['ciclo']
-    posicao = context.job.data['posicao']
-    total_dia = context.job.data['total_dia']
-    user_id = context.job.chat_id
-
-    conn = obter_conexao_db()
     item = conn.execute(
         'SELECT categoria_nome, descricao, valor, ultimo_ciclo_cobrado FROM gastos_recorrentes WHERE id = ?',
         (gr_id,)
     ).fetchone()
 
     if not item:
-        conn.close()
-        return
+        return None
 
     categoria_nome, descricao, valor, ultimo_ciclo_cobrado = item
     if ultimo_ciclo_cobrado == ciclo:
-        conn.close()
-        return
+        return None
 
     momento = datetime.now(FUSO_BRASILIA).strftime('%Y-%m-%d %H:%M:%S')
     cursor = conn.cursor()
     # Mesmo lançamento de um gasto comum: o impacto em Orçamento/Gasto/Sobra
     # sai da fonte única (calcular_status_categoria), sem cálculo próprio aqui.
     if not debitar_categoria(cursor, user_id, categoria_nome, valor, momento):
-        conn.close()
         print(f"⚠️ Gasto recorrente {gr_id} não lançado: categoria '{categoria_nome}' não existe mais para o usuário {user_id}.")
-        return
+        return None
 
     cursor.execute('UPDATE gastos_recorrentes SET ultimo_ciclo_cobrado = ? WHERE id = ?', (ciclo, gr_id))
     conn.commit()
     novo_saldo = calcular_sobra_categoria(conn, user_id, categoria_nome)
-    conn.close()
 
-    corpo = (
+    return (
         f"Descrição: <b>{escape(descricao)}</b>\n"
         f"Categoria: <b>{escape(categoria_nome)}</b>\n"
         f"Valor: <b>{formatar_real(valor)}</b>\n"
         f"Resta na Categoria: <b>{formatar_real(novo_saldo)}</b>"
     )
+
+async def _lancar_gastos_recorrentes_job(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Lança, em sequência, todos os gastos recorrentes do usuário que vencem
+    hoje e notifica uma única vez. Todas as cobranças do mesmo dia (Brasília)
+    ficam na MESMA mensagem (paginável com "Próxima -->"), em vez de uma
+    mensagem nova por cobrança; ela só é apagada por clique explícito em "←
+    Menu Principal" ou ao passar da última página — nunca sozinha.
+
+    O indicador "posição-total" é calculado depois de lançar tudo, só com o
+    que foi de fato lançado (uma cobrança pulada por já ter sido cobrada, ou
+    por categoria removida, não deixa um "1-2" mentiroso).
+    """
+    gr_ids = context.job.data['gr_ids']
+    ciclo = context.job.data['ciclo']
+    user_id = context.job.chat_id
+
+    conn = obter_conexao_db()
+    corpos = []
+    for gr_id in gr_ids:
+        corpo = _lancar_item_recorrente(conn, user_id, gr_id, ciclo)
+        if corpo:
+            corpos.append(corpo)
+    conn.close()
+
+    if not corpos:
+        return
 
     # Estado (itens/paginação) guardado numa chave própria. A mensagem em si
     # também é registrada em 'msgs_fluxo' ao ser criada (igual ao Resumo
@@ -2830,10 +2837,13 @@ async def _lancar_gasto_recorrente_job(context: ContextTypes.DEFAULT_TYPE):
     if not estado or estado['data'] != hoje_str:
         estado = {'data': hoje_str, 'message_id': None, 'itens': []}
 
-    novo_item = {'posicao': posicao, 'total_dia': total_dia, 'corpo': corpo}
-    estado['itens'].append(novo_item)
-    estado['pagina_atual'] = len(estado['itens']) - 1
-    texto = _montar_texto_recorrente_diario(novo_item)
+    primeira_nova = len(estado['itens'])
+    estado['itens'].extend({'corpo': corpo} for corpo in corpos)
+    for i, item in enumerate(estado['itens']):
+        item['posicao'] = i + 1
+        item['total_dia'] = len(estado['itens'])
+    estado['pagina_atual'] = primeira_nova
+    texto = _montar_texto_recorrente_diario(estado['itens'][primeira_nova])
     teclado = _teclado_recorrente_diario()
 
     editado = False
@@ -2859,7 +2869,7 @@ async def _lancar_gasto_recorrente_job(context: ContextTypes.DEFAULT_TYPE):
             context.user_data['ultima_msg_bot'] = nova_msg.message_id
             context.user_data['msgs_fluxo'] = [nova_msg.message_id]
         except Exception as e:
-            print(f"⚠️ Não consegui notificar o usuário {user_id} sobre o gasto recorrente {gr_id}: {e}")
+            print(f"⚠️ Não consegui notificar o usuário {user_id} sobre os gastos recorrentes: {e}")
 
     context.user_data['recorrente_diario'] = estado
 
