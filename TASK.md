@@ -1,41 +1,54 @@
-# TASK: Cobrança Recorrente Sem Mensagens Duplicadas (Mesmo Padrão do Resumo Diário) + Novo Horário
+# TASK: Cobrança Recorrente Ainda Duplica o Menu Principal (2ª Tentativa)
 
 ## 🎯 Visão Geral da Feature
-Quando a notificação de cobrança recorrente chega, a mensagem que já estava no chat (ex: o Menu Principal antigo) continua lá, gerando duplicata. A notificação deve funcionar como o Resumo Financeiro Diário: ao ser enviada, substitui o que estiver no chat, ficando uma única mensagem. A paginação continua exatamente como está.
+A notificação de cobrança recorrente continua deixando duas mensagens de Menu Principal no chat: o menu antigo (que já estava lá) e o novo (gerado ao clicar em "Menu Principal" na notificação). A primeira tentativa de correção (reaproveitar o mecanismo do Resumo Financeiro Diário) não resolveu. Agora a prioridade é descobrir a causa raiz antes de mexer de novo.
 
 ## 🐞 Descrição do Bug
-**Atual (errado):** A notificação de cobrança recorrente chega e a mensagem anterior permanece no chat.
+**Atual (errado):** Ao receber a cobrança recorrente e clicar em "Próxima" ou "Menu Principal", a mensagem que já estava no chat (ex: um Menu Principal de horas ou de um dia antes) continua lá. Resultado: duas mensagens de Menu Principal.
 
-**Esperado (correto):** A notificação remove qualquer outra mensagem de interface que esteja no chat (ex: Menu Principal antigo), igual ao Resumo Financeiro Diário, e fica sozinha.
+**Esperado (correto):** Depois de qualquer interação com a notificação, fica exatamente **uma** mensagem de interface no chat.
+
+## 📎 O Que Já Foi Tentado
+*   Reaproveitar o mecanismo de substituição do Resumo Financeiro Diário na cobrança recorrente: **não resolveu**.
+*   Horário 05:00 e intervalo de 15 minutos: já aplicados, não fazem parte deste problema.
+*   Não repetir a mesma abordagem sem entender por que ela falhou.
 
 ## 🛠️ Objetivos e Regras de Negócio (UI/UX)
 
-**1. Mesma Lógica do Resumo Financeiro Diário:**
-*   Ao enviar a notificação de cobrança recorrente, remover qualquer outra mensagem de interface que esteja no chat, usando exatamente o mesmo mecanismo que o Resumo Diário já usa para substituir a mensagem do chat.
+**1. Nunca Duplicar:**
+*   Depois de "Próxima", de "Menu Principal" clicado direto (caso o usuário não queira ver as outras cobranças ou esteja com pressa) ou de "Pular", sobra uma só mensagem de interface no chat.
 
-**2. Paginação Inalterada:**
-*   Não mexer na lógica de "Próxima", no indicador de página, na mensagem única editada a cada cobrança nem na mensagem de fim da paginação. Tudo isso continua igual.
+**2. Mesmo Fluxo do Resumo Financeiro Diário:**
+*   Ao receber, a notificação substitui o que estiver no chat. Ao clicar em "Menu Principal", remove a notificação e fica um Menu Principal. Isso vale para a paginação **e** para o clique direto no Menu Principal.
 
-**3. Botões:**
-*   "Menu Principal"/"Pular" continuam se comportando como nas outras notificações, resultando em uma única mensagem no chat.
+**3. Regra Alternativa Aceita (se for mais simples):**
+*   Ao clicar em "Menu Principal" na notificação: se **existir** outra mensagem (um Menu Principal) no chat, apenas apagar a notificação. Se **não existir nenhuma**, a notificação vira o Menu Principal. O chat nunca fica vazio nem com duas.
 
-**4. Novo Horário e Intervalo:**
-*   Horário padrão da cobrança recorrente: **05:00** (antes era 09:00).
-*   Intervalo entre cobranças do mesmo dia: **15 minutos** (antes era 30). Não há problema em receber quase juntas, já que existe a paginação. A ordem continua sendo a de criação.
-*   Usar o mesmo fuso horário dos outros jobs do bot (o servidor do Discloud pode estar em UTC, então garantir o horário no fuso de Brasília).
-*   Estes valores substituem o 09:00 e os 30 minutos da tarefa "Persistência e Paginação das Mensagens de Cobrança Recorrente".
+**4. Paginação Inalterada:**
+*   A lógica de "Próxima", o indicador de página e a mensagem única editada a cada cobrança continuam exatamente como estão.
+
+## 🔍 Investigação Obrigatória (causa raiz)
+Verifique estas hipóteses antes de propor qualquer correção:
+*   **a)** O id do Menu Principal antigo fica guardado só em memória e se perde quando o bot reinicia (o Discloud reinicia o app), ou fica guardado num lugar que o job da cobrança (que roda sozinho, sem interação do usuário) não acessa.
+*   **b)** O job da cobrança usa um caminho de envio diferente do Resumo Diário, por exemplo envia mensagem nova sem passar pela função que apaga a anterior, ou usa um id vazio ou desatualizado.
+*   **c)** A falha ao apagar está sendo engolida silenciosamente (os logs do bot têm avisos "(ignorado)"). Confira os logs ao disparar a cobrança.
+*   **d)** O Menu Principal é enviado em vários pontos do bot sem registrar o id, e o id "ativo" fica desatualizado.
+
+Se a causa for tracking do id, a direção provável de correção é persistir o id da mensagem de interface ativa (por exemplo no banco, usando a rotina de migração automática já existente) e atualizá-lo toda vez que o bot enviar ou editar um menu ou notificação. Proponha isso só depois do diagnóstico.
 
 ## 💻 Instruções de Implementação para o `bot.py`
-1. Leia como o Resumo Financeiro Diário substitui a mensagem do chat e reaproveite exatamente esse mecanismo (mesma função ou mesmo padrão), sem criar uma lógica nova.
-2. Aplique esse mecanismo no envio da notificação de cobrança recorrente.
-3. Trate a falha ao apagar a mensagem anterior (mensagem já apagada pelo usuário ou antiga demais) sem derrubar o job, do mesmo jeito que o Resumo Diário faz.
-4. **Verificar o caso de borda:** depois que o usuário dispensar a notificação ("Menu Principal"/"Pular"), uma cobrança seguinte no mesmo dia **não pode editar** a mensagem que virou menu. Ela deve criar uma notificação nova, aplicando a regra 1. Se o padrão do Resumo Diário já cobre isso, apenas confirme.
-5. Ajuste o horário para 05:00 e o intervalo para 15 minutos.
-6. Teste no ambiente de teste: a notificação chega e o menu antigo some; a paginação funciona como antes; fica uma só mensagem no chat.
+1. Reproduza no ambiente de teste: deixe um Menu Principal no chat, dispare a cobrança recorrente (sugira uma forma temporária de disparar manualmente, sem deixar comando de teste permanente) e observe os logs.
+2. Compare o caminho do Resumo Diário (que funciona) com o da cobrança recorrente e relate as diferenças.
+3. Identifique qual hipótese é a causa e proponha a correção. Aguarde minha aprovação.
+4. Depois de aprovada, implemente e valide estes cenários:
+   *   **A)** Menu antigo no chat, clicar em "Próxima" e depois em "Menu Principal": fica um só.
+   *   **B)** Menu antigo no chat, clicar direto em "Menu Principal": fica um só.
+   *   **C)** Nenhuma mensagem no chat: a notificação vira o Menu Principal.
+   *   **D)** Reiniciar o bot entre o menu antigo e a cobrança (simula o reinício do Discloud): continua sem duplicar.
 
 ## 📋 Regra de Resposta (Economia de Tokens)
-1. Antes de qualquer código, confirme em 2 linhas como o Resumo Diário faz hoje a substituição e como vai aplicar isso na cobrança recorrente.
+1. Diagnóstico primeiro: diga em poucas linhas qual hipótese confere, antes de qualquer código.
 2. Aguarde minha aprovação antes de aplicar.
 
 ## Entregável
-Retorne apenas o código atualizado do job e dos trechos envolvidos no envio da notificação de cobrança recorrente.
+Diagnóstico da causa raiz e, depois de aprovado, o código atualizado dos trechos envolvidos.
