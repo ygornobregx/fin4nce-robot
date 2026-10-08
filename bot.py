@@ -635,11 +635,24 @@ CHAVES_ESTADO_TEMPORARIO = (
     'nome_temp', 'renda_temp', 'categorias_temp', 'orcamentos_temp', 'index_atual',
 )
 
+def resetar_conversas(application, chat_id, user_id):
+    """Encerra o estado de TODOS os ConversationHandlers deste usuário.
+    Necessário quando o Menu Principal é exibido por um handler fora de
+    qualquer conversa (notificações, /menu): sem isso, o estado de um fluxo
+    abandonado continua ativo, e a conversa antiga volta a capturar o texto
+    digitado. Usa o dicionário interno do PTB (versão fixada no
+    requirements.txt) — se atualizar o PTB, revalide este caminho."""
+    for handlers in application.handlers.values():
+        for handler in handlers:
+            if isinstance(handler, ConversationHandler):
+                handler._conversations.pop((chat_id, user_id), None)
+
 async def voltar_para_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Manipulador para cancelar o fluxo em andamento: limpa as variáveis
     # temporárias de qualquer sub-fluxo e re-exibe o Menu Principal limpo.
     query = update.callback_query
     await responder_callback(query)
+    resetar_conversas(context.application, query.message.chat_id, query.from_user.id)
 
     for chave in CHAVES_ESTADO_TEMPORARIO:
         context.user_data.pop(chave, None)
@@ -2785,6 +2798,7 @@ async def resumo_diario_menu_callback(update: Update, context: ContextTypes.DEFA
     query = update.callback_query
     await responder_callback(query)
     chat_id = query.message.chat_id
+    resetar_conversas(context.application, chat_id, query.from_user.id)
 
     try:
         await query.message.delete()
@@ -3147,6 +3161,9 @@ async def _fechar_recorrente_diario(context, chat_id, message_id):
     Mantém o histórico ('itens') de cobranças já lançadas hoje — só limpa o
     'message_id': se uma nova cobrança disparar depois no mesmo dia, ela
     reabre com uma mensagem nova."""
+    # Chat privado: user_id == chat_id.
+    resetar_conversas(context.application, chat_id, chat_id)
+
     estado = context.user_data.get('recorrente_diario')
     if estado:
         estado['message_id'] = None
@@ -3477,6 +3494,7 @@ async def comando_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.delete()
     except Exception:
         pass
+    resetar_conversas(context.application, update.effective_chat.id, update.effective_user.id)
     texto_menu = await montar_texto_menu_principal(update.effective_chat.id)
     await enviar_fluxo(context, update.effective_chat.id, texto_menu, reply_markup=obter_teclado_menu())
 
@@ -3587,6 +3605,11 @@ if __name__ == '__main__':
         },
         # Manipulador para cancelar o fluxo e voltar ao menu, disponível em qualquer estado.
         fallbacks=[CallbackQueryHandler(voltar_para_menu, pattern='^voltar_menu$'), CommandHandler('cancelar', cancelar)],
+        # allow_reentry: um clique num entry_point reinicia a conversa mesmo que o
+        # usuário tenha ficado preso em algum estado (ex: fluxo abandonado). Sem
+        # isso, o botão do Menu Principal é ignorado em silêncio. TODO
+        # ConversationHandler novo iniciado por botão deve manter esta flag.
+        allow_reentry=True,
     )
 
     conv_add_cat = ConversationHandler(
@@ -3601,6 +3624,7 @@ if __name__ == '__main__':
         },
         # Manipulador para cancelar o fluxo e voltar ao menu, disponível em qualquer estado.
         fallbacks=[CallbackQueryHandler(voltar_para_menu, pattern='^voltar_menu$'), CommandHandler('cancelar', cancelar)],
+        allow_reentry=True,
     )
 
     conv_transferir = ConversationHandler(
@@ -3610,6 +3634,7 @@ if __name__ == '__main__':
         },
         # Manipulador para cancelar o fluxo e voltar ao menu, disponível em qualquer estado.
         fallbacks=[CallbackQueryHandler(voltar_para_menu, pattern='^voltar_menu$'), CommandHandler('cancelar', cancelar)],
+        allow_reentry=True,
     )
 
     conv_alerta = ConversationHandler(
@@ -3635,6 +3660,7 @@ if __name__ == '__main__':
         },
         # Manipulador para cancelar o fluxo e voltar ao menu, disponível em qualquer estado.
         fallbacks=[CallbackQueryHandler(voltar_para_menu, pattern='^voltar_menu$'), CommandHandler('cancelar', cancelar)],
+        allow_reentry=True,
     )
 
     # CORREÇÃO DA EDIÇÃO: Adicionados os gatilhos como entry_points oficiais do ConversationHandler
@@ -3664,6 +3690,7 @@ if __name__ == '__main__':
             CallbackQueryHandler(gerenciar_categoria_especifica, pattern='^edit_cat_'),
             CommandHandler('cancelar', cancelar)
         ],
+        allow_reentry=True,
     )
 
     conv_recorrente = ConversationHandler(
@@ -3699,6 +3726,7 @@ if __name__ == '__main__':
             CallbackQueryHandler(ver_item_recorrente, pattern=r'^rec_item_\d+$'),
             CommandHandler('cancelar', cancelar),
         ],
+        allow_reentry=True,
     )
 
     app.add_handler(CallbackQueryHandler(excluir_categoria_botao, pattern='^acao_excluir_'))

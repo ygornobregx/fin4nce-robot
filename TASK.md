@@ -1,62 +1,39 @@
-# TASK: Botão "Editar Gasto" com Opções "Editar Valor" e "Editar Categoria"
+# TASK: Botão "Registrar Gasto Recorrente" do Menu Principal Não Responde
 
 ## 🎯 Visão Geral da Feature
-Ao registrar um gasto e escolher a forma de pagamento, a mensagem final tem o botão **"Editar Gasto"**, que hoje só permite editar o valor. Esse botão passa a abrir duas opções: **"Editar Valor"** (comportamento atual) e **"Editar Categoria"** (novo), para corrigir a categoria do gasto recém-registrado sem precisar apagar e refazer.
+No Menu Principal, o botão **"Registrar Gasto Recorrente"** (que abre a área para registrar e visualizar os gastos recorrentes ativos) não faz nada ao ser clicado. Todos os outros botões do Menu Principal funcionam normalmente, só esse não responde. Sem esse botão, a funcionalidade de gastos recorrentes fica inacessível.
 
-## 🛠️ Objetivos e Regras de Negócio (UI/UX)
+## 🐞 Descrição do Bug
+**Atual (errado):** Ao clicar em "Registrar Gasto Recorrente" no Menu Principal, literalmente nada acontece: nenhuma tela nova, nenhuma mensagem de erro.
 
-**1. Botão "Editar Gasto" Abre Duas Opções:**
-*   Ao clicar em "Editar Gasto", mostrar uma tela com dois botões: **"Editar Valor"** e **"Editar Categoria"**, mais o botão de voltar no padrão do bot.
-*   ✏️ O ticket não define o texto dessa tela. Sugestão: **"O Que Você Deseja Editar Neste Gasto?"**.
+**Esperado (correto):** Ao clicar, abre a tela de seleção de categoria ("Em qual categoria deseja adicionar ou visualizar gasto recorrente?"), como no fluxo original.
 
-**2. "Editar Valor" (comportamento atual, sem mudanças):**
-*   Texto: `Atualize o Valor da Sua Cobrança Enviando o Novo Valor...` (manter o texto que já existe hoje, se for diferente).
+## 🔍 Investigação Obrigatória (causa raiz)
+Verifique estas hipóteses e diga qual confere:
+*   **a) `callback_data` diferente:** o `callback_data` do botão no Menu Principal não bate com o padrão do `CallbackQueryHandler` (ou do ponto de entrada do `ConversationHandler`) desse fluxo. Pode ter sido alterado ou renomeado numa tarefa recente.
+*   **b) Handler não alcançado:** o handler não está registrado, foi removido ou duplicado, ou outro `CallbackQueryHandler` mais genérico, registrado antes (ordem ou grupo), está capturando o clique.
+*   **c) Erro engolido:** o handler dispara, mas dá erro e ele é tratado silenciosamente (os logs do bot têm avisos "(ignorado)" e "Erro não tratado"). Confira os logs no momento do clique.
+*   **d) Conflito de estado:** o usuário ficou preso no estado de outro `ConversationHandler` (por exemplo deixado por uma notificação, pela edição de gasto ou pela paginação), que intercepta o clique antes do fluxo recorrente.
+*   **e) Regressão recente:** alguma tarefa recente (menu principal, notificações de cobrança recorrente, botão "Editar Gasto", estilo ou largura dos botões) mexeu no menu ou nesse fluxo.
 
-**3. "Editar Categoria" (novo). Texto da mensagem:**
+Dicas de como investigar:
+*   Adicione um log temporário que mostre o `callback_data` recebido a cada clique, para ver se o clique chega e qual handler o pega.
+*   Use o Git (`git diff`, `git log`) para localizar mudanças recentes no Menu Principal e no handler desse botão.
+*   Reproduza no ambiente de teste e anote se acontece sempre ou só depois de alguma ação (como receber uma cobrança, usar outro fluxo ou reiniciar o bot).
 
-```
-Atualize a Categoria do Gasto Atual de R$ (VALOR DO GASTO) para uma das categorias abaixo:
-
-└ Lazer
-
-└ Alimentação
-
-└ Casa
-
-(demais categorias do usuário, no mesmo formato)
-
-Digite em qual das categorias acima deseja enviar o gasto de: R$ (VALOR DO GASTO)
-```
-
-*   A lista traz **todas** as categorias existentes do usuário, uma por bloco, com uma linha em branco entre elas.
-
-**4. Entrada do Usuário:**
-*   O usuário digita o nome da categoria, com o mesmo tipo de entrada dos outros campos de edição.
-*   A comparação ignora maiúsculas/minúsculas e acentos.
-*   Se não encontrar a categoria: avisar, mostrar a lista de novo e manter o fluxo, sem quebrar.
-*   Se for a mesma categoria que o gasto já tem: avisar que ele já está nela, sem alterar nada.
-
-**5. Efeito da Troca:**
-*   O gasto atual (o recém-registrado) passa para a nova categoria. O Gasto e a Sobra das **duas** categorias (a de origem e a de destino) devem refletir a mudança, usando a função central de cálculo de Orçamento/Gasto/Sobra, sem duplicar lógica. Se existirem valores guardados em vez de calculados, atualizar os dois lados.
-
-**6. Fim do Fluxo e Chat Limpo:**
-*   Depois de salvar, terminar do mesmo jeito que o "Editar Valor" termina hoje (reaproveitar), mostrando o gasto já atualizado.
-*   Seguir o padrão do bot de chat limpo: substituir/editar a mensagem, sem deixar duplicatas.
-
-## ⚠️ Pontos a Verificar Antes de Implementar
-*   **Gasto parcelado:** se o gasto for no crédito, com parcelas, verifique como ele é guardado (transação, parcelamento, parcelas). Trocar a categoria deve atualizar **todos** os registros ligados a ele, não só um. Relate o que encontrou antes de implementar.
-*   **"Editar Gasto" hoje:** verifique como esse botão funciona atualmente (estado do fluxo e handler) para não quebrar o "Editar Valor" ao colocar as duas opções.
+## ⚠️ Pergunta ao Ygor Antes de Corrigir
+*   O bug acontece **sempre** ou só depois de alguma ação específica (receber uma notificação, usar outro botão, reiniciar o bot)? E em qual ambiente foi visto, teste ou produção? Isso ajuda a separar um erro de código de um estado preso.
 
 ## 💻 Instruções de Implementação para o `bot.py`
-1. Localize o botão "Editar Gasto" no fim do registro de gasto e o handler do "Editar Valor".
-2. Crie a tela intermediária com os dois botões e o botão de voltar.
-3. Implemente o fluxo de "Editar Categoria": mensagem com a lista de categorias, novo estado de entrada, busca da categoria digitada (sem diferenciar maiúsculas e acentos) e a troca no banco.
-4. Garanta o recálculo de Gasto/Sobra das duas categorias e o tratamento do caso parcelado (ponto ⚠️).
-5. Teste: gasto à vista e gasto parcelado; categoria digitada com letra diferente e sem acento; categoria inexistente; mesma categoria; conferir Gasto/Sobra das duas categorias antes e depois.
+1. Reproduza o bug no ambiente de teste, com o log temporário do `callback_data`.
+2. Identifique qual hipótese confere e relate antes de corrigir.
+3. Depois de aprovado, corrija a causa raiz. Evite remendos: se for `callback_data` diferente, alinhe os dois lados; se for estado preso, corrija a saída do outro fluxo.
+4. Valide: o botão abre a tela de categorias; depois de clicar em "Voltar" o fluxo retorna ao Menu Principal sem duplicata; os outros botões do Menu Principal continuam funcionando.
+5. Faça uma auditoria rápida nos outros menus e botões que levam a esse fluxo (por exemplo, voltas de submenus) e liste qualquer um com problema parecido, sem corrigir ainda.
 
 ## 📋 Regra de Resposta (Economia de Tokens)
-1. Antes de qualquer código, relate o que encontrou sobre os dois pontos ⚠️ e confirme em 2 linhas quais funções serão alteradas.
-2. Aguarde minha aprovação antes de aplicar.
+1. Diagnóstico primeiro: diga em poucas linhas qual hipótese confere, e me faça a pergunta do ponto ⚠️ se ainda precisar.
+2. Aguarde minha aprovação antes de aplicar a correção.
 
 ## Entregável
-Retorne apenas o código novo ou alterado: a tela intermediária, o fluxo "Editar Categoria" e a atualização no banco.
+Diagnóstico da causa raiz e, depois de aprovado, o código corrigido dos trechos envolvidos.
