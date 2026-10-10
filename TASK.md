@@ -1,50 +1,62 @@
-# TASK: Sobra Divergente entre "Ver Resumo" e "Meses Anteriores e Futuros" (Pista: Transferências)
+# TASK: Unificar o Cálculo de Gasto (com Parcelas) e Corrigir a Renomeação de Categoria
 
 ## 🎯 Visão Geral da Feature
-A **Sobra** de uma categoria aparece diferente em "Ver Resumo" e em "Ver Meses Anteriores e Futuros → Mês Atual", sendo que os dois mostram o mesmo mês. O Ygor fez uma transferência de Lazer para Alimentação neste mês e suspeita que seja isso. Além de corrigir o cálculo, decidir se "Mês Atual" faz sentido na navegação de meses.
+Antes de construir o Mini App, os números do bot precisam ser consistentes e confiáveis. Uma análise do código encontrou dois problemas reais: (1) o **Gasto** de uma categoria é calculado de formas diferentes conforme a tela, e as parcelas 2..N de compras parceladas antigas não entram na Sobra do "Ver Resumo"; (2) **renomear uma categoria** não atualiza parcelamentos, transferências nem gastos recorrentes, e esses registros ficam órfãos e somem do cálculo.
 
-## 🐞 Descrição do Bug
-**Atual (errado):** A Sobra do mês atual em "Ver Resumo" é diferente da mostrada em "Meses Anteriores e Futuros → Mês Atual", pelo menos nas categorias envolvidas na transferência (Lazer e Alimentação).
+## 🐞 Etapa 1 — Gasto Diferente por Tela
+**Atual (errado):**
+*   Ver Resumo, detalhe da categoria, Resumo Diário e Resumo Mensal contam só `transacoes`. As parcelas 2..N de compras parceladas antigas nunca entram, porque não existem como transação. A Sobra do ciclo fica maior do que deveria.
+*   "Ver Meses Anteriores e Futuros" (inclusive "Mês Atual") soma as transações avulsas (excluindo a parcela 1 de cada parcelamento) mais as parcelas expandidas que caem no mês, via `gasto_externo`.
+*   Resultado: "Mês Atual" pode diferir do "Ver Resumo" quando há parcelas 2..N no ciclo ou depois de um "Banco Adiou".
 
-**Esperado (correto):** Todas as telas que mostram um mês/ciclo (Ver Resumo e a navegação de meses passados e futuros) devem mostrar valores **idênticos** para o mesmo período, incluindo o efeito das transferências.
+**Esperado (correto):** Todas as telas calculam o Gasto da mesma forma, como uma fatura: transações avulsas do ciclo **mais** as parcelas de compras parceladas que caem naquele ciclo (a regra já definida: a parcela de novembro soma ao gasto de novembro).
 
-## 🔗 Relação com Outras Tarefas
-*   O mesmo sintoma já foi reportado na tarefa **"Valor Divergente entre Ver Resumo e Ver Meses Anteriores e Futuros (Mês Atual)"**. Verifique se ela foi implementada e por que a divergência continua. Esta tarefa traz uma pista nova: as transferências.
-*   Também se liga a **"Transferência entre Categorias (Orçamento/Gasto/Sobra Dinâmicos)"** e **"Fechamento Automático de Fatura"** (a que ciclo cada transferência pertence).
+## 🛠️ Regras de Negócio da Etapa 1
+1. **Uma definição de Gasto:** adotar para todas as telas a lógica que a navegação de meses já usa (avulsas, sem a parcela 1 duplicada, mais as parcelas expandidas pelo `ciclo_referencia` dos parcelamentos ativos). Assim "Banco Adiou" funciona igual em todo lugar.
+2. **Dentro da função central:** idealmente `calcular_status_categoria` passa a incluir as parcelas por conta própria, eliminando a necessidade do `gasto_externo` e da divergência entre telas.
+3. **Resumo Diário:** o "Gasto de hoje" continua sendo só o que foi registrado hoje. Apenas a Sobra passa a considerar as parcelas do ciclo.
+4. **Resumo Mensal e painel:** o ranking de maiores gastos, o total e a Sobra do Mês (`montar_texto_painel`) passam a refletir o novo Gasto, sem lógica própria.
+5. **Parcelamentos inativos** (`ativo = 0`) não contam.
+6. **Sem dupla contagem:** a parcela 1 não pode ser contada duas vezes (como transação e como parcela).
+7. **Aviso esperado:** em produção a Sobra pode diminuir quando houver parcelas antigas no ciclo atual. Isso é o comportamento correto.
 
-## 🔍 Investigação Obrigatória (causa raiz)
-Verifique estas hipóteses e diga qual confere:
-*   **a)** A função de "Ver Resumo" considera as transferências (tabela `transferencias`) no orçamento/sobra da categoria, e a tela "Mês Atual" da navegação não considera (ou o contrário).
-*   **b)** A transferência é atribuída a um mês/ciclo de forma diferente em cada tela (por exemplo pela data da transferência no mês de calendário numa tela, e pelo ciclo de fatura na outra).
-*   **c)** O cálculo existe duplicado em dois lugares, sem usar uma função central única.
-*   **d)** Um lado usa valor **guardado** (ex: orçamento ajustado da categoria) e o outro **recalcula** a partir das transações e transferências.
+## 🐞 Etapa 2 — Renomear Categoria Quebra os Vínculos
+**Atual (errado):** `salvar_novo_nome` atualiza só `transacoes`. Os vínculos por nome em `parcelamentos`, `transferencias` (origem e destino) e `gastos_recorrentes` ficam apontando para o nome antigo. Depois do rename, parcelas e transferências dessa categoria somem do cálculo.
 
-Reproduza no ambiente de teste: crie uma transferência entre duas categorias, compare Orçamento, Gasto e Sobra em "Ver Resumo" e em "Mês Atual" da navegação, e confira também um mês passado e um mês futuro.
+**Esperado (correto):** Renomear atualiza **todas** as tabelas que referenciam a categoria pelo nome, de forma atômica (tudo ou nada, numa única transação).
 
-## ⚠️ Decisão de Layout (só depois da correção do cálculo)
-O "Mês Atual" na navegação repete o que "Ver Resumo" já mostra. Opções:
-*   **A) Remover "Mês Atual" da navegação**, deixando só meses anteriores e futuros (recomendado: menos redundância e menos chance de divergir).
-*   **B) Manter**, desde que use exatamente a mesma função de cálculo.
+## 🛠️ Regras de Negócio da Etapa 2
+1. Propagar o novo nome para a própria categoria e para todas as tabelas que a referenciam pelo nome. Enumere todas, procurando cada uso do nome da categoria no código, e não apenas as quatro citadas.
+2. Operação atômica: se qualquer atualização falhar, nada é alterado.
+3. **Diagnóstico de dados antigos (somente leitura):** escreva uma consulta que liste registros órfãos (que apontam para um nome de categoria que não existe mais para aquele usuário) e relate o resultado. **Não corrija dados de produção sem minha aprovação.**
+4. **Excluir categoria (apenas verificar e propor):** descreva o que acontece hoje com parcelamentos ativos, gastos recorrentes e transferências ligados a uma categoria excluída (hoje é um `DELETE` físico). Proponha o comportamento ideal, sem alterar ainda.
+5. **Correção definitiva (apenas avaliar e propor):** avalie migrar o vínculo de nome para id da categoria. Não implemente agora.
 
-Pergunte ao Ygor. Ele pode preferir decidir isso junto da reformulação geral do layout do bot. Nesse caso, entregue só a Etapa 1.
-
-## 🛠️ Objetivos e Regras de Negócio
-1. **Uma fonte de cálculo:** Orçamento, Gasto e Sobra de qualquer mês/ciclo, em qualquer tela, vêm da mesma função central, incluindo o efeito das transferências do período.
-2. **Regra atual de transferência mantida:** não mude a regra de a qual ciclo a transferência pertence. Apenas relate qual é a regra hoje e aplique-a de forma igual em todas as telas.
-3. **Meses passados e futuros:** devem refletir as transferências do ciclo correspondente, também com o cálculo unificado.
+## 📌 Fora do Escopo (decidir depois)
+*   `dia_fechamento` e `orcamento_mensal` sem histórico (mudar o valor reclassifica o passado).
+*   Cobranças recorrentes lançadas ficam iguais a gastos avulsos (sem marca nem vínculo com o modelo).
+*   Colunas legadas (`categorias.saldo_atual`, `usuarios.ultimo_reset`) e `parcelas_pagas` nunca atualizada.
+*   **Melhoria futura:** a transação da parcela 1 é reconhecida por `parcelamentos.data_criacao == transacoes.data_transacao` (mesma categoria). Um gasto avulso registrado no mesmo segundo e na mesma categoria de um parcelamento seria excluído do Gasto. Correção definitiva: coluna de vínculo (`transacoes.parcelamento_id`).
 
 ## 💻 Instruções de Implementação para o `bot.py` (em Etapas)
+**Etapa 1:**
+1. Reproduza no ambiente de teste e anote Gasto/Sobra de uma mesma categoria em cada tela (referências aproximadas, podem ter mudado): Ver Resumo, detalhe da categoria, navegação de meses (inclusive "Mês Atual"), Resumo Diário e Resumo Mensal.
+2. Proponha a mudança em `calcular_status_categoria` e seus chamadores. Aguarde aprovação.
+3. Implemente e valide estes cenários:
+   *   Compra parcelada 3x registrada no ciclo atual, e no ciclo seguinte (para simular, crie no banco de teste um parcelamento com `ciclo_referencia` de um mês anterior, de modo que a parcela 2 caia no ciclo atual).
+   *   "Banco Adiou" em uma parcela.
+   *   Compras avulsas e parceladas na mesma categoria, com e sem transferências.
+   *   Parcelamento inativo.
+   *   Em todos: os valores de Ver Resumo, detalhe, "Mês Atual", Resumo Diário (Sobra) e Resumo Mensal batem entre si.
 
-**Etapa 1 — Diagnóstico e Correção do Cálculo:**
-*   Reproduza, identifique a causa raiz e relate. Depois de aprovado, unifique o cálculo e valide: mês atual, um mês passado e um mês futuro, com e sem transferências, nas duas categorias envolvidas e em uma categoria sem transferência.
-
-**Etapa 2 — Layout (somente após minha decisão):**
-*   Se a decisão for a opção A, remova "Mês Atual" da navegação sem quebrar a paginação entre meses nem os botões de voltar.
+**Etapa 2:** só depois de eu aprovar a Etapa 1.
+1. Relate as tabelas e colunas que referenciam categoria por nome e o resultado do diagnóstico de órfãos.
+2. Proponha e, depois de aprovado, implemente o rename atômico. Teste renomeando uma categoria com parcelamento, transferência e gasto recorrente, e confira que tudo continua no cálculo.
 
 ## 📋 Regra de Resposta (Economia de Tokens)
-1. Diagnóstico primeiro: diga em poucas linhas qual hipótese confere, antes de qualquer código.
-2. Aguarde minha aprovação antes de cada etapa.
+1. Faça uma etapa por vez: antes de cada código, relate o que encontrou e confirme em poucas linhas o plano.
+2. Aguarde minha aprovação antes de aplicar cada etapa.
 3. Não execute git add, commit nem push: o commit é feito manualmente por mim.
 
 ## Entregável
-Diagnóstico da causa raiz e, depois de aprovado, o código corrigido das funções envolvidas no cálculo.
+Por etapa aprovada: o código alterado das funções envolvidas e a tabela de valores por tela nos cenários testados.

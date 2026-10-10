@@ -178,61 +178,61 @@ def calcular_ciclo_fatura(data, dia_fechamento):
     depois já entram na fatura do mês seguinte; antes dele, ficam na fatura
     atual (o dia_fechamento é o primeiro dia do ciclo novo). Ajusta para
     meses mais curtos que o dia configurado (ex: fechamento dia 31 num mês
-    com 30 dias, ou fevereiro) — mesma regra usada em obter_inicio_ciclo_atual.
+    com 30 dias, ou fevereiro) — mesma regra usada em obter_intervalo_ciclo.
     """
     ultimo_dia_mes = calendar.monthrange(data.year, data.month)[1]
     dia_alvo = min(dia_fechamento, ultimo_dia_mes)
     base = f"{data.year:04d}-{data.month:02d}"
     return _somar_meses(base, 1) if data.day >= dia_alvo else base
 
-def obter_inicio_ciclo_atual(dia_fechamento, agora):
-    """Calcula o início do ciclo mensal baseado no dia_fechamento do usuário:
-    retorna a data do último vencimento (quando os saldos foram resetados
-    para o valor fixo) que já passou, ajustando para meses mais curtos que o
-    dia configurado — mesma regra usada em _executar_verificacao_resets."""
-    ultimo_dia_mes_atual = calendar.monthrange(agora.year, agora.month)[1]
-    dia_alvo_atual = min(dia_fechamento, ultimo_dia_mes_atual)
-
-    if agora.day >= dia_alvo_atual:
-        return datetime(agora.year, agora.month, dia_alvo_atual).strftime('%Y-%m-%d')
-
-    # Ainda não chegou o fechamento deste mês: o ciclo vigente começou no
-    # fechamento do mês anterior.
-    ano_anterior, mes_anterior = (agora.year, agora.month - 1) if agora.month > 1 else (agora.year - 1, 12)
-    ultimo_dia_mes_anterior = calendar.monthrange(ano_anterior, mes_anterior)[1]
-    dia_alvo_anterior = min(dia_fechamento, ultimo_dia_mes_anterior)
-    return datetime(ano_anterior, mes_anterior, dia_alvo_anterior).strftime('%Y-%m-%d')
-
 # --- ORÇAMENTO / GASTO / SOBRA (FONTE ÚNICA DE CÁLCULO) ---
-def obter_inicio_ciclo_usuario(conn, user_id):
-    """Início do ciclo vigente do usuário ('YYYY-MM-DD'), ou None se ele ainda
-    não configurou o dia de fechamento (nesse caso não há reset, e o cálculo
-    considera todo o histórico)."""
-    linha = conn.execute('SELECT dia_fechamento FROM usuarios WHERE user_id = ?', (user_id,)).fetchone()
-    if not linha or not linha[0]:
-        return None
-    return obter_inicio_ciclo_atual(linha[0], datetime.now(FUSO_BRASILIA))
+def _intervalo_fatura(ano_mes, dia_fechamento):
+    """Intervalo de datas da fatura 'ano_mes' (ver obter_intervalo_ciclo), ou
+    todo o histórico quando não há fatura (usuário sem dia de fechamento)."""
+    if ano_mes is None:
+        return '0000-01-01', '9999-12-31'
+    return obter_intervalo_ciclo(ano_mes, dia_fechamento)
 
-def calcular_status_categoria(conn, user_id, nome, inicio_ciclo, fim_ciclo=None, gasto_externo=None):
-    """Fonte única de Orçamento, Gasto e Sobra de uma categoria no ciclo
-    vigente, calculados na hora a partir do banco:
+def _parametros_itens_gasto(user_id, categoria, inicio, fim, ano_mes):
+    """Parâmetros, na ordem, de _SQL_PARCELAS_EXPANDIDAS + _SQL_ITENS_GASTO."""
+    return (user_id, categoria, categoria,
+            user_id, categoria, categoria, inicio, fim,
+            ano_mes, ano_mes)
+
+def calcular_gasto_fatura(conn, user_id, ano_mes, dia_fechamento):
+    """Gasto de cada categoria na fatura 'ano_mes' ({categoria: gasto}), pela
+    mesma definição de calcular_status_categoria. Inclui categorias já
+    excluídas que ainda têm movimento (o histórico mensal as mostra)."""
+    inicio, fim = _intervalo_fatura(ano_mes, dia_fechamento)
+    linhas = conn.execute(
+        _SQL_PARCELAS_EXPANDIDAS + _SQL_ITENS_GASTO +
+        'SELECT categoria_nome, SUM(valor) FROM itens_gasto GROUP BY categoria_nome',
+        _parametros_itens_gasto(user_id, None, inicio, fim, ano_mes)
+    ).fetchall()
+    return dict(linhas)
+
+def calcular_status_categoria(conn, user_id, nome, ano_mes=None):
+    """Fonte única de Orçamento, Gasto e Sobra de uma categoria numa fatura,
+    calculados na hora a partir do banco:
       - Orçamento = limite fixo + transferências recebidas − enviadas no ciclo
-      - Gasto     = soma das despesas (valores positivos) do ciclo
+      - Gasto     = despesas avulsas do ciclo + parcelas que caem na fatura
+                    (ver _SQL_ITENS_GASTO)
       - Sobra     = Orçamento − Gasto + receitas do ciclo
-    'fim_ciclo' ('YYYY-MM-DD', exclusivo) é usado para consultar um ciclo
-    que não é o vigente (Resumo Mensal, histórico de meses); sem ele, o ciclo
-    vai até hoje. 'gasto_externo' substitui o gasto lido das transações: o
-    histórico mensal soma também as parcelas que caem no ciclo (que não são
-    transações); Orçamento e receitas continuam vindo daqui, e a Sobra é
-    recalculada com esse gasto, pela mesma fórmula.
+    'ano_mes' ('YYYY-MM') escolhe a fatura (Resumo Mensal, histórico de
+    meses); sem ele, usa a fatura vigente. Sem dia de fechamento configurado
+    não há ciclo, e o cálculo considera todo o histórico.
     Retorna (orcamento, gasto, sobra), ou None se a categoria não existir."""
-    inicio = inicio_ciclo or '0000-01-01'
-    fim = fim_ciclo or '9999-12-31'
+    linha_usuario = conn.execute('SELECT dia_fechamento FROM usuarios WHERE user_id = ?', (user_id,)).fetchone()
+    dia_fechamento = linha_usuario[0] if linha_usuario else None
+    if not dia_fechamento:
+        ano_mes = None
+    elif ano_mes is None:
+        ano_mes = obter_ciclo_atual(dia_fechamento)
+    inicio, fim = _intervalo_fatura(ano_mes, dia_fechamento)
     linha = conn.execute(
+        _SQL_PARCELAS_EXPANDIDAS + _SQL_ITENS_GASTO +
         '''SELECT c.orcamento_mensal,
-                  (SELECT COALESCE(SUM(t.valor), 0) FROM transacoes t
-                    WHERE t.user_id = c.user_id AND t.categoria_nome = c.nome
-                      AND DATE(t.data_transacao) >= ? AND DATE(t.data_transacao) < ? AND t.valor > 0),
+                  (SELECT COALESCE(SUM(valor), 0) FROM itens_gasto),
                   (SELECT COALESCE(SUM(-t.valor), 0) FROM transacoes t
                     WHERE t.user_id = c.user_id AND t.categoria_nome = c.nome
                       AND DATE(t.data_transacao) >= ? AND DATE(t.data_transacao) < ? AND t.valor < 0),
@@ -243,14 +243,13 @@ def calcular_status_categoria(conn, user_id, nome, inicio_ciclo, fim_ciclo=None,
                     WHERE tr.user_id = c.user_id AND tr.categoria_origem = c.nome
                       AND DATE(tr.data_transferencia) >= ? AND DATE(tr.data_transferencia) < ?)
            FROM categorias c WHERE c.user_id = ? AND c.nome = ?''',
-        (inicio, fim, inicio, fim, inicio, fim, inicio, fim, user_id, nome)
+        _parametros_itens_gasto(user_id, nome, inicio, fim, ano_mes) +
+        (inicio, fim, inicio, fim, inicio, fim, user_id, nome)
     ).fetchone()
     if not linha:
         return None
     limite_fixo, gasto, receitas, recebido, enviado = linha
     orcamento = (limite_fixo or 0.0) + recebido - enviado
-    if gasto_externo is not None:
-        gasto = gasto_externo
     return orcamento, gasto, orcamento - gasto + receitas
 
 def debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento, metodo_pagamento=None):
@@ -272,7 +271,7 @@ def debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento, met
 
 def calcular_sobra_categoria(conn, user_id, nome):
     """Atalho para as mensagens de 'Resta na Categoria'."""
-    status = calcular_status_categoria(conn, user_id, nome, obter_inicio_ciclo_usuario(conn, user_id))
+    status = calcular_status_categoria(conn, user_id, nome)
     return status[2] if status else 0.0
 
 # --- FATURAS, PARCELAS E HISTÓRICO MENSAL ---
@@ -300,6 +299,32 @@ _SQL_PARCELAS_EXPANDIDAS = '''
     )
 '''
 
+# Definição única de Gasto de uma fatura, como uma fatura de cartão: despesas
+# avulsas do ciclo mais as parcelas de parcelamentos ativos que caem nela. A
+# parcela 1 também existe como transação (débito na hora da compra), então essa
+# transação sai das avulsas para não contar duas vezes — a parcela 1 entra pela
+# expansão, que respeita 'ciclo_referencia' ("Banco Adiou") e 'ativo'. Ela é
+# reconhecida por data_criacao == data_transacao na mesma categoria.
+# Melhoria futura: uma coluna de vínculo (transacoes.parcelamento_id) tornaria
+# esse reconhecimento exato. Concatenar após _SQL_PARCELAS_EXPANDIDAS; os
+# parâmetros vêm de _parametros_itens_gasto (ano_mes None = todas as parcelas).
+_SQL_ITENS_GASTO = '''
+    , itens_gasto(categoria_nome, valor) AS (
+        SELECT t.categoria_nome, t.valor FROM transacoes t
+        WHERE t.user_id = ? AND (? IS NULL OR t.categoria_nome = ?) AND t.valor > 0
+          AND DATE(t.data_transacao) >= ? AND DATE(t.data_transacao) < ?
+          AND NOT EXISTS (
+              SELECT 1 FROM parcelamentos p
+              WHERE p.user_id = t.user_id
+                AND p.categoria_nome = t.categoria_nome
+                AND p.data_criacao = t.data_transacao)
+        UNION ALL
+        SELECT p.categoria_nome, p.valor_parcela
+        FROM expandido e JOIN parcelamentos p ON p.id = e.pid
+        WHERE ? IS NULL OR e.ano_mes = ?
+    )
+'''
+
 # Espelho em SQL de calcular_ciclo_fatura, aplicado a 'data_transacao': devolve
 # a fatura ('YYYY-MM') de cada transação. Recebe 1 parâmetro (dia_fechamento).
 # MIN(?, último_dia_do_mês_da_transação) replica o ajuste de mês mais curto
@@ -318,8 +343,7 @@ def obter_intervalo_ciclo(ano_mes, dia_fechamento):
     """('YYYY-MM-DD' inicial inclusivo, 'YYYY-MM-DD' final exclusivo) da fatura
     'ano_mes'. É o inverso de calcular_ciclo_fatura: a fatura M vai do dia de
     fechamento do mês anterior (inclusive) até o de M (exclusive), com o ajuste
-    de meses mais curtos que o dia configurado. Para a fatura vigente o início
-    é o mesmo de obter_inicio_ciclo_atual."""
+    de meses mais curtos que o dia configurado."""
     def fechamento(ano_mes_ref):
         ano, mes = map(int, ano_mes_ref.split('-'))
         dia = min(dia_fechamento, calendar.monthrange(ano, mes)[1])
@@ -376,11 +400,39 @@ def categoria_existia_no_mes(data_criacao, ano_mes, dia_fechamento):
         return True
     return calcular_ciclo_fatura(criada, dia_fechamento) <= ano_mes
 
-def montar_texto_painel(titulo, renda, dia_fechamento, categorias, rotulo_gastos="Gastos Atuais"):
-    """Painel compartilhado pelo 'Ver Resumo' e pelo detalhe de cada mês do
-    histórico (mesmo layout). 'categorias' é uma lista de (nome, limite, sobra,
-    gasto): 'limite' e 'sobra' são None para categorias já excluídas (só
-    mostram o gasto). O gasto é sempre o total consolidado da categoria."""
+def montar_categorias_fatura(conn, user_id, ano_mes, dia_fechamento):
+    """Lista (nome, orcamento, sobra, gasto) da fatura 'ano_mes', no formato de
+    montar_texto_painel, usada pelo histórico de meses e pelo Resumo Mensal:
+    todas as categorias existentes na época (regra temporal por data de
+    criação), mais as que têm movimento no mês mesmo sem existir mais (só o
+    gasto, sem orçamento nem sobra). Orçamento, Gasto e Sobra vêm de
+    calcular_status_categoria — nada é lido de 'saldo_atual'."""
+    categorias_db = conn.execute(
+        'SELECT nome, orcamento_mensal, data_criacao FROM categorias WHERE user_id = ? ORDER BY id',
+        (user_id,)
+    ).fetchall()
+    gasto_mes = calcular_gasto_fatura(conn, user_id, ano_mes, dia_fechamento)
+
+    def montar_entrada(cat, limite):
+        gasto = gasto_mes.get(cat, 0.0)
+        if limite is None:
+            return (cat, None, None, gasto)
+        orcamento, gasto, sobra = calcular_status_categoria(conn, user_id, cat, ano_mes)
+        return (cat, orcamento, sobra, gasto)
+
+    categorias = []
+    for cat, limite, data_criacao in categorias_db:
+        if cat in gasto_mes or categoria_existia_no_mes(data_criacao, ano_mes, dia_fechamento):
+            categorias.append(montar_entrada(cat, limite))
+    existentes = {c[0] for c in categorias_db}
+    for cat in sorted(set(gasto_mes) - existentes):
+        categorias.append(montar_entrada(cat, None))
+    return categorias
+
+def calcular_totais_mes(renda, categorias):
+    """Definição única de Gasto total e Sobra do Mês, usada pelo painel ('Ver
+    Resumo' e histórico) e pelo Resumo Mensal. 'categorias' segue o formato
+    de montar_texto_painel. Retorna (comprometido, total_gastos, sobra_mes)."""
     comprometido = sum(limite for _, limite, _, _ in categorias if limite is not None)
     total_gastos = sum(gasto for _, _, _, gasto in categorias)
     total_excedido = sum(
@@ -389,7 +441,14 @@ def montar_texto_painel(titulo, renda, dia_fechamento, categorias, rotulo_gastos
     )
 
     # O abate automático na sobra do mês só ocorre se houver estouro
-    sobra_mes = (renda - comprometido) - total_excedido
+    return comprometido, total_gastos, (renda - comprometido) - total_excedido
+
+def montar_texto_painel(titulo, renda, dia_fechamento, categorias, rotulo_gastos="Gastos Atuais"):
+    """Painel compartilhado pelo 'Ver Resumo' e pelo detalhe de cada mês do
+    histórico (mesmo layout). 'categorias' é uma lista de (nome, limite, sobra,
+    gasto): 'limite' e 'sobra' são None para categorias já excluídas (só
+    mostram o gasto). O gasto é sempre o total consolidado da categoria."""
+    comprometido, total_gastos, sobra_mes = calcular_totais_mes(renda, categorias)
 
     texto = (
         f"{titulo}\n\n"
@@ -1524,7 +1583,7 @@ async def gerenciar_categoria_especifica(update: Update, context: ContextTypes.D
     dia_fechamento = linha_dia[0] if linha_dia else None
 
     # Orçamento/Gasto/Sobra do ciclo vigente: mesma fonte da tela "Ver Resumo".
-    orcamento, gasto, saldo = calcular_status_categoria(conn, user_id, nome, obter_inicio_ciclo_usuario(conn, user_id))
+    orcamento, gasto, saldo = calcular_status_categoria(conn, user_id, nome)
     conn.close()
 
     # Nome do mês da fatura vigente (mesmo rótulo usado no histórico); sem
@@ -1742,7 +1801,7 @@ async def iniciar_mudar_limite(update: Update, context: ContextTypes.DEFAULT_TYP
     cat = conn.execute('SELECT nome, orcamento_mensal FROM categorias WHERE id = ? AND user_id = ?', (cat_id, user_id)).fetchone()
     if cat:
         nome, limite = cat
-        orcamento, _, saldo = calcular_status_categoria(conn, user_id, nome, obter_inicio_ciclo_usuario(conn, user_id))
+        orcamento, _, saldo = calcular_status_categoria(conn, user_id, nome)
         # Efeito líquido das transferências no ciclo: orçamento (já com
         # transferências) menos o limite fixo cadastrado.
         transferencias = orcamento - limite
@@ -2475,9 +2534,8 @@ async def salvar_transferencia_livre(update: Update, context: ContextTypes.DEFAU
         cursor = conn.cursor()
 
         # Sobra calculada na hora (mesma fonte do "Ver Resumo"), não o saldo guardado.
-        inicio_ciclo = obter_inicio_ciclo_usuario(conn, user_id)
-        status_origem = calcular_status_categoria(conn, user_id, origem, inicio_ciclo)
-        status_destino = calcular_status_categoria(conn, user_id, destino, inicio_ciclo)
+        status_origem = calcular_status_categoria(conn, user_id, origem)
+        status_destino = calcular_status_categoria(conn, user_id, destino)
 
         if not status_origem or not status_destino:
             await enviar_fluxo(context, user_id, "Uma das categorias informadas não foi encontrada.", reply_markup=obter_teclado_menu())
@@ -2516,8 +2574,8 @@ async def salvar_transferencia_livre(update: Update, context: ContextTypes.DEFAU
         cursor.execute('UPDATE categorias SET saldo_atual = saldo_atual + ? WHERE user_id = ? AND nome = ?', (valor, user_id, destino))
         conn.commit()
 
-        orcamento_origem = calcular_status_categoria(conn, user_id, origem, inicio_ciclo)[0]
-        orcamento_destino = calcular_status_categoria(conn, user_id, destino, inicio_ciclo)[0]
+        orcamento_origem = calcular_status_categoria(conn, user_id, origem)[0]
+        orcamento_destino = calcular_status_categoria(conn, user_id, destino)[0]
         conn.close()
 
         await mostrar_resumo_temporario(
@@ -2834,26 +2892,24 @@ async def resumo_diario_menu_callback(update: Update, context: ContextTypes.DEFA
 
 # --- RESUMO MENSAL (ENVIADO NO FECHAMENTO DA FATURA) ---
 def _calcular_dados_resumo_mensal(conn, user_id, dia_fechamento, agora):
-    """Ciclo que acabou de fechar (o de ontem, já que o resumo sai no dia de
-    fechamento), calculado pela mesma função central de Orçamento/Gasto/Sobra.
-    Retorna (nome_do_mes, top3, total_gasto, sobra_total), com top3 como lista
-    [(categoria, gasto)] só das categorias com gasto, do maior para o menor."""
-    ontem = agora - timedelta(days=1)
-    inicio = obter_inicio_ciclo_atual(dia_fechamento, ontem)
-    fim = obter_inicio_ciclo_atual(dia_fechamento, agora)
-    nome_mes = NOMES_MESES[int(calcular_ciclo_fatura(ontem, dia_fechamento).split('-')[1]) - 1]
+    """Fatura que acabou de fechar (a de ontem, já que o resumo sai no dia de
+    fechamento), com as mesmas categorias, Gasto e Sobra do Mês do painel
+    dessa fatura no histórico de meses. Retorna (nome_do_mes, top3,
+    total_gasto, sobra_mes), com top3 como lista [(categoria, gasto)] só das
+    categorias com gasto, do maior para o menor."""
+    ano_mes = calcular_ciclo_fatura(agora - timedelta(days=1), dia_fechamento)
+    nome_mes = NOMES_MESES[int(ano_mes.split('-')[1]) - 1]
+    renda = conn.execute('SELECT renda_mensal FROM usuarios WHERE user_id = ?', (user_id,)).fetchone()[0] or 0.0
 
-    gastos, sobra_total = [], 0.0
-    for (cat,) in conn.execute('SELECT nome FROM categorias WHERE user_id = ?', (user_id,)).fetchall():
-        _, gasto, sobra = calcular_status_categoria(conn, user_id, cat, inicio, fim)
-        sobra_total += sobra
-        if gasto > 0:
-            gastos.append((cat, gasto))
+    categorias = montar_categorias_fatura(conn, user_id, ano_mes, dia_fechamento)
+    _, total_gasto, sobra_mes = calcular_totais_mes(renda, categorias)
+    gastos = sorted(
+        ((cat, gasto) for cat, _, _, gasto in categorias if gasto > 0),
+        key=lambda item: item[1], reverse=True
+    )
+    return nome_mes, gastos[:3], total_gasto, sobra_mes
 
-    gastos.sort(key=lambda item: item[1], reverse=True)
-    return nome_mes, gastos[:3], sum(g for _, g in gastos), sobra_total
-
-def _montar_mensagem_resumo_mensal(nome, nome_mes, top3, total_gasto, sobra_total):
+def _montar_mensagem_resumo_mensal(nome, nome_mes, top3, total_gasto, sobra_mes):
     """Texto do Resumo Mensal, direto e sem IA, seguindo o template aprovado.
     Com menos de 3 categorias com gasto mostra só as existentes; sem nenhuma,
     omite os blocos numerados."""
@@ -2866,7 +2922,7 @@ def _montar_mensagem_resumo_mensal(nome, nome_mes, top3, total_gasto, sobra_tota
         )
     texto += (
         f"Total Gasto do Mês Inteiro: {formatar_real(total_gasto)}\n"
-        f"Sobra do Mês: {formatar_real(sobra_total)}\n\n"
+        f"Sobra do Mês: {formatar_real(sobra_mes)}\n\n"
         f"{DIVISOR}\n\n"
         "Hoje, suas categorias zeram os valores de gastos e voltam à estaca zero, "
         "seguindo a lógica de fechamento da sua fatura."
@@ -3337,14 +3393,13 @@ async def botao_clicado(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         nome, renda, dia_fechamento = user_data
         categorias = conn.execute('SELECT nome FROM categorias WHERE user_id = ?', (user_id,)).fetchall()
-        inicio_ciclo_str = obter_inicio_ciclo_usuario(conn, user_id)
 
         # Orçamento (já com transferências), Gasto e Sobra de cada categoria
         # vêm da fonte única; o cabeçalho e os blocos (mesmo layout do
         # histórico mensal) são montados por montar_texto_painel.
         gastos_por_categoria = []
         for (n,) in categorias:
-            orcamento, gasto, sobra = calcular_status_categoria(conn, user_id, n, inicio_ciclo_str)
+            orcamento, gasto, sobra = calcular_status_categoria(conn, user_id, n)
             gastos_por_categoria.append((n, orcamento, sobra, gasto))
 
         conn.close()
@@ -3430,60 +3485,11 @@ async def ver_mes_historico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     renda, dia_fechamento = user_data
 
-    categorias_db = conn.execute(
-        'SELECT nome, orcamento_mensal, data_criacao FROM categorias WHERE user_id = ? ORDER BY id',
-        (user_id,)
-    ).fetchall()
-    avulsos = conn.execute(
-        f'''SELECT categoria_nome, SUM(valor) FROM transacoes
-            WHERE user_id = ? AND valor > 0 AND {_SQL_FATURA_TRANSACAO} = ?
-              AND NOT EXISTS (
-                  SELECT 1 FROM parcelamentos p
-                  WHERE p.user_id = transacoes.user_id
-                    AND p.categoria_nome = transacoes.categoria_nome
-                    AND p.data_criacao = transacoes.data_transacao)
-            GROUP BY categoria_nome''',
-        (user_id, dia_fechamento, ano_mes)
-    ).fetchall()
-    parcelas = conn.execute(
-        _SQL_PARCELAS_EXPANDIDAS +
-        '''SELECT p.categoria_nome, SUM(p.valor_parcela)
-           FROM expandido e JOIN parcelamentos p ON p.id = e.pid
-           WHERE e.ano_mes = ? GROUP BY p.categoria_nome''',
-        (user_id, None, None, ano_mes)
-    ).fetchall()
-
-    gasto_avulso = dict(avulsos)
-    gasto_parcelas = dict(parcelas)
+    categorias = montar_categorias_fatura(conn, user_id, ano_mes, dia_fechamento)
+    conn.close()
 
     ciclo_atual = obter_ciclo_atual(dia_fechamento)
     mes_atual = ano_mes == ciclo_atual
-    inicio_ciclo, fim_ciclo = obter_intervalo_ciclo(ano_mes, dia_fechamento)
-
-    def montar_entrada(cat, limite):
-        # Gasto do mês = avulsos + parcelas que caem nessa fatura, consolidados
-        # num único valor. Orçamento e Sobra vêm da mesma função do 'Ver Resumo'
-        # (limite fixo + transferências do ciclo; Sobra = Orçamento − Gasto +
-        # receitas), para qualquer mês — nada é lido de 'saldo_atual'.
-        gasto = gasto_avulso.get(cat, 0.0) + gasto_parcelas.get(cat, 0.0)
-        if limite is None:
-            return (cat, None, None, gasto)
-        orcamento, gasto, sobra = calcular_status_categoria(
-            conn, user_id, cat, inicio_ciclo, fim_ciclo, gasto_externo=gasto
-        )
-        return (cat, orcamento, sobra, gasto)
-
-    # Todas as categorias existentes na época (regra temporal por data de
-    # criação), mais as que têm movimento no mês mesmo sem existir mais.
-    categorias = []
-    for cat, limite, data_criacao in categorias_db:
-        tem_movimento = cat in gasto_avulso or cat in gasto_parcelas
-        if tem_movimento or categoria_existia_no_mes(data_criacao, ano_mes, dia_fechamento):
-            categorias.append(montar_entrada(cat, limite))
-    existentes = {c[0] for c in categorias_db}
-    for cat in sorted((set(gasto_avulso) | set(gasto_parcelas)) - existentes):
-        categorias.append(montar_entrada(cat, None))
-    conn.close()
 
     nome_mes = NOMES_MESES[int(mes) - 1]
     if mes_atual:
