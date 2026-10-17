@@ -1743,6 +1743,33 @@ async def ajustar_fatura_parcelamento(update: Update, context: ContextTypes.DEFA
     texto, teclado = _montar_tela_meses_parcelas(user_id, cat[0])
     await atualizar_callback(query, context, texto, reply_markup=teclado)
 
+# Toda coluna que guarda o nome de uma categoria (o vínculo é por nome, não por
+# id). Ao criar uma nova referência por nome em outra tabela, inclua-a aqui, ou
+# o rename deixará esses registros órfãos.
+_REFERENCIAS_NOME_CATEGORIA = (
+    ('transacoes', 'categoria_nome'),
+    ('parcelamentos', 'categoria_nome'),
+    ('gastos_recorrentes', 'categoria_nome'),
+    ('transferencias', 'categoria_origem'),
+    ('transferencias', 'categoria_destino'),
+)
+
+def renomear_categoria(conn, user_id, cat_id, nome_antigo, novo_nome):
+    """Renomeia a categoria e propaga o novo nome para todas as tabelas que a
+    referenciam pelo nome, numa única transação: se qualquer UPDATE falhar, o
+    rollback desfaz tudo e o erro é propagado para quem chamou."""
+    try:
+        conn.execute('UPDATE categorias SET nome = ? WHERE id = ? AND user_id = ?', (novo_nome, cat_id, user_id))
+        for tabela, coluna in _REFERENCIAS_NOME_CATEGORIA:
+            conn.execute(
+                f'UPDATE {tabela} SET {coluna} = ? WHERE user_id = ? AND {coluna} = ?',
+                (novo_nome, user_id, nome_antigo)
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
 async def iniciar_renomear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await responder_callback(query)
@@ -1777,17 +1804,54 @@ async def salvar_novo_nome(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await enviar_fluxo(context, user_id, "Erro de sessão. Volte ao menu.", reply_markup=obter_teclado_menu())
         return ConversationHandler.END
 
+    # '← Voltar' dos avisos abaixo retorna para o detalhe da categoria.
+    teclado_voltar = InlineKeyboardMarkup([linha_voltar_com_menu(f"edit_cat_{cat_id}")])
+
     conn = obter_conexao_db()
-    cat_antiga = conn.execute('SELECT nome FROM categorias WHERE id = ?', (cat_id,)).fetchone()
-    if cat_antiga:
+    try:
+        cat_antiga = conn.execute('SELECT nome FROM categorias WHERE id = ? AND user_id = ?', (cat_id, user_id)).fetchone()
+        if not cat_antiga:
+            await enviar_fluxo(context, user_id, "Categoria não encontrada.", reply_markup=obter_teclado_menu())
+            return ConversationHandler.END
         nome_antigo = cat_antiga[0]
-        conn.execute('UPDATE transacoes SET categoria_nome = ? WHERE user_id = ? AND categoria_nome = ?', (novo_nome, user_id, nome_antigo))
 
-    conn.execute('UPDATE categorias SET nome = ? WHERE id = ?', (novo_nome, cat_id))
-    conn.commit()
-    conn.close()
+        if novo_nome == nome_antigo:
+            await enviar_fluxo(
+                context, user_id,
+                f"A categoria já se chama <b>{escape(nome_antigo)}</b>. Envie um nome diferente:",
+                reply_markup=teclado_voltar
+            )
+            return EDITAR_NOME_CAT
 
-    await mostrar_resumo_temporario(context, user_id, f"Categoria renomeada para <b>{novo_nome}</b> com sucesso!")
+        # Nome igual ao de outra categoria (sem diferenciar maiúsculas, acentos
+        # e espaços) misturaria os registros das duas, já que o vínculo é por
+        # nome. A própria categoria fica de fora: corrigir só o acento ou a
+        # caixa do nome atual é permitido.
+        alvo = _normalizar_texto(novo_nome)
+        outras = conn.execute('SELECT nome FROM categorias WHERE user_id = ? AND id != ?', (user_id, cat_id)).fetchall()
+        existente = next((nome for (nome,) in outras if _normalizar_texto(nome or '') == alvo), None)
+        if existente:
+            await enviar_fluxo(
+                context, user_id,
+                f"Já existe a categoria <b>{escape(existente)}</b>. Envie outro nome:",
+                reply_markup=teclado_voltar
+            )
+            return EDITAR_NOME_CAT
+
+        try:
+            renomear_categoria(conn, user_id, cat_id, nome_antigo, novo_nome)
+        except Exception as e:
+            print(f"Erro ao renomear a categoria {cat_id} do usuário {user_id}: {e}")
+            await enviar_fluxo(
+                context, user_id,
+                "Não foi possível renomear a categoria. Nada foi alterado.\n\nEnvie o novo nome novamente:",
+                reply_markup=teclado_voltar
+            )
+            return EDITAR_NOME_CAT
+    finally:
+        conn.close()
+
+    await mostrar_resumo_temporario(context, user_id, f"Categoria renomeada para <b>{escape(novo_nome)}</b> com sucesso!")
     return ConversationHandler.END
 
 async def iniciar_mudar_limite(update: Update, context: ContextTypes.DEFAULT_TYPE):

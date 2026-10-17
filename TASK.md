@@ -37,6 +37,9 @@ Antes de construir o Mini App, os números do bot precisam ser consistentes e co
 *   Cobranças recorrentes lançadas ficam iguais a gastos avulsos (sem marca nem vínculo com o modelo).
 *   Colunas legadas (`categorias.saldo_atual`, `usuarios.ultimo_reset`) e `parcelas_pagas` nunca atualizada.
 *   **Melhoria futura:** a transação da parcela 1 é reconhecida por `parcelamentos.data_criacao == transacoes.data_transacao` (mesma categoria). Um gasto avulso registrado no mesmo segundo e na mesma categoria de um parcelamento seria excluído do Gasto. Correção definitiva: coluna de vínculo (`transacoes.parcelamento_id`).
+*   **Exclusão lógica de categoria (tarefa separada):** hoje "Excluir Categoria" faz `DELETE` físico só em `categorias`. Parcelamentos ativos continuam gerando parcelas sem tela para conferi-las; gastos recorrentes somem da tela e falham em silêncio todo mês; recriar uma categoria com o mesmo nome reanexa tudo isso. Proposta: marcar a exclusão (ex: `excluida_em`) preservando o histórico e, se houver parcelamentos ativos ou recorrentes, avisar e oferecer "mover para outra categoria" ou "encerrar" (apagar recorrentes e parar as parcelas a partir do próximo ciclo, sem reescrever o passado).
+*   **Vínculo por id da categoria (tarefa separada, depois da exclusão lógica):** adicionar `categoria_id` em `transacoes`, `parcelamentos`, `gastos_recorrentes` e `transferencias` (origem e destino), preencher a partir do nome, e trocar leituras e escritas para o id (nome só para exibição). Elimina órfãos e torna o rename um único `UPDATE`.
+*   **`/start` de usuário já existente:** não deve apagar nem recriar as categorias (hoje faz `DELETE FROM categorias` e insere de novo, gerando ids e `data_criacao` novos e órfãos se algum nome mudar).
 
 ## 💻 Instruções de Implementação para o `bot.py` (em Etapas)
 **Etapa 1:**
