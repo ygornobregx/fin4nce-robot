@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Teste do initData</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 16px; background: var(--tg-theme-bg-color, #fff); color: var(--tg-theme-text-color, #000); }
+    pre { background: rgba(127,127,127,.15); padding: 12px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
+  </style>
+</head>
+<body>
+  <h1>Teste do initData</h1>
+  <p id="status">Verificando...</p>
+  <pre id="resposta"></pre>
+  <script>
+    const status = document.getElementById("status");
+    const resposta = document.getElementById("resposta");
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if (tg) { tg.ready(); }
+    if (!tg || !tg.initData) {
+      status.textContent = "Esta página foi aberta fora do Telegram (initData vazio). Abra pelo botão de menu do bot.";
+    } else {
+      fetch("/me", {
+        headers: { "Authorization": "tma " + tg.initData, "ngrok-skip-browser-warning": "1" }
+      })
+        .then(async (r) => {
+          status.textContent = "Status HTTP: " + r.status;
+          const texto = await r.text();
+          try { resposta.textContent = JSON.stringify(JSON.parse(texto), null, 2); }
+          catch (e) { resposta.textContent = texto; }
+        })
+        .catch(() => { status.textContent = "Falha ao chamar a API (/me)."; });
+    }
+  </script>
+</body>
+</html>
