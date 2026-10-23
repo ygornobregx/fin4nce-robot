@@ -1,0 +1,3 @@
+#!/bin/sh
+# Atualiza o Obsidian depois do commit; nunca interfere no commit.
+python "$(git rev-parse --show-toplevel)/atualizar_fluxo.py" || true

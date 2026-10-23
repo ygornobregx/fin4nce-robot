@@ -6,3 +6,6 @@ api/
 mini-apps/
 requirements-api.txt
 testes_initdata.py
+.githooks/
+atualizar_fluxo.py
+testes_atualizar_fluxo.py

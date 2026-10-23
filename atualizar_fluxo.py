@@ -1,86 +1,167 @@
-import os
+"""Hook pós-commit: move a nota liberada no Obsidian e pinta o card do Canvas de verde."""
+import argparse
 import json
+import os
+import re
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
+from calculos import FUSO_BRASILIA
+
 # Garante a codificação UTF-8 no terminal do Windows
-if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
-    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stdout, "reconfigure") and sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
 
-# Caminho do seu Obsidian conforme seu prompt[cite: 1]
-OBSIDIAN_ROOT = Path(r"C:\Users\l1d3r\Documentos\Obsidian")
+OBSIDIAN_PADRAO = r"C:\Users\l1d3r\Documentos\Obsidian"
+PASTA_APROVADO = "Aprovado para Codar"
+PASTA_LIBERADAS = "Implantacoes Liberadas"
+TEXTO_AGUARDANDO = "Aguardando Commit"
+COR_VERDE = "4"
 
-def get_last_commit():
-    """Pega os dados do último commit feito."""
-    try:
-        cmd = ["git", "log", "-1", "--format=%H|%s|%ai"]
-        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", check=True)
-        parts = result.stdout.strip().split("|")
-        return {
-            "hash": parts[0][:7], 
-            "message": parts[1], 
-            "date": parts[2]
-        }
-    except Exception as e:
-        print(f"Erro ao ler histórico do Git: {e}")
-        return None
 
-def main():
-    # Detecta o nome do repositório Git atual
-    try:
-        repo_root = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, encoding="utf-8", check=True).stdout.strip()
-        project_name = Path(repo_root).name
-    except Exception:
-        print("Não foi possível detectar a pasta do repositório Git.")
-        return
+def nome_do_projeto(git_common_dir, cwd=None):
+    """Nome da pasta que contém o .git comum (igual na main e nas worktrees)."""
+    return Path(cwd or os.getcwd(), git_common_dir).resolve().parent.name
 
-    project_path = OBSIDIAN_ROOT / "Projetos" / project_name
-    if not project_path.exists():
-        print(f"Aviso: Pasta do projeto não encontrada no Obsidian: {project_path}")
-        return
 
-    commit = get_last_commit()
-    if not commit:
-        return
+def detectar_projeto():
+    saida = subprocess.run(
+        ["git", "rev-parse", "--git-common-dir"],
+        capture_output=True, text=True, encoding="utf-8", check=True,
+    ).stdout.strip()
+    return nome_do_projeto(saida)
 
-    print(f"Commit detectado: [{commit['hash']}] {commit['message']}")
 
-    # 1. Move as notas de 'Aprovado para Codar' para 'Implantacoes Liberadas'[cite: 1]
-    aprovado_dir = project_path / "Aprovado para Codar"
-    liberadas_dir = project_path / "Implantacoes Liberadas"
-    liberadas_dir.mkdir(parents=True, exist_ok=True)
+def formatar_data(iso):
+    """Converte uma data ISO 8601 para o horário de Brasília."""
+    dt = datetime.fromisoformat(iso.strip().replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=FUSO_BRASILIA)
+    return dt.astimezone(FUSO_BRASILIA).strftime("%Y-%m-%d %H:%M:%S %z")
 
-    if aprovado_dir.exists():
-        for note in aprovado_dir.glob("*.md"):
-            dest = liberadas_dir / note.name
-            note.rename(dest)
-            print(f"-> Nota movida: {note.name}")
 
-    # 2. Atualiza os arquivos .canvas (muda amarelo para verde e insere o commit)[cite: 1]
-    canvas_files = list(project_path.glob("*.canvas"))
-    for canvas_file in canvas_files:
-        with open(canvas_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        
-        updated = False
-        for node in data.get("nodes", []):
-            if node.get("type") == "text":
-                text = node.get("text", "")
-                if "Aguardando Commit" in text or node.get("color") == "3": 
-                    node["color"] = "4" # Cor verde padrão do Obsidian Canvas
-                    node["text"] = (
-                        f"Status: Commitado & Liberado\n\n"
-                        f"- Mensagem: {commit['message']}\n"
-                        f"- Commit SHA: `{commit['hash']}`\n"
-                        f"- Data: {commit['date']}"
-                    )
-                    updated = True
-        
-        if updated:
-            with open(canvas_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            print(f"-> Canvas atualizado: {canvas_file.name}")
+def ler_commit_git():
+    saida = subprocess.run(
+        ["git", "log", "-1", "--format=%H%x00%aI%x00%s"],
+        capture_output=True, text=True, encoding="utf-8", check=True,
+    ).stdout.strip()
+    sha, data, mensagem = saida.split("\x00", 2)
+    return sha, mensagem, formatar_data(data)
+
+
+def ler_commit_simulado(valor):
+    """Formato: sha|mensagem|data (a mensagem pode conter '|')."""
+    sha, resto = valor.split("|", 1)
+    mensagem, data = resto.rsplit("|", 1)
+    return sha, mensagem, formatar_data(data)
+
+
+def texto_commitado(titulo, mensagem, sha, data):
+    return (
+        f"{titulo}\n\n"
+        f"Status: Commitado & Liberado\n\n"
+        f"- Mensagem: {mensagem}\n"
+        f"- Commit SHA: `{sha[:7]}`\n"
+        f"- Data: {data}"
+    )
+
+
+def decidir_acoes(pasta_projeto, codigo, mensagem, sha, data):
+    """Monta a lista de ações (sem gravar nada)."""
+    acoes = []
+
+    aprovado = pasta_projeto / PASTA_APROVADO
+    liberadas = pasta_projeto / PASTA_LIBERADAS
+    if aprovado.is_dir():
+        for nota in sorted(aprovado.glob("*.md")):
+            if not nota.name.startswith(f"{codigo} - "):
+                continue
+            destino = liberadas / nota.name
+            if destino.exists():
+                print(f"Aviso: destino já existe, nota não movida: {destino}")
+                continue
+            acoes.append({"tipo": "mover_nota", "origem": nota, "destino": destino})
+
+    padrao = re.compile(rf"(?<![\w-]){re.escape(codigo)}(?!\d)")
+    for canvas in sorted(pasta_projeto.glob("*.canvas")):
+        try:
+            with open(canvas, "r", encoding="utf-8") as f:
+                dados = json.load(f)
+        except (OSError, ValueError) as e:
+            print(f"Aviso: não foi possível ler {canvas.name}: {e}")
+            continue
+
+        cards = []
+        for no in dados.get("nodes", []):
+            texto = no.get("text", "")
+            if (no.get("type") == "text" and padrao.search(texto)
+                    and TEXTO_AGUARDANDO in texto):
+                titulo = texto.split("\n", 1)[0]
+                no["color"] = COR_VERDE
+                no["text"] = texto_commitado(titulo, mensagem, sha, data)
+                cards.append(titulo)
+        if cards:
+            acoes.append({"tipo": "pintar_card", "canvas": canvas, "dados": dados, "cards": cards})
+
+    return acoes
+
+
+def aplicar_acoes(acoes, dry_run):
+    prefixo = "[dry-run] " if dry_run else ""
+    for acao in acoes:
+        if acao["tipo"] == "mover_nota":
+            origem, destino = acao["origem"], acao["destino"]
+            print(f"{prefixo}-> Mover nota: {origem.name} => {destino.parent.name}/")
+            if not dry_run:
+                destino.parent.mkdir(parents=True, exist_ok=True)
+                origem.rename(destino)
+        else:
+            canvas = acao["canvas"]
+            for titulo in acao["cards"]:
+                print(f"{prefixo}-> Pintar card de verde em {canvas.name}: {titulo}")
+            if not dry_run:
+                with open(canvas, "w", encoding="utf-8", newline="\n") as f:
+                    json.dump(acao["dados"], f, ensure_ascii=False, indent="\t")
+                    f.write("\n")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Atualiza o Obsidian após um commit.")
+    parser.add_argument("--dry-run", action="store_true", help="só mostra as ações, sem gravar")
+    parser.add_argument("--obsidian-root", default=OBSIDIAN_PADRAO)
+    parser.add_argument("--projeto", help="nome do projeto (padrão: detectado pelo Git)")
+    parser.add_argument("--commit", help='simula o commit: "sha|mensagem|data ISO 8601"')
+    args = parser.parse_args(argv)
+
+    sha, mensagem, data = ler_commit_simulado(args.commit) if args.commit else ler_commit_git()
+    print(f"Commit detectado: [{sha[:7]}] {mensagem}")
+
+    achado = re.match(r"^([A-Z]+-\d+)\b", mensagem)
+    if not achado:
+        print("Commit sem código de issue; nada a fazer.")
+        return 0
+    codigo = achado.group(1)
+
+    projeto = args.projeto or detectar_projeto()
+    pasta_projeto = Path(args.obsidian_root) / "Projetos" / projeto
+    if not pasta_projeto.is_dir():
+        print(f"Aviso: pasta do projeto não encontrada no Obsidian: {pasta_projeto}")
+        return 0
+
+    acoes = decidir_acoes(pasta_projeto, codigo, mensagem, sha, data)
+    if not acoes:
+        print(f"Aviso: nenhuma nota ou card pendente para {codigo}; nada a fazer.")
+        return 0
+
+    aplicar_acoes(acoes, args.dry_run)
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    try:
+        sys.exit(main())
+    except Exception as e:
+        print(f"Erro ao atualizar o fluxo (ignorado): {e}")
+        sys.exit(0)
