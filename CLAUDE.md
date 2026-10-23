@@ -44,6 +44,8 @@ Você é o Diretor de Engenharia e Orquestrador (Claude Opus). Seu papel é gere
 
 \* Modelo das notas de especificação: ESCOPO, PRÉ-CONDIÇÕES, REQUISITOS TÉCNICOS (restrições, arquivos a criar, comportamento esperado), CRITÉRIOS DE ACEITE, FORA DO ESCOPO e CONCEITOS ACADÊMICOS.
 
+- Títulos das issues criadas no Linear: sempre em LETRAS MAIÚSCULAS, do começo ao fim, com acentos mantidos (exemplo: "API LOCAL COM VALIDAÇÃO DO INITDATA DO TELEGRAM"). Nomes técnicos também ficam em maiúsculas no título (INITDATA, [calculos .py](http://CALCULOS.PY)). O código da issue (PRO-xx) segue o formato do Linear.
+
 \* O cabeçalho de propriedades (frontmatter) tem os NOMES DAS PROPRIEDADES em MAIÚSCULAS, sem acentos e com underline (ex.: LINEAR, URL, PRIORIDADE, TIPO, STATUS_LINEAR, TRIADO_EM, BRANCH_SUGERIDA). Os valores seguem normais.
 
 \* Toda seção com itens para marcar (PRÉ-CONDIÇÕES e CRITÉRIOS DE ACEITE) usa o formato PERGUNTA + CHECK: cada item é escrito como uma pergunta, seguida de uma caixa para marcar (`- [ ] CONFIRMADO`), e contornado por uma linha horizontal (`---`) antes e outra depois. Entre itens seguidos, uma única linha serve de separador. Sempre com linha em branco antes e depois de cada `---`, para a linha não virar subtítulo. Exemplo:
