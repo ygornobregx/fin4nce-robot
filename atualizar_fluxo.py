@@ -1,4 +1,10 @@
-"""Hook pós-commit: move a nota liberada no Obsidian e pinta o card do Canvas de verde."""
+"""Hook pós-commit: move a pasta da tarefa de Aguardando Commit para Implantacoes Concluidas
+no Obsidian e pinta o card do Canvas de verde.
+
+Cada tarefa é uma pasta "PRO-xx - TÍTULO" (com notas e subpastas) dentro de
+Projetos/<projeto>/<etapa>/. O hook só move a pasta inteira quando ela está em
+Aguardando Commit; em etapas anteriores ele apenas avisa.
+"""
 import argparse
 import json
 import os
@@ -15,8 +21,10 @@ if hasattr(sys.stdout, "reconfigure") and sys.stdout.encoding and sys.stdout.enc
     sys.stdout.reconfigure(encoding="utf-8")
 
 OBSIDIAN_PADRAO = r"C:\Users\l1d3r\Documentos\Obsidian"
-PASTA_APROVADO = "Aprovado para Codar"
-PASTA_LIBERADAS = "Implantacoes Liberadas"
+PASTA_AGUARDANDO = "Aguardando Commit"
+PASTA_CONCLUIDAS = "Implantacoes Concluidas"
+# Etapas anteriores: se a tarefa ainda estiver numa delas, o hook só avisa
+ETAPAS_ANTERIORES = ("Fila de Tarefas", "Aprovado para Codar", "Testando Localmente")
 TEXTO_AGUARDANDO = "Aguardando Commit"
 COR_VERDE = "4"
 
@@ -68,21 +76,31 @@ def texto_commitado(titulo, mensagem, sha, data):
     )
 
 
+def pastas_da_tarefa(pasta_etapa, codigo):
+    """Pastas da etapa cujo nome começa com 'PRO-xx - ' (PRO-9 não casa PRO-99)."""
+    if not pasta_etapa.is_dir():
+        return []
+    return sorted(p for p in pasta_etapa.iterdir()
+                  if p.is_dir() and p.name.startswith(f"{codigo} - "))
+
+
 def decidir_acoes(pasta_projeto, codigo, mensagem, sha, data):
     """Monta a lista de ações (sem gravar nada)."""
     acoes = []
 
-    aprovado = pasta_projeto / PASTA_APROVADO
-    liberadas = pasta_projeto / PASTA_LIBERADAS
-    if aprovado.is_dir():
-        for nota in sorted(aprovado.glob("*.md")):
-            if not nota.name.startswith(f"{codigo} - "):
-                continue
-            destino = liberadas / nota.name
-            if destino.exists():
-                print(f"Aviso: destino já existe, nota não movida: {destino}")
-                continue
-            acoes.append({"tipo": "mover_nota", "origem": nota, "destino": destino})
+    concluidas = pasta_projeto / PASTA_CONCLUIDAS
+    pastas = pastas_da_tarefa(pasta_projeto / PASTA_AGUARDANDO, codigo)
+    for pasta in pastas:
+        destino = concluidas / pasta.name
+        if destino.exists():
+            print(f"Aviso: destino já existe, pasta não movida: {destino}")
+            continue
+        acoes.append({"tipo": "mover_pasta", "origem": pasta, "destino": destino})
+
+    if not pastas:
+        for etapa in ETAPAS_ANTERIORES:
+            for pasta in pastas_da_tarefa(pasta_projeto / etapa, codigo):
+                print(f"Aviso: tarefa ainda não está em {PASTA_AGUARDANDO}: {etapa}/{pasta.name}")
 
     padrao = re.compile(rf"(?<![\w-]){re.escape(codigo)}(?!\d)")
     for canvas in sorted(pasta_projeto.glob("*.canvas")):
@@ -111,9 +129,9 @@ def decidir_acoes(pasta_projeto, codigo, mensagem, sha, data):
 def aplicar_acoes(acoes, dry_run):
     prefixo = "[dry-run] " if dry_run else ""
     for acao in acoes:
-        if acao["tipo"] == "mover_nota":
+        if acao["tipo"] == "mover_pasta":
             origem, destino = acao["origem"], acao["destino"]
-            print(f"{prefixo}-> Mover nota: {origem.name} => {destino.parent.name}/")
+            print(f"{prefixo}-> Mover pasta: {origem.name} => {destino.parent.name}/")
             if not dry_run:
                 destino.parent.mkdir(parents=True, exist_ok=True)
                 origem.rename(destino)
@@ -152,7 +170,7 @@ def main(argv=None):
 
     acoes = decidir_acoes(pasta_projeto, codigo, mensagem, sha, data)
     if not acoes:
-        print(f"Aviso: nenhuma nota ou card pendente para {codigo}; nada a fazer.")
+        print(f"Aviso: nenhuma pasta ou card pendente para {codigo}; nada a fazer.")
         return 0
 
     aplicar_acoes(acoes, args.dry_run)

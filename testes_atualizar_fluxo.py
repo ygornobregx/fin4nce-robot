@@ -34,7 +34,29 @@ def setUpModule():
 
 CARD_99 = "**PRO-99 - TESTE**\n\nAguardando Commit"
 CARD_9 = "**PRO-9 - OUTRA**\n\nAguardando Commit"
+CARD_98 = "**PRO-98 - EM TESTE**\n\nAguardando Commit"
 CARD_50 = "**PRO-50 - ANTIGA**\n\nStatus: Commitado & Liberado"
+
+# Arquivos da pasta PRO-99 (caminho relativo => conteúdo)
+ARQUIVOS_99 = {
+    "Histórico/PRO-99 - TESTE.md": "nota 99",
+    "Histórico/PRO-99 - GUIA DE TESTE - TESTE.md": "guia 99",
+    "Implementações e Modificações/PRO-99 - IMPLEMENTAÇÕES E MODIFICAÇÕES.md": "impl 99",
+    "Commit/PRO-99 - COMMIT.md": "commit 99",
+}
+
+
+def _escrever(base, arquivos):
+    for rel, conteudo in arquivos.items():
+        arq = base / rel
+        arq.parent.mkdir(parents=True, exist_ok=True)
+        arq.write_text(conteudo, encoding="utf-8")
+
+
+def _arvore(base):
+    """Caminhos relativos (com '/') e bytes de todos os arquivos sob a pasta."""
+    return {p.relative_to(base).as_posix(): p.read_bytes()
+            for p in sorted(base.rglob("*")) if p.is_file()}
 
 
 class TestAtualizarFluxo(unittest.TestCase):
@@ -43,24 +65,26 @@ class TestAtualizarFluxo(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         self.projeto = self.root / "Projetos" / "Finance"
-        self.aprovado = self.projeto / "Aprovado para Codar"
-        self.liberadas = self.projeto / "Implantacoes Liberadas"
-        self.aprovado.mkdir(parents=True)
-        self.liberadas.mkdir()
-        (self.aprovado / "PRO-99 - TESTE.md").write_text("nota 99", encoding="utf-8")
-        (self.aprovado / "PRO-9 - OUTRA.md").write_text("nota 9", encoding="utf-8")
+        self.aguardando = self.projeto / "Aguardando Commit"
+        self.concluidas = self.projeto / "Implantacoes Concluidas"
+        self.testando = self.projeto / "Testando Localmente"
+        self.concluidas.mkdir(parents=True)
+        _escrever(self.aguardando / "PRO-99 - TESTE", ARQUIVOS_99)
+        _escrever(self.aguardando / "PRO-9 - OUTRA", {"PRO-9 - OUTRA.md": "nota 9"})
+        _escrever(self.testando / "PRO-98 - EM TESTE", {"PRO-98 - EM TESTE.md": "nota 98"})
         self.canvas = self.projeto / "Linha do Tempo Geral.canvas"
         self.nos = [
             {"id": "a", "type": "text", "text": CARD_99, "x": 0, "y": 0, "width": 300, "height": 100, "color": "3"},
             {"id": "b", "type": "text", "text": CARD_9, "x": 400, "y": 0, "width": 300, "height": 100, "color": "3"},
-            {"id": "c", "type": "text", "text": CARD_50, "x": 800, "y": 0, "width": 300, "height": 100, "color": "4"},
+            {"id": "d", "type": "text", "text": CARD_98, "x": 800, "y": 0, "width": 300, "height": 100, "color": "3"},
+            {"id": "c", "type": "text", "text": CARD_50, "x": 1200, "y": 0, "width": 300, "height": 100, "color": "4"},
         ]
         with open(self.canvas, "w", encoding="utf-8", newline="\n") as f:
             json.dump({"nodes": self.nos, "edges": []}, f, ensure_ascii=False, indent="\t")
             f.write("\n")
 
     def _estado(self):
-        return {str(p.relative_to(self.root)): p.read_bytes()
+        return {p.relative_to(self.root).as_posix(): p.read_bytes()
                 for p in sorted(self.root.rglob("*")) if p.is_file()}
 
     def _rodar(self, mensagem, extra=(), projeto="Finance"):
@@ -76,13 +100,18 @@ class TestAtualizarFluxo(unittest.TestCase):
         with open(self.canvas, "r", encoding="utf-8") as f:
             return {n["id"]: n for n in json.load(f)["nodes"]}
 
-    def test_commit_com_codigo_move_nota_e_pinta_card(self):
+    def test_commit_com_codigo_move_pasta_e_pinta_card(self):
+        origem_antes = _arvore(self.aguardando / "PRO-99 - TESTE")
+        self.assertEqual(set(origem_antes), set(ARQUIVOS_99))
         self._rodar("PRO-99 Mensagem de teste")
 
-        self.assertFalse((self.aprovado / "PRO-99 - TESTE.md").exists())
-        self.assertTrue((self.liberadas / "PRO-99 - TESTE.md").exists())
-        self.assertTrue((self.aprovado / "PRO-9 - OUTRA.md").exists())
-        self.assertFalse((self.liberadas / "PRO-9 - OUTRA.md").exists())
+        # Só a pasta PRO-99 foi movida, com a mesma árvore e o mesmo conteúdo
+        self.assertFalse((self.aguardando / "PRO-99 - TESTE").exists())
+        self.assertEqual(_arvore(self.concluidas / "PRO-99 - TESTE"), origem_antes)
+        self.assertTrue((self.aguardando / "PRO-9 - OUTRA" / "PRO-9 - OUTRA.md").is_file())
+        self.assertFalse((self.concluidas / "PRO-9 - OUTRA").exists())
+        self.assertTrue((self.testando / "PRO-98 - EM TESTE" / "PRO-98 - EM TESTE.md").is_file())
+        self.assertFalse((self.concluidas / "PRO-98 - EM TESTE").exists())
 
         cards = self._cards()
         c = cards["a"]
@@ -94,15 +123,32 @@ class TestAtualizarFluxo(unittest.TestCase):
         self.assertIn("Status: Commitado & Liberado", c["text"])
         self.assertNotIn("Aguardando Commit", c["text"])
         self.assertEqual(cards["b"], self.nos[1])
-        self.assertEqual(cards["c"], self.nos[2])
+        self.assertEqual(cards["d"], self.nos[2])
+        self.assertEqual(cards["c"], self.nos[3])
         self.assertIn(b'\n\t"nodes"', self.canvas.read_bytes())
+
+    def test_tarefa_em_etapa_anterior_avisa_e_nao_move(self):
+        saida = self._rodar("PRO-98 Mensagem de teste")
+        self.assertIn("Aviso: tarefa ainda não está em Aguardando Commit: "
+                      "Testando Localmente/PRO-98 - EM TESTE", saida)
+        self.assertTrue((self.testando / "PRO-98 - EM TESTE" / "PRO-98 - EM TESTE.md").is_file())
+        self.assertFalse((self.concluidas / "PRO-98 - EM TESTE").exists())
+        # O card é pintado mesmo assim: a pintura é independente do movimento da pasta
+        cards = self._cards()
+        self.assertEqual(cards["d"]["color"], "4")
+        self.assertIn("Status: Commitado & Liberado", cards["d"]["text"])
+        self.assertEqual(cards["a"], self.nos[0])
+        self.assertEqual(cards["b"], self.nos[1])
+        self.assertEqual(cards["c"], self.nos[3])
 
     def test_dry_run_nao_grava_nada(self):
         antes = self._estado()
         saida = self._rodar("PRO-99 Mensagem de teste", extra=["--dry-run"])
-        self.assertIn("PRO-99 - TESTE.md", saida)
+        self.assertIn("PRO-99 - TESTE", saida)
+        self.assertIn("pasta", saida.lower())
         self.assertIn("card", saida.lower())
         self.assertEqual(self._estado(), antes)
+        self.assertTrue((self.aguardando / "PRO-99 - TESTE").is_dir())
 
     def test_commit_sem_codigo_nao_muda_nada(self):
         antes = self._estado()
@@ -110,9 +156,9 @@ class TestAtualizarFluxo(unittest.TestCase):
         self.assertIn("Commit sem código de issue; nada a fazer.", saida)
         self.assertEqual(self._estado(), antes)
 
-    def test_codigo_sem_nota_avisa_e_nao_muda_nada(self):
+    def test_codigo_sem_pasta_avisa_e_nao_muda_nada(self):
         antes = self._estado()
-        saida = self._rodar("PRO-77 sem nota")
+        saida = self._rodar("PRO-77 sem pasta")
         self.assertIn("Aviso", saida)
         self.assertEqual(self._estado(), antes)
 
@@ -123,11 +169,13 @@ class TestAtualizarFluxo(unittest.TestCase):
         self.assertEqual(self._estado(), depois_da_primeira)
 
     def test_destino_existente_nao_sobrescreve(self):
-        (self.liberadas / "PRO-99 - TESTE.md").write_text("antiga", encoding="utf-8")
+        _escrever(self.concluidas / "PRO-99 - TESTE", {"PRO-99 - TESTE.md": "antiga"})
+        destino_antes = _arvore(self.concluidas / "PRO-99 - TESTE")
+        origem_antes = _arvore(self.aguardando / "PRO-99 - TESTE")
         saida = self._rodar("PRO-99 Mensagem de teste")
         self.assertIn("Aviso", saida)
-        self.assertEqual((self.liberadas / "PRO-99 - TESTE.md").read_text(encoding="utf-8"), "antiga")
-        self.assertEqual((self.aprovado / "PRO-99 - TESTE.md").read_text(encoding="utf-8"), "nota 99")
+        self.assertEqual(_arvore(self.concluidas / "PRO-99 - TESTE"), destino_antes)
+        self.assertEqual(_arvore(self.aguardando / "PRO-99 - TESTE"), origem_antes)
 
     def test_mensagem_com_barra_vertical(self):
         self._rodar("PRO-99 a | b")
