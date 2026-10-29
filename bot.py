@@ -88,6 +88,8 @@ COLUNAS_ESPERADAS = {
     ],
     'transacoes': [
         ('metodo_pagamento', 'TEXT'),
+        ('descricao', 'TEXT'),
+        ('parcelamento_id', 'INTEGER'),
     ],
     'parcelamentos': [
         ('ciclo_referencia', 'TEXT'),
@@ -173,20 +175,26 @@ def dia_valido(dia):
     """Valida se o dia informado é um dia possível dentro de um mês (1 a 31)."""
     return 1 <= dia <= 31
 
-def debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento, metodo_pagamento=None):
+def debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento, metodo_pagamento=None, descricao=None, parcelamento_id=None):
     """Lançamento único usado por todo gasto que impacta uma categoria (comum,
     parcelado ou recorrente): grava a transação e mantém 'saldo_atual' em dia
     (legado, ainda lido pelo histórico e pela edição de limite). 'metodo_pagamento'
     só é informado pelo fluxo manual de registro (Crédito/Débito/Pix); recorrentes
-    e receitas gravam NULL. Retorna (cat_id, transacao_id), ou None se a
-    categoria não existir."""
+    e receitas gravam NULL. 'descricao' é o nome do gasto extraído pela IA (ou o
+    da recorrência); se não for texto ou vier vazia, grava NULL. 'parcelamento_id'
+    só é informado na parcela 1 de uma compra parcelada e aponta para a linha
+    correspondente em 'parcelamentos'; os demais lançamentos gravam NULL. Retorna
+    (cat_id, transacao_id), ou None se a categoria não existir."""
     cat = cursor.execute('SELECT id FROM categorias WHERE user_id = ? AND nome = ?', (user_id, categoria)).fetchone()
     if not cat:
         return None
+    descricao = descricao.strip() if isinstance(descricao, str) else None
+    if not descricao:
+        descricao = None
     cursor.execute('UPDATE categorias SET saldo_atual = saldo_atual - ? WHERE id = ?', (valor_armazenado, cat[0]))
     cursor.execute(
-        'INSERT INTO transacoes (user_id, categoria_nome, valor, data_transacao, metodo_pagamento) VALUES (?, ?, ?, ?, ?)',
-        (user_id, categoria, valor_armazenado, momento, metodo_pagamento)
+        'INSERT INTO transacoes (user_id, categoria_nome, valor, data_transacao, metodo_pagamento, descricao, parcelamento_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        (user_id, categoria, valor_armazenado, momento, metodo_pagamento, descricao, parcelamento_id)
     )
     return cat[0], cursor.lastrowid
 
@@ -888,7 +896,7 @@ async def _finalizar_gasto_simples(context, user_id, categoria, valor, tipo, des
     conn = obter_conexao_db()
     cursor = conn.cursor()
     valor_armazenado = valor if tipo == 'despesa' else -valor
-    cat_id, transacao_id = debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento_envio, metodo_pagamento)
+    cat_id, transacao_id = debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento_envio, metodo_pagamento, descricao=descricao)
     conn.commit()
     novo_saldo = calcular_sobra_categoria(conn, user_id, categoria)
     conn.close()
@@ -1148,19 +1156,37 @@ async def _finalizar_gasto_parcelado(context, user_id, total_parcelas):
         data_compra = datetime.strptime(momento_envio, '%Y-%m-%d %H:%M:%S')
         ciclo_referencia = calcular_ciclo_fatura(data_compra, dia_fechamento)
 
-        debitar_categoria(cursor, user_id, categoria, valor_parcela, momento_envio, metodo_pagamento)
+        # Compra e parcela 1 são gravadas numa única transação: o parcelamento
+        # vem primeiro para a transação já nascer apontando para ele, e o commit
+        # só acontece depois das duas gravações (nunca sobra compra órfã).
         cursor.execute(
             '''INSERT INTO parcelamentos
                (user_id, categoria_nome, descricao, valor_total, valor_parcela, total_parcelas, parcelas_pagas, data_criacao, ciclo_referencia, ativo)
                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 1)''',
             (user_id, categoria, descricao, valor_total, valor_parcela, total_parcelas, momento_envio, ciclo_referencia)
         )
-        conn.commit()
-        novo_saldo = calcular_sobra_categoria(conn, user_id, categoria)
+        parcelamento_id = cursor.lastrowid
+        lancamento = debitar_categoria(
+            cursor, user_id, categoria, valor_parcela, momento_envio, metodo_pagamento,
+            descricao=descricao, parcelamento_id=parcelamento_id
+        )
+        if lancamento is None:
+            conn.rollback()
+        else:
+            conn.commit()
+            novo_saldo = calcular_sobra_categoria(conn, user_id, categoria)
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
     context.user_data.pop('gasto_pendente', None)
+
+    # Categoria apagada no meio do fluxo: nada foi gravado (rollback acima).
+    if lancamento is None:
+        await enviar_fluxo(context, user_id, "Categoria não encontrada. Registre o gasto novamente.", reply_markup=obter_teclado_menu())
+        return
 
     await mostrar_resumo_temporario(
         context, user_id,
@@ -2904,7 +2930,7 @@ def _lancar_item_recorrente(conn, user_id, gr_id, ciclo):
     cursor = conn.cursor()
     # Mesmo lançamento de um gasto comum: o impacto em Orçamento/Gasto/Sobra
     # sai da fonte única (calcular_status_categoria), sem cálculo próprio aqui.
-    if not debitar_categoria(cursor, user_id, categoria_nome, valor, momento):
+    if not debitar_categoria(cursor, user_id, categoria_nome, valor, momento, descricao=descricao):
         print(f"⚠️ Gasto recorrente {gr_id} não lançado: categoria '{categoria_nome}' não existe mais para o usuário {user_id}.")
         return None
 
