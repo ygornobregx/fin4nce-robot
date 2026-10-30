@@ -20,8 +20,17 @@ Da raiz do repositório:
 python -m uvicorn api.main:app --port 8000
 ```
 
-Rotas: `GET /saude` (sem autenticação), `GET /me` (exige `Authorization: tma <initData>`)
-e a página de teste em `/app/`.
+Rotas:
+
+- `GET /saude`: sem autenticação.
+- `GET /me`: nome do usuário (exige `Authorization: tma <initData>`).
+- `GET /resumo`: fatura vigente (gasto, sobra do mês e categorias; exige o mesmo cabeçalho).
+- `GET /historico`: gasto total de cada mês com movimento, com os futuros marcados
+  como `previsto` (exige o mesmo cabeçalho).
+- Página de teste em `/app/`, que chama `/me`, `/resumo` e `/historico` e mostra as três respostas.
+
+Erros de `/resumo` e `/historico`: `401 nao_autorizado`, `404 usuario_nao_cadastrado` e
+`409 cadastro_incompleto` (usuário sem dia de fechamento).
 
 ## 3. Abrir o túnel
 
@@ -40,13 +49,14 @@ No **bot de teste**, defina o Menu Button (ou a Main Mini App) com a URL
 
 No primeiro acesso, o ngrok (plano gratuito) pode mostrar uma tela de aviso antes da
 página HTML; basta confirmar uma vez. O `fetch` da página envia o cabeçalho
-`ngrok-skip-browser-warning`, então a chamada a `/me` não é interceptada.
+`ngrok-skip-browser-warning`, então as chamadas a `/me`, `/resumo` e `/historico` não são interceptadas.
 
 ## 6. Testes
 
-Ambos rodam sem `.env` e sem internet:
+Todos rodam sem `.env` e sem internet:
 
 ```
 python testes_initdata.py
+python testes_rotas_leitura.py
 python testes_calculos.py
 ```

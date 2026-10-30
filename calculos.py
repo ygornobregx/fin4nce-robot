@@ -266,6 +266,32 @@ def calcular_totais_mes(renda, categorias):
     # O abate automático na sobra do mês só ocorre se houver estouro
     return comprometido, total_gastos, (renda - comprometido) - total_excedido
 
+def calcular_serie_gastos_mensais(conn, user_id, dia_fechamento, agora=None):
+    """Gasto total de cada fatura com movimento, para o gráfico de barras do
+    Mini App. Retorna [(ano_mes, total_gasto, situacao)] em ordem cronológica,
+    com os meses de buscar_meses_com_movimento (parcelas, gastos e a fatura
+    vigente, sem meses vazios no meio). 'situacao' é "atual" para a fatura
+    vigente, "fechado" para as anteriores (mes_fechado) e "previsto" para as
+    posteriores, que só têm parcelas.
+
+    O total de cada mês é o mesmo de
+    calcular_totais_mes(renda, montar_categorias_fatura(...))[1], porque ambos
+    usam _SQL_ITENS_GASTO. Aqui é uma consulta por mês (calcular_gasto_fatura),
+    em vez de uma por categoria por mês: isso importa no Turso, onde cada
+    consulta vai pela rede. Os valores não são arredondados."""
+    atual = obter_ciclo_atual(dia_fechamento, agora)
+    serie = []
+    for ano_mes in buscar_meses_com_movimento(conn, user_id, dia_fechamento, agora):
+        total_gasto = sum(calcular_gasto_fatura(conn, user_id, ano_mes, dia_fechamento).values())
+        if ano_mes == atual:
+            situacao = "atual"
+        elif mes_fechado(ano_mes, dia_fechamento, agora):
+            situacao = "fechado"
+        else:
+            situacao = "previsto"
+        serie.append((ano_mes, total_gasto, situacao))
+    return serie
+
 # --- RESUMO MENSAL (ENVIADO NO FECHAMENTO DA FATURA) ---
 def calcular_dados_resumo_mensal(conn, user_id, dia_fechamento, agora):
     """Fatura que acabou de fechar (a de ontem, já que o resumo sai no dia de

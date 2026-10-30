@@ -7,31 +7,52 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     body { font-family: sans-serif; margin: 16px; background: var(--tg-theme-bg-color, #fff); color: var(--tg-theme-text-color, #000); }
+    h2 { font-size: 1rem; margin: 20px 0 4px; }
     pre { background: rgba(127,127,127,.15); padding: 12px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
   </style>
 </head>
 <body>
   <h1>Teste do initData</h1>
   <p id="status">Verificando...</p>
-  <pre id="resposta"></pre>
+  <div id="respostas"></div>
   <script>
     const status = document.getElementById("status");
-    const resposta = document.getElementById("resposta");
+    const respostas = document.getElementById("respostas");
     const tg = window.Telegram && window.Telegram.WebApp;
     if (tg) { tg.ready(); }
+
+    // Cria o bloco de uma rota (rótulo, status HTTP e JSON) e devolve o <pre> e o <h2>.
+    function criarBloco(rota) {
+      const titulo = document.createElement("h2");
+      titulo.textContent = "GET " + rota + " (aguardando...)";
+      const corpo = document.createElement("pre");
+      respostas.append(titulo, corpo);
+      return { titulo, corpo };
+    }
+
+    async function consultar(rota) {
+      const { titulo, corpo } = criarBloco(rota);
+      try {
+        const r = await fetch(rota, {
+          headers: { "Authorization": "tma " + tg.initData, "ngrok-skip-browser-warning": "1" }
+        });
+        titulo.textContent = "GET " + rota + " - Status HTTP: " + r.status;
+        const texto = await r.text();
+        try { corpo.textContent = JSON.stringify(JSON.parse(texto), null, 2); }
+        catch (e) { corpo.textContent = texto; }
+      } catch (e) {
+        titulo.textContent = "GET " + rota + " - falha ao chamar a API";
+      }
+    }
+
     if (!tg || !tg.initData) {
       status.textContent = "Esta página foi aberta fora do Telegram (initData vazio). Abra pelo botão de menu do bot.";
     } else {
-      fetch("/me", {
-        headers: { "Authorization": "tma " + tg.initData, "ngrok-skip-browser-warning": "1" }
-      })
-        .then(async (r) => {
-          status.textContent = "Status HTTP: " + r.status;
-          const texto = await r.text();
-          try { resposta.textContent = JSON.stringify(JSON.parse(texto), null, 2); }
-          catch (e) { resposta.textContent = texto; }
-        })
-        .catch(() => { status.textContent = "Falha ao chamar a API (/me)."; });
+      status.textContent = "Chamando /me, /resumo e /historico...";
+      (async () => {
+        for (const rota of ["/me", "/resumo", "/historico"]) { await consultar(rota); }
+        status.textContent = "Respostas da API:";
+      })();
     }
   </script>
 </body>
