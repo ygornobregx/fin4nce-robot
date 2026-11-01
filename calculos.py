@@ -292,6 +292,43 @@ def calcular_serie_gastos_mensais(conn, user_id, dia_fechamento, agora=None):
         serie.append((ano_mes, total_gasto, situacao))
     return serie
 
+# --- ÚLTIMOS GASTOS (EXTRATO DO MINI APP) ---
+def buscar_gastos_recentes(conn, user_id, limite):
+    """Os últimos 'limite' gastos do usuário, para o extrato da tela home do
+    Mini App. Retorna [(id, descricao, categoria, valor, data, total_parcelas,
+    valor_total)], do mais recente para o mais antigo (empate no mesmo
+    horário: maior id primeiro). 'data' é o dia "AAAA-MM-DD" já gravado no
+    fuso de Brasília. 'total_parcelas' e 'valor_total' vêm None quando o gasto
+    não é parcelado.
+
+    Regras:
+    - só despesas (valor > 0); receitas (valor negativo) ficam de fora;
+    - só gastos com descrição preenchida (descrição vazia ou só com espaços
+      não conta). Os gastos antigos, anteriores à PRO-78, não têm descrição e
+      ficam fora de propósito: não se usa o nome da categoria no lugar. Eles
+      seguem nos totais do painel e do histórico;
+    - a compra parcelada é identificada só por transacoes.parcelamento_id,
+      pelo LEFT JOIN com parcelamentos (a condição de dono, p.user_id =
+      t.user_id, fica no ON para nunca misturar dados de outro usuário e para
+      o gasto à vista continuar na lista). Ela aparece uma vez, pela parcela 1;
+      as parcelas seguintes não são linhas de transacoes. 'valor' é o da
+      parcela 1;
+    - sem filtro por p.ativo: a compra aconteceu e continua no extrato;
+    - transferências entre categorias não entram: ficam em transferencias, não
+      em transacoes. Se um dia passarem a ser gravadas em transacoes, esta
+      consulta terá de tratá-las."""
+    return conn.execute(
+        "SELECT t.id, TRIM(t.descricao), t.categoria_nome, t.valor, "
+        "substr(t.data_transacao, 1, 10), p.total_parcelas, p.valor_total "
+        "FROM transacoes t "
+        "LEFT JOIN parcelamentos p ON p.id = t.parcelamento_id AND p.user_id = t.user_id "
+        "WHERE t.user_id = ? AND t.valor > 0 "
+        "AND t.descricao IS NOT NULL AND TRIM(t.descricao) <> '' "
+        "ORDER BY t.data_transacao DESC, t.id DESC "
+        "LIMIT ?",
+        (user_id, limite),
+    ).fetchall()
+
 # --- RESUMO MENSAL (ENVIADO NO FECHAMENTO DA FATURA) ---
 def calcular_dados_resumo_mensal(conn, user_id, dia_fechamento, agora):
     """Fatura que acabou de fechar (a de ontem, já que o resumo sai no dia de

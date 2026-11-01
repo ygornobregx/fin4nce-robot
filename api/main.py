@@ -1,6 +1,7 @@
 """API local do Mini App: autentica pelo initData do Telegram (PRO-72) e expõe
-as rotas de leitura /me, /resumo e /historico (PRO-76). Os números vêm todos
-do calculos.py; as rotas só buscam os dados e montam o JSON.
+as rotas de leitura /me, /resumo e /historico (PRO-76) e /gastos/recentes
+(PRO-79). Os números e a consulta vêm todos do calculos.py; as rotas só buscam
+os dados e montam o JSON.
 
 Não importa o bot.py. Configuração e conexão com o banco são resolvidas
 sob demanda (dependências), então o módulo importa sem .env e sem rede.
@@ -18,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from api.initdata import InitDataError, validate_init_data
 from calculos import (
     FUSO_BRASILIA,
+    buscar_gastos_recentes,
     calcular_serie_gastos_mensais,
     calcular_totais_mes,
     montar_categorias_fatura,
@@ -27,6 +29,8 @@ from calculos import (
 logger = logging.getLogger("api")
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+LIMITE_GASTOS_RECENTES = 10
 
 
 class Config(NamedTuple):
@@ -156,6 +160,28 @@ def historico(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_c
             {"ano_mes": ano_mes, "total_gasto": em_reais(total_gasto), "situacao": situacao}
             for ano_mes, total_gasto, situacao in serie
         ],
+    }
+
+
+@app.get("/gastos/recentes")
+def gastos_recentes(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db)):
+    user_id = usuario["id"]
+    carregar_cadastro(conn, user_id)
+    gastos = buscar_gastos_recentes(conn, user_id, LIMITE_GASTOS_RECENTES)
+    return {
+        "gastos": [
+            {
+                "id": id_gasto,
+                "descricao": descricao,
+                "categoria": categoria,
+                "valor": em_reais(valor),
+                "data": data,
+                "parcelado": total_parcelas is not None,
+                "total_parcelas": total_parcelas,
+                "valor_total": None if valor_total is None else em_reais(valor_total),
+            }
+            for id_gasto, descricao, categoria, valor, data, total_parcelas, valor_total in gastos
+        ]
     }
 
 

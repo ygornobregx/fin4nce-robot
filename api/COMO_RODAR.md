@@ -27,9 +27,11 @@ Rotas:
 - `GET /resumo`: fatura vigente (gasto, sobra do mês e categorias; exige o mesmo cabeçalho).
 - `GET /historico`: gasto total de cada mês com movimento, com os futuros marcados
   como `previsto` (exige o mesmo cabeçalho).
-- Página de teste em `/app/`, que chama `/me`, `/resumo` e `/historico` e mostra as três respostas.
+- `GET /gastos/recentes`: os 10 últimos gastos com descrição (os registrados a partir da PRO-78),
+  com o vínculo da compra parcelada (exige o mesmo cabeçalho).
+- Página de teste em `/app/`, que chama `/me`, `/resumo`, `/historico` e `/gastos/recentes` e mostra as quatro respostas.
 
-Erros de `/resumo` e `/historico`: `401 nao_autorizado`, `404 usuario_nao_cadastrado` e
+Erros de `/resumo`, `/historico` e `/gastos/recentes`: `401 nao_autorizado`, `404 usuario_nao_cadastrado` e
 `409 cadastro_incompleto` (usuário sem dia de fechamento).
 
 ## 3. Abrir o túnel
@@ -49,7 +51,7 @@ No **bot de teste**, defina o Menu Button (ou a Main Mini App) com a URL
 
 No primeiro acesso, o ngrok (plano gratuito) pode mostrar uma tela de aviso antes da
 página HTML; basta confirmar uma vez. O `fetch` da página envia o cabeçalho
-`ngrok-skip-browser-warning`, então as chamadas a `/me`, `/resumo` e `/historico` não são interceptadas.
+`ngrok-skip-browser-warning`, então as chamadas a `/me`, `/resumo`, `/historico` e `/gastos/recentes` não são interceptadas.
 
 ## 6. Testes
 

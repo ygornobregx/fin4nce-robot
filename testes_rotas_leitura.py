@@ -1,4 +1,5 @@
-"""Testes das rotas de leitura da API (PRO-76): GET /resumo e GET /historico.
+"""Testes das rotas de leitura da API: GET /resumo e GET /historico (PRO-76) e
+GET /gastos/recentes (PRO-79).
 
 Roda com `python testes_rotas_leitura.py`. Não usa .env nem rede: o token é
 falso, o banco é um SQLite em memória e o "agora" da API é fixo (17/10/2026
@@ -52,19 +53,22 @@ def categoria(conn, nome, limite, data_criacao="2026-01-01 10:00:00"):
                  "VALUES (?, ?, ?, ?, ?)", (USER_ID, nome, limite, limite, data_criacao))
 
 
-def transacao(conn, cat, valor, momento):
-    conn.execute("INSERT INTO transacoes (user_id, categoria_nome, valor, data_transacao) VALUES (?, ?, ?, ?)",
-                 (USER_ID, cat, valor, momento))
+def transacao(conn, cat, valor, momento, descricao=None, user_id=USER_ID, parcelamento_id=None):
+    conn.execute("INSERT INTO transacoes (user_id, categoria_nome, valor, data_transacao, descricao, "
+                 "parcelamento_id) VALUES (?, ?, ?, ?, ?, ?)",
+                 (user_id, cat, valor, momento, descricao, parcelamento_id))
 
 
-def parcelamento(conn, cat, total, n, momento, ciclo_referencia):
-    """Como o bot: a parcela 1 também vira transação, na mesma data."""
+def parcelamento(conn, cat, total, n, momento, ciclo_referencia, descricao=None, user_id=USER_ID, ativo=1):
+    """Como o bot (desde a PRO-78): a parcela 1 também vira transação, na mesma
+    data, e guarda o id da compra em parcelamento_id. A descrição é gravada nas
+    duas linhas; sem ela, a compra fica como 'compra' e a transação sem nome."""
     parcela = round(total / n, 2)
-    transacao(conn, cat, parcela, momento)
-    conn.execute("INSERT INTO parcelamentos (user_id, categoria_nome, descricao, valor_total, valor_parcela, "
-                 "total_parcelas, parcelas_pagas, data_criacao, ciclo_referencia, ativo) "
-                 "VALUES (?, ?, 'compra', ?, ?, ?, 1, ?, ?, 1)",
-                 (USER_ID, cat, total, parcela, n, momento, ciclo_referencia))
+    compra = conn.execute("INSERT INTO parcelamentos (user_id, categoria_nome, descricao, valor_total, "
+                          "valor_parcela, total_parcelas, parcelas_pagas, data_criacao, ciclo_referencia, ativo) "
+                          "VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+                          (user_id, cat, descricao or "compra", total, parcela, n, momento, ciclo_referencia, ativo))
+    transacao(conn, cat, parcela, momento, descricao, user_id, compra.lastrowid)
 
 
 def transferencia(conn, origem, destino, valor, momento):
@@ -318,6 +322,169 @@ class TestHistorico(TesteRotasBase):
         atual = [m for m in self.obter("/historico").json()["meses"] if m["situacao"] == "atual"]
         self.assertEqual(len(atual), 1)
         self.assertEqual(atual[0]["total_gasto"], total_resumo)
+
+
+class TestGastosRecentes(TesteRotasBase):
+    def test_sem_cabecalho_401(self):
+        self.iniciar(banco_completo())
+        resposta = self.client.get("/gastos/recentes")
+        self.assertEqual(resposta.status_code, 401)
+        self.assertEqual(resposta.json(), {"detail": "nao_autorizado"})
+
+    def test_usuario_nao_cadastrado_404(self):
+        self.iniciar(banco_completo())
+        resposta = self.obter("/gastos/recentes", user_id=777)
+        self.assertEqual(resposta.status_code, 404)
+        self.assertEqual(resposta.json(), {"detail": "usuario_nao_cadastrado"})
+
+    def test_sem_dia_fechamento_409(self):
+        for dia in (None, 0):
+            with self.subTest(dia_fechamento=dia):
+                self.iniciar(novo_banco(dia_fechamento=dia))
+                resposta = self.obter("/gastos/recentes")
+                self.assertEqual(resposta.status_code, 409)
+                self.assertEqual(resposta.json(), {"detail": "cadastro_incompleto"})
+                self.tearDown()
+
+    def test_sem_gasto_com_descricao_devolve_lista_vazia(self):
+        # banco_completo só tem gastos sem descrição (anteriores à PRO-78) e uma
+        # receita: nada entra no extrato, mesmo com os totais do /resumo cheios.
+        self.iniciar(banco_completo())
+        resposta = self.obter("/gastos/recentes")
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.json(), {"gastos": []})
+
+    def test_gasto_a_vista(self):
+        conn = novo_banco()
+        transacao(conn, "Alimentação", 18.5, "2026-10-29 14:30:00", descricao="Padaria Pão Quente")
+        conn.commit()
+        self.iniciar(conn)
+        resposta = self.obter("/gastos/recentes")
+        self.assertEqual(resposta.status_code, 200)
+        # A hora some: "data" é só o dia. Sem parcelamento_id: à vista, campos nulos.
+        self.assertEqual(resposta.json(), {"gastos": [{
+            "id": 1, "descricao": "Padaria Pão Quente", "categoria": "Alimentação", "valor": 18.5,
+            "data": "2026-10-29", "parcelado": False, "total_parcelas": None, "valor_total": None,
+        }]})
+
+    def test_descricao_vem_sem_espacos_nas_pontas(self):
+        conn = novo_banco()
+        transacao(conn, "Lazer", 30.0, "2026-10-10 10:00:00", descricao="  Cinema  ")
+        conn.commit()
+        self.iniciar(conn)
+        self.assertEqual(self.obter("/gastos/recentes").json()["gastos"][0]["descricao"], "Cinema")
+
+    def test_compra_parcelada_aparece_uma_vez_pela_parcela_1(self):
+        conn = novo_banco()
+        parcelamento(conn, "Casa", 389.7, 3, "2026-10-28 11:00:00", "2026-10", descricao="Magazine Luiza")
+        conn.commit()
+        self.iniciar(conn)
+        resposta = self.obter("/gastos/recentes")
+        self.assertEqual(resposta.status_code, 200)
+        # 389,70 em 3x: parcela 1 = 129,90. "valor" é a parcela; "valor_total", a compra.
+        self.assertEqual(resposta.json(), {"gastos": [{
+            "id": 1, "descricao": "Magazine Luiza", "categoria": "Casa", "valor": 129.9,
+            "data": "2026-10-28", "parcelado": True, "total_parcelas": 3, "valor_total": 389.7,
+        }]})
+
+    def test_compra_parcelada_cancelada_continua_no_extrato(self):
+        conn = novo_banco()
+        parcelamento(conn, "Casa", 300.0, 3, "2026-10-28 11:00:00", "2026-10", descricao="Sofá", ativo=0)
+        conn.commit()
+        self.iniciar(conn)
+        # A compra aconteceu: não se filtra por parcelamentos.ativo.
+        gasto = self.obter("/gastos/recentes").json()["gastos"][0]
+        self.assertEqual((gasto["valor"], gasto["parcelado"], gasto["total_parcelas"], gasto["valor_total"]),
+                         (100.0, True, 3, 300.0))
+
+    def test_gasto_recorrente_lancado_aparece_como_a_vista(self):
+        conn = novo_banco()
+        # O recorrente grava descrição e nenhum parcelamento_id.
+        transacao(conn, "Assinaturas", 39.9, "2026-10-15 08:00:00", descricao="Netflix")
+        conn.commit()
+        self.iniciar(conn)
+        self.assertEqual(self.obter("/gastos/recentes").json()["gastos"], [{
+            "id": 1, "descricao": "Netflix", "categoria": "Assinaturas", "valor": 39.9,
+            "data": "2026-10-15", "parcelado": False, "total_parcelas": None, "valor_total": None,
+        }])
+
+    def test_ficam_de_fora_gasto_antigo_descricao_vazia_so_espacos_e_receita(self):
+        conn = novo_banco()
+        transacao(conn, "Mercado", 50.0, "2026-10-01 10:00:00")                         # antigo, descrição NULL
+        transacao(conn, "Mercado", 51.0, "2026-10-02 10:00:00", descricao="")           # vazia
+        transacao(conn, "Mercado", 52.0, "2026-10-03 10:00:00", descricao="   ")        # só espaços
+        transacao(conn, "Mercado", -500.0, "2026-10-04 10:00:00", descricao="Salário")  # receita
+        transacao(conn, "Mercado", 10.0, "2026-10-05 10:00:00", descricao="Padaria")    # único válido (id 5)
+        conn.commit()
+        self.iniciar(conn)
+        resposta = self.obter("/gastos/recentes")
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual([(g["id"], g["descricao"]) for g in resposta.json()["gastos"]], [(5, "Padaria")])
+
+    def test_ordem_do_mais_recente_para_o_mais_antigo_com_desempate_por_id(self):
+        conn = novo_banco()
+        transacao(conn, "Lazer", 1.0, "2026-10-10 09:00:00", descricao="A")  # id 1
+        transacao(conn, "Lazer", 2.0, "2026-10-12 09:00:00", descricao="B")  # id 2
+        transacao(conn, "Lazer", 3.0, "2026-10-12 09:00:00", descricao="C")  # id 3, mesmo horário de B
+        transacao(conn, "Lazer", 4.0, "2026-10-11 09:00:00", descricao="D")  # id 4
+        conn.commit()
+        self.iniciar(conn)
+        gastos = self.obter("/gastos/recentes").json()["gastos"]
+        # 12/10: C (id 3) antes de B (id 2); depois D (11/10) e A (10/10).
+        self.assertEqual([(g["descricao"], g["id"]) for g in gastos], [("C", 3), ("B", 2), ("D", 4), ("A", 1)])
+
+    def test_limite_de_10_devolve_os_mais_recentes(self):
+        conn = novo_banco()
+        for dia in range(1, 13):  # 12 gastos válidos, um por dia (01 a 12/10)
+            transacao(conn, "Lazer", float(dia), f"2026-10-{dia:02d} 10:00:00", descricao=f"Gasto {dia}")
+        conn.commit()
+        self.iniciar(conn)
+        gastos = self.obter("/gastos/recentes").json()["gastos"]
+        # Voltam os dias 12 a 3; os dias 2 e 1 (os mais antigos) ficam de fora.
+        self.assertEqual(len(gastos), 10)
+        self.assertEqual([g["descricao"] for g in gastos], [f"Gasto {dia}" for dia in range(12, 2, -1)])
+
+    def test_gastos_de_outro_usuario_nao_aparecem(self):
+        outro = 999
+        conn = novo_banco()
+        transacao(conn, "Lazer", 10.0, "2026-10-10 10:00:00", descricao="Meu gasto")  # id 1
+        transacao(conn, "Lazer", 99.0, "2026-10-11 10:00:00", descricao="Gasto alheio", user_id=outro)
+        # Compra parcelada do outro usuário: parcelamento id 1 e transação id 3.
+        parcelamento(conn, "Lazer", 600.0, 6, "2026-10-12 10:00:00", "2026-10", descricao="Compra alheia",
+                     user_id=outro)
+        # Vínculo cruzado: gasto meu (id 4) apontando para a compra do outro usuário.
+        transacao(conn, "Lazer", 20.0, "2026-10-09 10:00:00", descricao="Meu com vínculo errado",
+                  parcelamento_id=1)
+        conn.commit()
+        self.iniciar(conn)
+        gastos = self.obter("/gastos/recentes").json()["gastos"]
+        # Só os dois meus. O vínculo cruzado não traz dados do outro: sai como à vista.
+        self.assertEqual([(g["descricao"], g["parcelado"], g["total_parcelas"], g["valor_total"]) for g in gastos],
+                         [("Meu gasto", False, None, None), ("Meu com vínculo errado", False, None, None)])
+
+    def test_transferencia_entre_categorias_nao_aparece(self):
+        conn = novo_banco()
+        categoria(conn, "Mercado", 1000.0)
+        categoria(conn, "Lazer", 500.0)
+        transacao(conn, "Mercado", 40.0, "2026-10-05 10:00:00", descricao="Feira")
+        # O bot grava a transferência só em transferencias, nunca em transacoes.
+        transferencia(conn, "Lazer", "Mercado", 200.0, "2026-10-12 10:00:00")
+        conn.commit()
+        self.iniciar(conn)
+        gastos = self.obter("/gastos/recentes").json()["gastos"]
+        self.assertEqual([g["descricao"] for g in gastos], ["Feira"])
+
+    def test_valores_vem_como_float_arredondado(self):
+        conn = novo_banco()
+        parcelamento(conn, "Casa", 100.0, 3, "2026-10-28 11:00:00", "2026-10", descricao="Teste")
+        conn.commit()
+        self.iniciar(conn)
+        gasto = self.obter("/gastos/recentes").json()["gastos"][0]
+        # 100 / 3 = 33,33 (parcela arredondada pelo bot); total 100,0.
+        self.assertEqual((gasto["valor"], gasto["valor_total"]), (33.33, 100.0))
+        self.assertIsInstance(gasto["valor"], float)
+        self.assertIsInstance(gasto["valor_total"], float)
+        self.assertIsInstance(gasto["total_parcelas"], int)
 
 
 if __name__ == "__main__":
