@@ -1,7 +1,8 @@
 """API local do Mini App: autentica pelo initData do Telegram (PRO-72) e expõe
 as rotas de leitura /me, /resumo e /historico (PRO-76) e /gastos/recentes
-(PRO-79, com o estabelecimento do gasto desde a PRO-81). Os números e a
-consulta vêm todos do calculos.py; as rotas só buscam os dados e montam o JSON.
+(PRO-79, com o estabelecimento do gasto desde a PRO-81) e /gastos/{id} (PRO-80,
+detalhe de um gasto, com as parcelas pagas). Os números e a consulta vêm todos
+do calculos.py; as rotas só buscam os dados e montam o JSON.
 
 Também serve, na mesma origem, a home do Mini App em /app (mini-apps/home, PRO-77)
 e a página de diagnóstico das rotas em /teste (mini-apps/teste-initdata).
@@ -22,7 +23,9 @@ from fastapi.staticfiles import StaticFiles
 from api.initdata import InitDataError, validate_init_data
 from calculos import (
     FUSO_BRASILIA,
+    buscar_gasto,
     buscar_gastos_recentes,
+    calcular_parcelas_pagas,
     calcular_serie_gastos_mensais,
     calcular_totais_mes,
     montar_categorias_fatura,
@@ -186,6 +189,35 @@ def gastos_recentes(usuario: dict = Depends(usuario_autenticado), conn=Depends(o
             }
             for id_gasto, descricao, categoria, valor, data, total_parcelas, valor_total, estabelecimento in gastos
         ]
+    }
+
+
+@app.get("/gastos/{id_gasto}")
+def detalhe_gasto(id_gasto: int, usuario: dict = Depends(usuario_autenticado),
+                  conn=Depends(obter_conexao_db), agora: datetime = Depends(obter_agora)):
+    user_id = usuario["id"]
+    _, _, dia_fechamento = carregar_cadastro(conn, user_id)
+    # Sempre buscado com o user_id do initData: gasto de outro usuário, inexistente,
+    # receita ou sem descrição dão o mesmo 404, sem dizer qual foi o caso.
+    gasto = buscar_gasto(conn, user_id, id_gasto)
+    if gasto is None:
+        raise HTTPException(status_code=404, detail="gasto_nao_encontrado")
+    (id_gasto, descricao, categoria, valor, data, total_parcelas, valor_total,
+     estabelecimento, ciclo_referencia, data_criacao) = gasto
+    parcelado = total_parcelas is not None
+    return {
+        "id": id_gasto,
+        "descricao": descricao,
+        "estabelecimento": estabelecimento,
+        "categoria": categoria,
+        "valor": em_reais(valor),
+        "data": data,
+        "parcelado": parcelado,
+        "total_parcelas": total_parcelas,
+        "valor_total": None if valor_total is None else em_reais(valor_total),
+        "parcelas_pagas": calcular_parcelas_pagas(
+            ciclo_referencia, data_criacao, total_parcelas, dia_fechamento, agora
+        ) if parcelado else None,
     }
 
 

@@ -30,13 +30,18 @@ Rotas:
 - `GET /gastos/recentes`: os 10 últimos gastos com descrição (os registrados a partir da PRO-78),
   com o vínculo da compra parcelada e o `estabelecimento` (PRO-81; `null` quando o gasto não tem
   estabelecimento, nunca um texto substituto) (exige o mesmo cabeçalho).
-- Home do Mini App em `/app/` (PRO-77): a tela que o usuário vê, servida de `mini-apps/home/`.
+- `GET /gastos/{id}`: o detalhe de um gasto (PRO-80), com os mesmos campos de `/gastos/recentes` mais
+  `parcelas_pagas` (calculado pela fatura vigente; `null` à vista). Gasto inexistente, de outro usuário,
+  receita ou sem descrição dá `404 gasto_nao_encontrado` (exige o mesmo cabeçalho).
+- Home do Mini App em `/app/` (PRO-77): a tela que o usuário vê, servida de `mini-apps/home/`. A tela de detalhe do gasto
+  (PRO-80) é uma segunda tela dentro da mesma página, aberta ao tocar numa linha de "Últimos gastos".
 - Página de diagnóstico em `/teste/`, que chama `/me`, `/resumo`, `/historico` e `/gastos/recentes` e mostra as quatro respostas.
 - As duas páginas vão com `Cache-Control: no-cache`: o Telegram sempre confere com o servidor se a página
   mudou (sem mudança, a resposta é um 304). Depois de mudar o código, reinicie a API (`Ctrl + C` e o comando acima).
 
-Erros de `/resumo`, `/historico` e `/gastos/recentes`: `401 nao_autorizado`, `404 usuario_nao_cadastrado` e
-`409 cadastro_incompleto` (usuário sem dia de fechamento).
+Erros de `/resumo`, `/historico`, `/gastos/recentes` e `/gastos/{id}`: `401 nao_autorizado`, `404 usuario_nao_cadastrado` e
+`409 cadastro_incompleto` (usuário sem dia de fechamento). Só `/gastos/{id}` tem ainda o
+`404 gasto_nao_encontrado`; um id que não é número dá `422` (padrão do FastAPI).
 
 ## 3. Abrir o túnel
 

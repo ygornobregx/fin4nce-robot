@@ -1,5 +1,6 @@
 """Testes das rotas de leitura da API: GET /resumo e GET /historico (PRO-76) e
-GET /gastos/recentes (PRO-79; campo estabelecimento na PRO-81).
+GET /gastos/recentes (PRO-79; campo estabelecimento na PRO-81), e de
+GET /gastos/{id} com o cálculo das parcelas pagas (PRO-80).
 
 Roda com `python testes_rotas_leitura.py`. Não usa .env nem rede: o token é
 falso, o banco é um SQLite em memória e o "agora" da API é fixo (17/10/2026
@@ -14,7 +15,8 @@ from datetime import datetime
 from fastapi.testclient import TestClient
 
 from api.main import Config, app, obter_agora, obter_config, obter_conexao_db
-from calculos import FUSO_BRASILIA, calcular_totais_mes, montar_categorias_fatura
+from calculos import (FUSO_BRASILIA, _meses_entre, calcular_parcelas_pagas, calcular_totais_mes,
+                      montar_categorias_fatura)
 from testes_initdata import TOKEN_FALSO, USER_ID, montar_init_data
 
 AGORA_FIXO = datetime(2026, 10, 17, 12, 0, tzinfo=FUSO_BRASILIA)
@@ -539,6 +541,236 @@ class TestGastosRecentes(TesteRotasBase):
         self.assertIsInstance(gasto["valor"], float)
         self.assertIsInstance(gasto["valor_total"], float)
         self.assertIsInstance(gasto["total_parcelas"], int)
+
+
+class TestParcelasPagas(unittest.TestCase):
+    """calcular_parcelas_pagas (PRO-80): função pura, com o "agora" por parâmetro.
+    Fechamento dia 28: até o dia 27 a fatura vigente é a do próprio mês."""
+
+    @staticmethod
+    def pagas(ciclo_referencia, data_criacao, total, ano, mes, dia=10):
+        agora = datetime(ano, mes, dia, 12, 0, tzinfo=FUSO_BRASILIA)
+        return calcular_parcelas_pagas(ciclo_referencia, data_criacao, total, DIA_FECHAMENTO, agora)
+
+    def test_compra_no_mes_corrente_tem_1_de_3(self):
+        # Primeira fatura 2026-11, vigente 2026-11: 0 meses de distância + 1.
+        self.assertEqual(self.pagas("2026-11", "2026-11-05 10:00:00", 3, 2026, 11), 1)
+
+    def test_um_mes_depois_tem_2_de_3(self):
+        # Vigente 2026-12: 1 mês de distância + 1.
+        self.assertEqual(self.pagas("2026-11", "2026-11-05 10:00:00", 3, 2026, 12), 2)
+
+    def test_todas_as_faturas_passadas_limita_no_total(self):
+        # Vigente 2027-04: 5 meses + 1 = 6, limitado a 3.
+        self.assertEqual(self.pagas("2026-11", "2026-11-05 10:00:00", 3, 2027, 4), 3)
+
+    def test_banco_adiou_pode_dar_zero(self):
+        # Primeira parcela empurrada para 2026-12, vigente 2026-11: -1 + 1 = 0.
+        self.assertEqual(self.pagas("2026-12", "2026-11-05 10:00:00", 3, 2026, 11), 0)
+        # Adiada por 3 meses, o resultado nunca fica negativo.
+        self.assertEqual(self.pagas("2027-02", "2026-11-05 10:00:00", 3, 2026, 11), 0)
+
+    def test_ciclo_referencia_nulo_usa_o_mes_de_data_criacao(self):
+        # Mesmo reserva da expansão em SQL: 7 primeiros caracteres de data_criacao.
+        self.assertEqual(self.pagas(None, "2026-10-10 12:00:00", 3, 2026, 10), 1)
+        self.assertEqual(self.pagas(None, "2026-10-10 12:00:00", 3, 2026, 11), 2)
+
+    def test_ciclo_referencia_vazio_usa_o_mes_de_data_criacao(self):
+        self.assertEqual(self.pagas("", "2026-10-10 12:00:00", 3, 2026, 10), 1)
+        self.assertEqual(self.pagas("", "2026-10-10 12:00:00", 3, 2026, 11), 2)
+
+    def test_virada_de_ano(self):
+        # 2026-11 até 2027-01 são 2 meses: 2 + 1 = 3 (compra em 5x).
+        self.assertEqual(self.pagas("2026-11", "2026-11-05 10:00:00", 5, 2027, 1), 3)
+        # E no sentido contrário: primeira fatura em 2027-01, vigente em 2026-11.
+        self.assertEqual(self.pagas("2027-01", "2026-11-05 10:00:00", 5, 2026, 11), 0)
+
+    def test_compra_em_1x(self):
+        self.assertEqual(self.pagas("2026-11", "2026-11-05 10:00:00", 1, 2026, 11), 1)
+        self.assertEqual(self.pagas("2026-11", "2026-11-05 10:00:00", 1, 2027, 3), 1)
+        self.assertEqual(self.pagas("2026-12", "2026-11-05 10:00:00", 1, 2026, 11), 0)
+
+    def test_dia_de_fechamento_vira_a_fatura_vigente(self):
+        # Em 28/10 (dia de fechamento) a fatura vigente já é a 2026-11.
+        self.assertEqual(self.pagas("2026-10", "2026-10-05 10:00:00", 3, 2026, 10, dia=27), 1)
+        self.assertEqual(self.pagas("2026-10", "2026-10-05 10:00:00", 3, 2026, 10, dia=28), 2)
+
+    def test_meses_entre(self):
+        self.assertEqual(_meses_entre("2026-11", "2026-11"), 0)
+        self.assertEqual(_meses_entre("2026-11", "2027-01"), 2)
+        self.assertEqual(_meses_entre("2027-01", "2026-11"), -2)
+        self.assertEqual(_meses_entre("2025-12", "2027-01"), 13)
+
+    def test_sem_agora_usa_o_agora_de_brasilia(self):
+        # Sem 'agora', usa a data real: um ciclo muito antigo está todo pago e um
+        # muito futuro não tem nenhuma parcela paga, em qualquer dia que o teste rode.
+        self.assertEqual(calcular_parcelas_pagas("2000-01", None, 3, DIA_FECHAMENTO), 3)
+        self.assertEqual(calcular_parcelas_pagas("2999-01", None, 3, DIA_FECHAMENTO), 0)
+
+
+class TestDetalheGasto(TesteRotasBase):
+    def test_sem_cabecalho_401(self):
+        self.iniciar(banco_completo())
+        resposta = self.client.get("/gastos/1")
+        self.assertEqual(resposta.status_code, 401)
+        self.assertEqual(resposta.json(), {"detail": "nao_autorizado"})
+
+    def test_usuario_nao_cadastrado_404(self):
+        self.iniciar(banco_completo())
+        resposta = self.obter("/gastos/1", user_id=777)
+        self.assertEqual(resposta.status_code, 404)
+        self.assertEqual(resposta.json(), {"detail": "usuario_nao_cadastrado"})
+
+    def test_sem_dia_fechamento_409(self):
+        for dia in (None, 0):
+            with self.subTest(dia_fechamento=dia):
+                self.iniciar(novo_banco(dia_fechamento=dia))
+                resposta = self.obter("/gastos/1")
+                self.assertEqual(resposta.status_code, 409)
+                self.assertEqual(resposta.json(), {"detail": "cadastro_incompleto"})
+                self.tearDown()
+
+    def test_gasto_a_vista(self):
+        conn = novo_banco()
+        transacao(conn, "Alimentação", 18.5, "2026-10-14 14:30:00", descricao="Padaria Pão Quente")
+        conn.commit()
+        self.iniciar(conn)
+        resposta = self.obter("/gastos/1")
+        self.assertEqual(resposta.status_code, 200)
+        # À vista: parcelado false e os quatro campos de parcela nulos.
+        self.assertEqual(resposta.json(), {
+            "id": 1, "descricao": "Padaria Pão Quente", "estabelecimento": None,
+            "categoria": "Alimentação", "valor": 18.5, "data": "2026-10-14",
+            "parcelado": False, "total_parcelas": None, "valor_total": None, "parcelas_pagas": None,
+        })
+
+    def test_compra_parcelada_conta_as_parcelas_pagas_pela_fatura(self):
+        conn = novo_banco()
+        # Compra de 600 em 3x com a primeira parcela na fatura 2026-09; o "agora" fixo
+        # (17/10) está na fatura 2026-10: 1 mês depois + 1 = 2 parcelas pagas. A coluna
+        # parcelas_pagas é gravada como 1 (abandonada) e não pode ser lida.
+        parcelamento(conn, "Roupas", 600.0, 3, "2026-09-10 12:00:00", "2026-09",
+                     descricao="Tênis na Nike", estabelecimento="Nike")
+        conn.commit()
+        self.assertEqual(conn.execute("SELECT parcelas_pagas FROM parcelamentos").fetchone()[0], 1)
+        self.iniciar(conn)
+        resposta = self.obter("/gastos/1")
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.json(), {
+            "id": 1, "descricao": "Tênis na Nike", "estabelecimento": "Nike",
+            "categoria": "Roupas", "valor": 200.0, "data": "2026-09-10",
+            "parcelado": True, "total_parcelas": 3, "valor_total": 600.0, "parcelas_pagas": 2,
+        })
+
+    def test_compra_de_hoje_tem_1_parcela_paga_e_valores_arredondados(self):
+        conn = novo_banco()
+        parcelamento(conn, "Casa", 100.0, 3, "2026-10-10 12:00:00", "2026-10", descricao="Teste")
+        conn.commit()
+        self.iniciar(conn)
+        gasto = self.obter("/gastos/1").json()
+        # 100 / 3 = 33,33: a tela mostra o que o bot gravou, sem refazer a divisão.
+        self.assertEqual((gasto["valor"], gasto["valor_total"], gasto["parcelas_pagas"]), (33.33, 100.0, 1))
+        self.assertIsInstance(gasto["valor"], float)
+        self.assertIsInstance(gasto["valor_total"], float)
+        self.assertIsInstance(gasto["total_parcelas"], int)
+        self.assertIsInstance(gasto["parcelas_pagas"], int)
+
+    def test_banco_adiou_da_zero_parcelas_pagas(self):
+        conn = novo_banco()
+        parcelamento(conn, "Casa", 300.0, 3, "2026-10-10 12:00:00", "2026-11", descricao="Sofá")
+        conn.commit()
+        self.iniciar(conn)
+        self.assertEqual(self.obter("/gastos/1").json()["parcelas_pagas"], 0)
+
+    def test_ciclo_referencia_nulo_cai_no_mes_de_data_criacao(self):
+        conn = novo_banco()
+        parcelamento(conn, "Casa", 300.0, 3, "2026-08-10 12:00:00", None, descricao="Sofá")
+        conn.commit()
+        self.iniciar(conn)
+        # Primeira fatura 2026-08, vigente 2026-10: 2 meses + 1 = 3.
+        self.assertEqual(self.obter("/gastos/1").json()["parcelas_pagas"], 3)
+
+    def test_compra_cancelada_continua_com_detalhe(self):
+        conn = novo_banco()
+        parcelamento(conn, "Casa", 300.0, 3, "2026-10-10 12:00:00", "2026-10", descricao="Sofá", ativo=0)
+        conn.commit()
+        self.iniciar(conn)
+        gasto = self.obter("/gastos/1").json()
+        self.assertEqual((gasto["parcelado"], gasto["total_parcelas"], gasto["valor_total"]), (True, 3, 300.0))
+
+    def test_estabelecimento_vazio_ou_so_espacos_vem_null(self):
+        conn = novo_banco()
+        transacao(conn, "Lazer", 10.0, "2026-10-10 10:00:00", descricao="A", estabelecimento="   ")  # id 1
+        transacao(conn, "Lazer", 11.0, "2026-10-11 10:00:00", descricao="B", estabelecimento="")     # id 2
+        transacao(conn, "Lazer", 12.0, "2026-10-12 10:00:00", descricao="C")                         # id 3, NULL
+        transacao(conn, "Lazer", 13.0, "2026-10-13 10:00:00", descricao="D", estabelecimento="  iFood  ")  # id 4
+        conn.commit()
+        self.iniciar(conn)
+        for id_gasto in (1, 2, 3):
+            self.assertIsNone(self.obter(f"/gastos/{id_gasto}").json()["estabelecimento"], id_gasto)
+        # Com texto, vem sem os espaços das pontas.
+        self.assertEqual(self.obter("/gastos/4").json()["estabelecimento"], "iFood")
+
+    def test_descricao_vem_sem_espacos_nas_pontas(self):
+        conn = novo_banco()
+        transacao(conn, "Lazer", 30.0, "2026-10-10 10:00:00", descricao="  Cinema  ")
+        conn.commit()
+        self.iniciar(conn)
+        self.assertEqual(self.obter("/gastos/1").json()["descricao"], "Cinema")
+
+    def test_gasto_nao_encontrado_404_nos_quatro_casos(self):
+        outro = 999
+        conn = novo_banco()
+        transacao(conn, "Lazer", 10.0, "2026-10-10 10:00:00", descricao="Meu gasto")            # id 1 (existe)
+        transacao(conn, "Lazer", 99.0, "2026-10-11 10:00:00", descricao="Gasto alheio", user_id=outro)  # id 2
+        transacao(conn, "Lazer", -500.0, "2026-10-12 10:00:00", descricao="Salário")            # id 3, receita
+        transacao(conn, "Lazer", 50.0, "2026-10-01 10:00:00")                                   # id 4, descrição NULL
+        transacao(conn, "Lazer", 51.0, "2026-10-02 10:00:00", descricao="")                     # id 5, vazia
+        transacao(conn, "Lazer", 52.0, "2026-10-03 10:00:00", descricao="   ")                  # id 6, só espaços
+        conn.commit()
+        self.iniciar(conn)
+        self.assertEqual(self.obter("/gastos/1").status_code, 200)
+        casos = {"inexistente": 12345, "de outro usuário": 2, "receita": 3,
+                 "sem descrição (NULL)": 4, "sem descrição (vazia)": 5, "sem descrição (só espaços)": 6}
+        for nome, id_gasto in casos.items():
+            with self.subTest(caso=nome):
+                resposta = self.obter(f"/gastos/{id_gasto}")
+                self.assertEqual(resposta.status_code, 404)
+                # O mesmo detail em todos: a resposta não diz qual foi o caso.
+                self.assertEqual(resposta.json(), {"detail": "gasto_nao_encontrado"})
+
+    def test_vinculo_cruzado_com_compra_de_outro_usuario_sai_como_a_vista(self):
+        outro = 999
+        conn = novo_banco()
+        # Compra parcelada do outro usuário: parcelamento id 1 e transação id 1.
+        parcelamento(conn, "Lazer", 600.0, 6, "2026-10-12 10:00:00", "2026-10", descricao="Compra alheia",
+                     user_id=outro)
+        # Gasto meu (id 2) apontando para a compra do outro usuário.
+        transacao(conn, "Lazer", 20.0, "2026-10-09 10:00:00", descricao="Meu com vínculo errado",
+                  parcelamento_id=1)
+        conn.commit()
+        self.iniciar(conn)
+        gasto = self.obter("/gastos/2").json()
+        self.assertEqual((gasto["parcelado"], gasto["total_parcelas"], gasto["valor_total"], gasto["parcelas_pagas"]),
+                         (False, None, None, None))
+
+    def test_id_que_nao_e_numero_da_422(self):
+        self.iniciar(novo_banco())
+        self.assertEqual(self.obter("/gastos/abc").status_code, 422)
+
+    def test_gastos_recentes_continua_respondendo_igual(self):
+        conn = novo_banco()
+        transacao(conn, "Alimentação", 18.5, "2026-10-14 14:30:00", descricao="Padaria")
+        conn.commit()
+        self.iniciar(conn)
+        # A rota nova ("/gastos/{id_gasto}") não captura "/gastos/recentes" (nem dá 422 de id).
+        resposta = self.obter("/gastos/recentes")
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.json(), {"gastos": [{
+            "id": 1, "descricao": "Padaria", "estabelecimento": None,
+            "categoria": "Alimentação", "valor": 18.5,
+            "data": "2026-10-14", "parcelado": False, "total_parcelas": None, "valor_total": None,
+        }]})
 
 
 class TestPaginasEstaticas(TesteRotasBase):

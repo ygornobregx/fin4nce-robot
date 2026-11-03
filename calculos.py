@@ -165,6 +165,29 @@ _SQL_FATURA_TRANSACAO = '''(CASE
         THEN strftime('%Y-%m', substr(data_transacao, 1, 7) || '-01', '+1 month')
         ELSE substr(data_transacao, 1, 7) END)'''
 
+def _meses_entre(ano_mes_inicial, ano_mes_final):
+    """Meses de 'YYYY-MM' inicial até o final; negativo se o final vier antes."""
+    ano_i, mes_i = map(int, ano_mes_inicial.split('-'))
+    ano_f, mes_f = map(int, ano_mes_final.split('-'))
+    return (ano_f - ano_i) * 12 + (mes_f - mes_i)
+
+def calcular_parcelas_pagas(ciclo_referencia, data_criacao, total_parcelas, dia_fechamento, agora=None):
+    """Parcelas da compra que caem em faturas até a vigente (inclusive), de 0 a
+    'total_parcelas' (PRO-80). Mesma regra da expansão de parcelas
+    (_SQL_PARCELAS_EXPANDIDAS): a parcela n+1 cai em 'ciclo_referencia' + n
+    meses, e a primeira fatura é 'ciclo_referencia' (ou, se estiver vazio ou
+    None, os 7 primeiros caracteres de 'data_criacao', 'YYYY-MM'). Conta como
+    paga a parcela da fatura vigente, que o bot já debita na hora da compra;
+    por isso uma compra de hoje tem 1 parcela paga, e uma que o "Banco Adiou"
+    empurrou para depois da fatura vigente tem 0.
+
+    Função pura, sem conexão: derivada na hora, nunca lê nem grava a coluna
+    parcelamentos.parcelas_pagas (abandonada). 'agora' opcional (padrão: agora,
+    no fuso de Brasília), para testes com datas fixas."""
+    primeira_fatura = ciclo_referencia or (data_criacao or '')[:7]
+    pagas = _meses_entre(primeira_fatura, obter_ciclo_atual(dia_fechamento, agora)) + 1
+    return max(0, min(pagas, total_parcelas))
+
 def obter_ciclo_atual(dia_fechamento, agora=None):
     """Fatura vigente ('YYYY-MM') em 'agora' (padrão: agora, no fuso de Brasília)."""
     if agora is None:
@@ -332,6 +355,30 @@ def buscar_gastos_recentes(conn, user_id, limite):
         "LIMIT ?",
         (user_id, limite),
     ).fetchall()
+
+def buscar_gasto(conn, user_id, id_gasto):
+    """Um gasto do extrato pelo id, com os dados do parcelamento, para a tela de
+    detalhe do Mini App (PRO-80). Retorna (id, descricao, categoria, valor,
+    data, total_parcelas, valor_total, estabelecimento, ciclo_referencia,
+    data_criacao), os oito primeiros iguais aos de buscar_gastos_recentes, e
+    'ciclo_referencia' e 'data_criacao' do parcelamento (None à vista), que
+    alimentam calcular_parcelas_pagas.
+
+    Mesmas regras de buscar_gastos_recentes (só despesas, só com descrição,
+    LEFT JOIN com a condição de dono no ON, estabelecimento vazio vira None).
+    Retorna None se o gasto não existir, for de outro usuário, for receita ou
+    não tiver descrição, sem distinguir o motivo."""
+    return conn.execute(
+        "SELECT t.id, TRIM(t.descricao), t.categoria_nome, t.valor, "
+        "substr(t.data_transacao, 1, 10), p.total_parcelas, p.valor_total, "
+        "NULLIF(TRIM(t.estabelecimento), ''), p.ciclo_referencia, p.data_criacao "
+        "FROM transacoes t "
+        "LEFT JOIN parcelamentos p ON p.id = t.parcelamento_id AND p.user_id = t.user_id "
+        "WHERE t.user_id = ? AND t.valor > 0 "
+        "AND t.descricao IS NOT NULL AND TRIM(t.descricao) <> '' "
+        "AND t.id = ?",
+        (user_id, id_gasto),
+    ).fetchone()
 
 # --- RESUMO MENSAL (ENVIADO NO FECHAMENTO DA FATURA) ---
 def calcular_dados_resumo_mensal(conn, user_id, dia_fechamento, agora):

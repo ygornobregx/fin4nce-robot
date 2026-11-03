@@ -69,7 +69,7 @@
       color: var(--cor-texto-2);
     }
 
-    .aviso button {
+    .aviso button, .detalhe-erro button {
       padding: 10px 20px;
       border-radius: 14px;
       background: var(--cor-grafite);
@@ -262,7 +262,10 @@
     }
     .grupo-data.primeiro { padding-top: 16px; }
 
+    /* A linha é um <button> (abre o detalhe), com a mesma aparência de antes. */
     .gasto {
+      width: 100%;
+      text-align: left;
       padding: 14px 0;
       display: flex;
       justify-content: space-between;
@@ -278,6 +281,96 @@
     .gasto-valor .parcelas { font-weight: 600; color: var(--cor-texto-2); }
 
     .extrato-vazio { padding-top: 16px; font-size: 15px; line-height: 20px; font-weight: 500; color: var(--cor-texto-2); }
+
+    /* ---------- Detalhe do gasto (PRO-80) ---------- */
+    .detalhe-erro {
+      padding: 40px 24px 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      text-align: center;
+      font-size: 15px;
+      line-height: 20px;
+      font-weight: 500;
+      color: var(--cor-texto-2);
+    }
+
+    .detalhe-textos { padding: 25px 24px 0; display: flex; flex-direction: column; align-items: flex-start; }
+    .detalhe-textos .valor-grande { margin-top: 6px; }
+    .detalhe-parcela { margin-top: 2px; font-size: 15px; line-height: 20px; font-weight: 600; color: var(--cor-branco); }
+    .detalhe-textos .data { margin-top: 12px; }
+    .etiqueta {
+      margin-top: 12px;
+      padding: 4px 10px;
+      border-radius: 8px;
+      background: var(--cor-botao-menu);
+      font-size: 12px;
+      line-height: 16px;
+      font-weight: 700;
+      color: var(--cor-branco);
+    }
+    /* À vista não tem a linha "em 3x": 34px (12 + 22) mantêm o cabeçalho com a mesma altura. */
+    .etiqueta.a-vista { margin-top: 34px; }
+
+    .acoes { padding: 28px 24px 0; display: flex; justify-content: center; gap: 16px; }
+
+    .acao {
+      width: 140px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+    .acoes.unica .acao { width: 160px; }
+
+    .acao-icone {
+      width: 60px;
+      height: 60px;
+      border-radius: 30px;
+      background: var(--cor-fundo-suave);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .acao-icone svg {
+      width: 24px;
+      height: 24px;
+      fill: none;
+      stroke: var(--cor-grafite);
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .cartao { margin: 28px 24px 0; padding: 0 20px; border: 1px solid var(--cor-divisoria); border-radius: 18px; }
+
+    .cartao-linha {
+      padding: 16px 0;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      border-bottom: 1px solid var(--cor-divisoria);
+    }
+    .cartao-linha:last-child { border-bottom: 0; }
+    .cartao-linha.parcelas { padding: 18px 0; }
+
+    .cartao-texto { flex: 1; min-width: 0; }
+    .cartao-rotulo { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--cor-texto-2); }
+    .cartao-valor { margin-top: 2px; font-size: 15px; line-height: 20px; font-weight: 600; color: var(--cor-texto); overflow-wrap: anywhere; }
+    .parcelas .cartao-valor { margin-top: 4px; font-size: 20px; line-height: 26px; font-weight: 800; letter-spacing: -0.01em; }
+
+    .cartao-icone { width: 24px; height: 24px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+    .cartao-icone svg { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .cartao-icone .lapis { width: 20px; height: 20px; stroke: var(--cor-texto-2); stroke-width: 1.6; }
+    .cartao-icone .seta { width: 20px; height: 20px; stroke: var(--cor-grafite); stroke-width: 1.8; }
+
+    .barra-parcelas { margin-top: 6px; display: flex; gap: 4px; }
+    .segmento { flex-grow: 1; height: 6px; border-radius: 3px; background: var(--cor-divisoria); }
+    .segmento.pago { background: var(--cor-grafite); }
+    .barra-continua { margin-top: 6px; height: 6px; border-radius: 3px; background: var(--cor-divisoria); overflow: hidden; }
+    .barra-continua div { height: 6px; background: var(--cor-grafite); }
   </style>
 </head>
 <body>
@@ -368,6 +461,99 @@
     </section>
   </main>
 
+  <!-- Detalhe do gasto (PRO-80): segunda tela, dentro da mesma página -->
+  <main id="detalhe" hidden>
+    <header class="cabecalho">
+      <div class="cabecalho-linha">
+        <button class="botao-menu" id="detalhe-voltar" type="button" aria-label="Voltar">
+          <svg viewBox="0 0 22 22" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17 11H5"/><path d="M10 6l-5 5 5 5"/>
+          </svg>
+        </button>
+      </div>
+
+      <p class="carregando" id="detalhe-carregando">Carregando...</p>
+
+      <div class="detalhe-textos" id="detalhe-textos" hidden>
+        <h1 class="saudacao" id="detalhe-nome"></h1>
+        <p class="valor-grande" id="detalhe-valor"></p>
+        <p class="detalhe-parcela" id="detalhe-parcela" hidden></p>
+        <p class="data" id="detalhe-data"></p>
+        <p class="etiqueta" id="detalhe-etiqueta"></p>
+      </div>
+    </header>
+
+    <div class="detalhe-erro" id="detalhe-erro" hidden>
+      <p id="detalhe-erro-texto"></p>
+      <button id="detalhe-erro-voltar" type="button" hidden>Voltar</button>
+      <button id="detalhe-erro-tentar" type="button" hidden>Tentar de novo</button>
+    </div>
+
+    <div id="detalhe-corpo" hidden>
+      <div class="acoes" id="detalhe-acoes">
+        <button class="acao" type="button" aria-label="Mover Para o Mês Seguinte">
+          <span class="acao-icone">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5.5 11.5A6.5 6.5 0 0 1 17.4 7.2"/><path d="M18.2 3.6v4h-4"/>
+              <circle cx="6.5" cy="17.5" r="1.7" stroke-width="1.6"/>
+              <circle cx="12" cy="17.5" r="1.7" stroke-width="1.6"/>
+              <circle cx="17.5" cy="17.5" r="1.7" stroke-width="1.6"/>
+            </svg>
+          </span>
+          <span class="atalho-rotulo">Mover Para o Mês Seguinte</span>
+        </button>
+        <button class="acao" id="detalhe-acao-antecipar" type="button" aria-label="Antecipei a Parcela" hidden>
+          <span class="acao-icone">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18.5 11.5A6.5 6.5 0 0 0 6.6 7.2"/><path d="M5.8 3.6v4h4"/>
+              <circle cx="6.5" cy="17.5" r="1.7" stroke-width="1.6"/>
+              <circle cx="12" cy="17.5" r="1.7" stroke-width="1.6"/>
+              <circle cx="17.5" cy="17.5" r="1.7" stroke-width="1.6"/>
+            </svg>
+          </span>
+          <span class="atalho-rotulo">Antecipei a Parcela</span>
+        </button>
+      </div>
+
+      <div class="cartao">
+        <div class="cartao-linha">
+          <div class="cartao-texto">
+            <p class="cartao-rotulo">Estabelecimento</p>
+            <p class="cartao-valor" id="detalhe-estabelecimento"></p>
+          </div>
+          <button class="cartao-icone" type="button" aria-label="Editar estabelecimento">
+            <svg class="lapis" viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M13.2 3.6a1.9 1.9 0 0 1 2.7 2.7L7 15.2l-3.5.8.8-3.5z"/><path d="M11.8 5l2.7 2.7"/>
+            </svg>
+          </button>
+        </div>
+        <div class="cartao-linha parcelas" id="detalhe-linha-parcelas" hidden>
+          <div class="cartao-texto">
+            <p class="cartao-rotulo">Parcelas</p>
+            <p class="cartao-valor" id="detalhe-parcelas-texto"></p>
+            <div id="detalhe-barra"></div>
+          </div>
+          <button class="cartao-icone" type="button" aria-label="Ver parcelas">
+            <svg class="seta" viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M7.5 4.5L13 10l-5.5 5.5"/>
+            </svg>
+          </button>
+        </div>
+        <div class="cartao-linha">
+          <div class="cartao-texto">
+            <p class="cartao-rotulo">Categoria</p>
+            <p class="cartao-valor" id="detalhe-categoria"></p>
+          </div>
+          <button class="cartao-icone" type="button" aria-label="Editar categoria">
+            <svg class="lapis" viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M13.2 3.6a1.9 1.9 0 0 1 2.7 2.7L7 15.2l-3.5.8.8-3.5z"/><path d="M11.8 5l2.7 2.7"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </main>
+
   <script>
     const FUSO = "America/Sao_Paulo";
     const MESES_COMPLETOS = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
@@ -450,10 +636,9 @@
     }
 
     // Valor grande em três partes: "R$ ", inteiro com milhar e ",centavos".
-    function mostrarValorGrande(valor) {
+    function mostrarValorGrande(valor, caixa = $("valor-grande")) {
       const texto = formatadorNumero.format(Math.abs(valor)); // "4.287,90"
       const posVirgula = texto.lastIndexOf(",");
-      const caixa = $("valor-grande");
       caixa.replaceChildren(
         criar("span", "moeda", (valor < 0 ? "−" : "") + "R$ "),
         criar("span", "inteiro", texto.slice(0, posVirgula)),
@@ -537,10 +722,13 @@
             grupo = criar("div", "grupo");
             lista.append(grupo);
           }
-          const valor = criar("div", "gasto-valor", formatarDinheiro(g.valor));
+          const valor = criar("span", "gasto-valor", formatarDinheiro(g.valor));
           if (g.parcelado) valor.append(criar("span", "parcelas", " · " + g.total_parcelas + "x"));
-          const linha = criar("div", "gasto");
-          linha.append(criar("div", "gasto-nome", g.descricao), valor);
+          // Linha clicável: um botão que guarda o id do gasto e abre o detalhe.
+          const linha = criar("button", "gasto");
+          linha.type = "button";
+          linha.dataset.idGasto = g.id;
+          linha.append(criar("span", "gasto-nome", g.descricao), valor);
           grupo.append(linha);
         });
       }
@@ -548,13 +736,18 @@
     }
 
     // ---------- Chamadas à API ----------
-    // Nunca lança: devolve { dados } ou { erro: status HTTP } (0 = falha de rede).
+    // Nunca lança: devolve { dados } ou { erro: status HTTP, detalhe } (erro 0 = falha de rede).
+    // 'detalhe' é o campo "detail" do corpo do erro (ex.: "gasto_nao_encontrado"), se houver.
     async function chamar(rota) {
       try {
         const resposta = await fetch(rota, {
           headers: { "Authorization": "tma " + initData, "ngrok-skip-browser-warning": "1" },
         });
-        if (!resposta.ok) return { erro: resposta.status };
+        if (!resposta.ok) {
+          let detalhe;
+          try { detalhe = (await resposta.json()).detail; } catch (e) { /* corpo sem JSON */ }
+          return { erro: resposta.status, detalhe };
+        }
         return { dados: await resposta.json() };
       } catch (e) {
         return { erro: 0 };
@@ -608,6 +801,121 @@
       try { tg.showAlert("Em breve"); } catch (e) { window.alert("Em breve"); }
     }
 
+    // ---------- Detalhe do gasto (PRO-80) ----------
+    const MENSAGEM_GASTO_NAO_ENCONTRADO = "Este gasto não foi encontrado.";
+    const SEM_INFORMACAO = "Sem Informação";
+    const MAX_SEGMENTOS = 12; // acima disso, a barra de parcelas é contínua
+
+    let idDetalhe = null;      // gasto aberto no detalhe
+    let versaoDetalhe = 0;     // descarta resposta atrasada de um detalhe já fechado
+    let rolagemHome = 0;       // posição da home ao abrir o detalhe
+    let rolagemGrafico = 0;
+
+    // "2026-10-31" -> "31 de outubro de 2026", só com o texto (new Date("AAAA-MM-DD") leria UTC).
+    function dataPorExtenso(data) {
+      const [ano, mes, dia] = String(data).split("-");
+      return parseInt(dia, 10) + " de " + MESES_COMPLETOS[parseInt(mes, 10) - 1] + " de " + ano;
+    }
+
+    // Barra de parcelas: até 12, um segmento por parcela; acima, uma barra contínua. Só proporção visual.
+    function mostrarBarraParcelas(pagas, total) {
+      const barra = $("detalhe-barra");
+      if (total <= MAX_SEGMENTOS) {
+        const segmentos = criar("div", "barra-parcelas");
+        for (let i = 0; i < total; i++) segmentos.append(criar("div", "segmento" + (i < pagas ? " pago" : "")));
+        barra.replaceChildren(segmentos);
+      } else {
+        const preenchida = criar("div");
+        preenchida.style.width = (Math.min(Math.max(pagas / total, 0), 1) * 100) + "%";
+        const continua = criar("div", "barra-continua");
+        continua.append(preenchida);
+        barra.replaceChildren(continua);
+      }
+    }
+
+    function mostrarDetalhe(g) {
+      $("detalhe-nome").textContent = g.descricao;
+      mostrarValorGrande(g.parcelado ? g.valor_total : g.valor, $("detalhe-valor"));
+      $("detalhe-parcela").hidden = !g.parcelado;
+      if (g.parcelado) $("detalhe-parcela").textContent = "em " + g.total_parcelas + "x de " + formatarDinheiro(g.valor);
+      $("detalhe-data").textContent = dataPorExtenso(g.data);
+      const etiqueta = $("detalhe-etiqueta");
+      etiqueta.textContent = g.parcelado ? "Compra Parcelada" : "Compra à Vista";
+      etiqueta.classList.toggle("a-vista", !g.parcelado);
+
+      $("detalhe-acoes").classList.toggle("unica", !g.parcelado);
+      $("detalhe-acao-antecipar").hidden = !g.parcelado;
+
+      $("detalhe-estabelecimento").textContent = g.estabelecimento || SEM_INFORMACAO;
+      $("detalhe-linha-parcelas").hidden = !g.parcelado;
+      if (g.parcelado) {
+        $("detalhe-parcelas-texto").textContent = g.parcelas_pagas + " de " + g.total_parcelas + " pagas";
+        mostrarBarraParcelas(g.parcelas_pagas, g.total_parcelas);
+      }
+      $("detalhe-categoria").textContent = g.categoria;
+
+      $("detalhe-carregando").hidden = true;
+      $("detalhe-textos").hidden = false;
+      $("detalhe-corpo").hidden = false;
+    }
+
+    function mostrarErroDetalhe(resultado) {
+      let texto, voltar = false, tentarDeNovo = false;
+      if (resultado.erro === 404 && resultado.detalhe === "gasto_nao_encontrado") {
+        texto = MENSAGEM_GASTO_NAO_ENCONTRADO;
+        voltar = true;
+      } else {
+        const erro = mensagemDeErro([resultado]);
+        texto = erro.texto;
+        tentarDeNovo = erro.tentarDeNovo;
+      }
+      $("detalhe-erro-texto").textContent = texto;
+      $("detalhe-erro-voltar").hidden = !voltar;
+      $("detalhe-erro-tentar").hidden = !tentarDeNovo;
+      $("detalhe-carregando").hidden = true;
+      $("detalhe-erro").hidden = false;
+    }
+
+    async function carregarDetalhe() {
+      const versao = ++versaoDetalhe;
+      $("detalhe-carregando").hidden = false;
+      $("detalhe-textos").hidden = true;
+      $("detalhe-corpo").hidden = true;
+      $("detalhe-erro").hidden = true;
+      const resultado = await chamar("/gastos/" + encodeURIComponent(idDetalhe));
+      if (versao !== versaoDetalhe) return; // o usuário já voltou para a home
+      if (resultado.erro !== undefined) mostrarErroDetalhe(resultado);
+      else mostrarDetalhe(resultado.dados);
+    }
+
+    function abrirDetalhe(idGasto) {
+      rolagemHome = window.scrollY;
+      rolagemGrafico = $("grafico-area").scrollLeft;
+      idDetalhe = idGasto;
+      $("tela").hidden = true;
+      $("detalhe").hidden = false;
+      window.scrollTo(0, 0);
+      if (tg) {
+        try { tg.BackButton.show(); } catch (e) { /* versão antiga */ }
+        try { tg.setHeaderColor("#2F3133"); } catch (e) { /* versão antiga */ }
+      }
+      carregarDetalhe();
+    }
+
+    // Volta à home sem recarregar nada, na mesma posição de rolagem.
+    function voltarParaHome() {
+      if ($("detalhe").hidden) return;
+      versaoDetalhe++;
+      idDetalhe = null;
+      $("detalhe").hidden = true;
+      $("tela").hidden = false;
+      $("grafico-area").scrollLeft = rolagemGrafico;
+      window.scrollTo(0, rolagemHome);
+      if (tg) {
+        try { tg.BackButton.hide(); } catch (e) { /* versão antiga */ }
+      }
+    }
+
     function iniciar() {
       if (tg) {
         try { tg.ready(); } catch (e) { /* versão antiga */ }
@@ -625,6 +933,19 @@
       $("botao-menu").addEventListener("click", avisarEmBreve);
       document.querySelectorAll(".atalho").forEach((b) => b.addEventListener("click", avisarEmBreve));
       $("aviso-botao").addEventListener("click", carregar);
+
+      // Detalhe do gasto: toque na linha, voltar (cabeçalho, erro ou BackButton do Telegram) e ações "Em breve".
+      $("extrato-lista").addEventListener("click", (evento) => {
+        const linha = evento.target.closest(".gasto");
+        if (linha) abrirDetalhe(linha.dataset.idGasto);
+      });
+      $("detalhe-voltar").addEventListener("click", voltarParaHome);
+      $("detalhe-erro-voltar").addEventListener("click", voltarParaHome);
+      $("detalhe-erro-tentar").addEventListener("click", carregarDetalhe);
+      document.querySelectorAll(".acao, .cartao-icone").forEach((b) => b.addEventListener("click", avisarEmBreve));
+      if (tg) {
+        try { tg.BackButton.onClick(voltarParaHome); } catch (e) { /* versão antiga */ }
+      }
       carregar();
     }
 
