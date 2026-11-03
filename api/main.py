@@ -3,6 +3,9 @@ as rotas de leitura /me, /resumo e /historico (PRO-76) e /gastos/recentes
 (PRO-79, com o estabelecimento do gasto desde a PRO-81). Os números e a
 consulta vêm todos do calculos.py; as rotas só buscam os dados e montam o JSON.
 
+Também serve, na mesma origem, a home do Mini App em /app (mini-apps/home, PRO-77)
+e a página de diagnóstico das rotas em /teste (mini-apps/teste-initdata).
+
 Não importa o bot.py. Configuração e conexão com o banco são resolvidas
 sob demanda (dependências), então o módulo importa sem .env e sem rede.
 """
@@ -186,6 +189,18 @@ def gastos_recentes(usuario: dict = Depends(usuario_autenticado), conn=Depends(o
     }
 
 
+class ArquivosSemCache(StaticFiles):
+    """StaticFiles com `Cache-Control: no-cache`: o navegador pode guardar a
+    página, mas sempre pergunta ao servidor se ela mudou (ETag; sem mudança,
+    a resposta é um 304 curto). Sem isso, o WebView do Telegram reaproveita
+    uma versão antiga por horas (PRO-77)."""
+
+    async def get_response(self, path, scope):
+        resposta = await super().get_response(path, scope)
+        resposta.headers["Cache-Control"] = "no-cache"
+        return resposta
+
+
 # Mesma origem da API (sem CORS). Montado depois das rotas.
-app.mount("/app", StaticFiles(directory=os.path.join(RAIZ, "mini-apps", "teste-initdata"), html=True),
-          name="app")
+app.mount("/teste", ArquivosSemCache(directory=os.path.join(RAIZ, "mini-apps", "teste-initdata"), html=True), name="teste")
+app.mount("/app", ArquivosSemCache(directory=os.path.join(RAIZ, "mini-apps", "home"), html=True), name="app")

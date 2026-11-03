@@ -30,7 +30,10 @@ Rotas:
 - `GET /gastos/recentes`: os 10 últimos gastos com descrição (os registrados a partir da PRO-78),
   com o vínculo da compra parcelada e o `estabelecimento` (PRO-81; `null` quando o gasto não tem
   estabelecimento, nunca um texto substituto) (exige o mesmo cabeçalho).
-- Página de teste em `/app/`, que chama `/me`, `/resumo`, `/historico` e `/gastos/recentes` e mostra as quatro respostas.
+- Home do Mini App em `/app/` (PRO-77): a tela que o usuário vê, servida de `mini-apps/home/`.
+- Página de diagnóstico em `/teste/`, que chama `/me`, `/resumo`, `/historico` e `/gastos/recentes` e mostra as quatro respostas.
+- As duas páginas vão com `Cache-Control: no-cache`: o Telegram sempre confere com o servidor se a página
+  mudou (sem mudança, a resposta é um 304). Depois de mudar o código, reinicie a API (`Ctrl + C` e o comando acima).
 
 Erros de `/resumo`, `/historico` e `/gastos/recentes`: `401 nao_autorizado`, `404 usuario_nao_cadastrado` e
 `409 cadastro_incompleto` (usuário sem dia de fechamento).
@@ -46,7 +49,7 @@ Com domínio estático: `ngrok http --url=<domínio estático> 8000`.
 ## 4. Configurar o BotFather
 
 No **bot de teste**, defina o Menu Button (ou a Main Mini App) com a URL
-`https://<host-do-ngrok>/app/`.
+`https://<host-do-ngrok>/app/` (a home). A página de diagnóstico das rotas fica em `/teste/`.
 
 ## 5. Tela de aviso do ngrok
 

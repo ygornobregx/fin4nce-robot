@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <title>Fin4nce</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    /* Paleta fixa da HOME - V23 (tema claro). A home ignora o tema do Telegram por enquanto. */
+    :root {
+      --cor-grafite: #2F3133;
+      --cor-texto-cabecalho-2: #B9BBBE;
+      --cor-branco: #FFFFFF;
+      --cor-botao-menu: rgba(255, 255, 255, 0.14);
+      --cor-trilho-barra: rgba(255, 255, 255, 0.22);
+      --cor-fundo-suave: #F0F0F1;
+      --cor-tracejado: #BDBEC1;
+      --cor-texto: #121212;
+      --cor-texto-2: #6B6B6B;
+      --cor-texto-3: #8C8C8C;
+      --cor-barra-fechado: #D4D4D4;
+      --cor-divisoria: #E8E8E8;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { color-scheme: light; }
+
+    body {
+      margin: 0;
+      padding-bottom: 40px;
+      background: var(--cor-branco);
+      color: var(--cor-texto);
+      font: 500 12px/16px "Manrope", system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    h1, h2, p { margin: 0; }
+
+    button {
+      font: inherit;
+      color: inherit;
+      border: 0;
+      padding: 0;
+      background: none;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    [hidden] { display: none !important; }
+
+    /* ---------- Avisos de tela cheia (fora do Telegram e erros) ---------- */
+    .aviso {
+      min-height: 100vh;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      text-align: center;
+      font-size: 15px;
+      line-height: 20px;
+      font-weight: 500;
+      color: var(--cor-texto-2);
+    }
+
+    .aviso button {
+      padding: 10px 20px;
+      border-radius: 14px;
+      background: var(--cor-grafite);
+      color: var(--cor-branco);
+      font-size: 15px;
+      line-height: 20px;
+      font-weight: 700;
+    }
+
+    /* ---------- 1. Cabeçalho ---------- */
+    .cabecalho {
+      padding-top: 16px;
+      padding-bottom: 28px;
+      background: var(--cor-grafite);
+      color: var(--cor-branco);
+    }
+
+    .cabecalho-linha {
+      padding: 0 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .cabecalho-textos { display: flex; flex-direction: column; gap: 2px; }
+
+    .data { font-size: 14px; line-height: 20px; font-weight: 500; color: var(--cor-texto-cabecalho-2); }
+
+    .saudacao { font-size: 24px; line-height: 32px; font-weight: 800; letter-spacing: -0.02em; }
+
+    .botao-menu {
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      background: var(--cor-botao-menu);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .botao-menu svg { width: 22px; height: 22px; }
+
+    .carregando {
+      padding: 28px 24px 0;
+      font-size: 14px;
+      line-height: 20px;
+      font-weight: 600;
+      color: var(--cor-texto-cabecalho-2);
+    }
+
+    .bloco-gasto { padding: 28px 24px 0; display: flex; flex-direction: column; gap: 6px; }
+
+    .gasto-rotulo { font-size: 14px; line-height: 20px; font-weight: 600; color: var(--cor-texto-cabecalho-2); }
+
+    .valor-grande { line-height: 52px; color: var(--cor-branco); white-space: nowrap; }
+    .valor-grande .moeda { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+    .valor-grande .inteiro { font-size: 44px; font-weight: 800; letter-spacing: -0.035em; }
+    .valor-grande .centavos { font-size: 26px; font-weight: 800; letter-spacing: -0.035em; }
+
+    .barra-sobra { padding: 14px 24px 0; display: flex; flex-direction: column; gap: 10px; }
+
+    .trilho { height: 8px; border-radius: 4px; background: var(--cor-trilho-barra); overflow: hidden; }
+    .preenchimento { height: 8px; border-radius: 4px; background: var(--cor-branco); width: 0; }
+
+    .sobra-linha { display: flex; justify-content: space-between; align-items: baseline; }
+    .sobra-texto { font-size: 15px; line-height: 20px; font-weight: 500; }
+    .sobra-texto strong { font-weight: 800; }
+    .renda-texto { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--cor-texto-cabecalho-2); }
+
+    /* ---------- 2. Atalhos ---------- */
+    .atalhos { padding: 32px 24px 0; display: flex; gap: 12px; }
+
+    .atalho {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .atalho-icone {
+      width: 56px;
+      height: 56px;
+      border-radius: 18px;
+      background: var(--cor-fundo-suave);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .atalho-icone svg {
+      width: 24px;
+      height: 24px;
+      fill: none;
+      stroke: var(--cor-grafite);
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .atalho-rotulo { font-size: 13px; line-height: 18px; font-weight: 600; color: var(--cor-texto); text-align: center; }
+
+    /* ---------- Títulos de seção ---------- */
+    .secao-titulo { font-size: 17px; line-height: 24px; font-weight: 800; letter-spacing: -0.01em; color: var(--cor-texto); }
+
+    /* ---------- 3. Gastos por mês ---------- */
+    .grafico { padding: 36px 0 0 24px; display: flex; flex-direction: column; gap: 4px; }
+
+    .grafico-titulo-linha { padding-right: 24px; display: flex; justify-content: space-between; align-items: baseline; }
+
+    .legenda { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; font-weight: 600; color: var(--cor-texto-2); }
+    .legenda-quadrado {
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+      background: var(--cor-fundo-suave);
+      border: 1px dashed var(--cor-tracejado);
+    }
+
+    .grafico-subtitulo { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--cor-texto-2); }
+
+    .grafico-area {
+      margin-top: 12px;
+      height: 196px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .grafico-area::-webkit-scrollbar { display: none; }
+
+    .serie {
+      position: relative;
+      width: max-content;
+      height: 196px;
+      padding-right: 24px;
+      display: flex;
+      align-items: flex-end;
+      gap: 12px;
+    }
+
+    .linha-base { position: absolute; left: 0; right: 0; top: 160px; height: 1px; background: var(--cor-divisoria); }
+
+    .coluna {
+      position: relative;
+      flex: 0 0 52px;
+      width: 52px;
+      height: 196px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      align-items: center;
+    }
+
+    .coluna-valor { padding-bottom: 6px; font-size: 12px; line-height: 16px; font-weight: 600; white-space: nowrap; }
+
+    .coluna-barra { width: 32px; flex-shrink: 0; border-radius: 8px 8px 2px 2px; }
+
+    .coluna-mes {
+      height: 36px;
+      padding-bottom: 8px;
+      display: flex;
+      align-items: flex-end;
+      font-size: 13px;
+      line-height: 18px;
+      font-weight: 600;
+    }
+
+    .coluna.fechado .coluna-valor, .coluna.fechado .coluna-mes { color: var(--cor-texto-2); }
+    .coluna.fechado .coluna-barra { background: var(--cor-barra-fechado); }
+
+    .coluna.atual .coluna-valor, .coluna.atual .coluna-mes { color: var(--cor-grafite); font-weight: 800; }
+    .coluna.atual .coluna-barra { background: var(--cor-grafite); }
+
+    .coluna.previsto .coluna-valor, .coluna.previsto .coluna-mes { color: var(--cor-texto-3); }
+    .coluna.previsto .coluna-barra { background: var(--cor-fundo-suave); border: 1px dashed var(--cor-tracejado); }
+    .coluna.previsto .coluna-barra.zerada { border: 0; }
+
+    /* ---------- 4. Últimos gastos ---------- */
+    .extrato { padding: 28px 24px 0; }
+    .extrato .secao-titulo { padding-bottom: 4px; }
+
+    .grupo-data {
+      padding: 24px 0 4px;
+      font-size: 13px;
+      line-height: 18px;
+      font-weight: 600;
+      color: var(--cor-texto-2);
+    }
+    .grupo-data.primeiro { padding-top: 16px; }
+
+    .gasto {
+      padding: 14px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      border-bottom: 1px solid var(--cor-divisoria);
+    }
+    .gasto:last-child { border-bottom: 0; }
+
+    .gasto-nome { min-width: 0; font-size: 15px; line-height: 20px; font-weight: 600; color: var(--cor-texto); overflow-wrap: anywhere; }
+
+    .gasto-valor { flex-shrink: 0; text-align: right; white-space: nowrap; font-size: 15px; line-height: 20px; font-weight: 700; color: var(--cor-texto); }
+    .gasto-valor .parcelas { font-weight: 600; color: var(--cor-texto-2); }
+
+    .extrato-vazio { padding-top: 16px; font-size: 15px; line-height: 20px; font-weight: 500; color: var(--cor-texto-2); }
+  </style>
+</head>
+<body>
+  <!-- Aviso de tela cheia: fora do Telegram e mensagens de erro -->
+  <div id="aviso" class="aviso" hidden>
+    <p id="aviso-texto"></p>
+    <button id="aviso-botao" type="button" hidden>Tentar de novo</button>
+  </div>
+
+  <main id="tela">
+    <header class="cabecalho">
+      <div class="cabecalho-linha">
+        <div class="cabecalho-textos">
+          <p class="data" id="data"></p>
+          <h1 class="saudacao" id="saudacao"></h1>
+        </div>
+        <button class="botao-menu" id="botao-menu" type="button" aria-label="Menu">
+          <svg viewBox="0 0 22 22" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <path d="M4 6.5h14"/><path d="M4 11h14"/><path d="M4 15.5h14"/>
+          </svg>
+        </button>
+      </div>
+
+      <p class="carregando" id="carregando">Carregando...</p>
+
+      <div id="numeros" hidden>
+        <div class="bloco-gasto">
+          <p class="gasto-rotulo" id="gasto-rotulo"></p>
+          <p class="valor-grande" id="valor-grande"></p>
+        </div>
+        <div class="barra-sobra">
+          <div class="trilho" id="trilho" hidden><div class="preenchimento" id="preenchimento"></div></div>
+          <div class="sobra-linha">
+            <p class="sobra-texto">Sobra <strong id="sobra-valor"></strong></p>
+            <p class="renda-texto" id="renda-texto" hidden></p>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <nav class="atalhos" aria-label="Atalhos">
+      <button class="atalho" type="button" aria-label="Categorias">
+        <span class="atalho-icone">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3.5" y="3.5" width="7" height="7" rx="2"/>
+            <rect x="13.5" y="3.5" width="7" height="7" rx="2"/>
+            <rect x="3.5" y="13.5" width="7" height="7" rx="2"/>
+            <rect x="13.5" y="13.5" width="7" height="7" rx="2"/>
+          </svg>
+        </span>
+        <span class="atalho-rotulo">Categorias</span>
+      </button>
+      <button class="atalho" type="button" aria-label="Transferência">
+        <span class="atalho-icone">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 8h15"/><path d="M15 4l4 4-4 4"/><path d="M20 16H5"/><path d="M9 12l-4 4 4 4"/>
+          </svg>
+        </span>
+        <span class="atalho-rotulo">Transferência</span>
+      </button>
+      <button class="atalho" type="button" aria-label="Recorrentes">
+        <span class="atalho-icone">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 3.5V8h4.5"/>
+            <path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20.5V16h-4.5"/>
+          </svg>
+        </span>
+        <span class="atalho-rotulo">Recorrentes</span>
+      </button>
+    </nav>
+
+    <section class="grafico" id="grafico" hidden>
+      <div class="grafico-titulo-linha">
+        <h2 class="secao-titulo">Gastos por mês</h2>
+        <div class="legenda" id="legenda" hidden>
+          <span class="legenda-quadrado"></span><span>Só parcelas</span>
+        </div>
+      </div>
+      <p class="grafico-subtitulo">Arraste para ver outros meses</p>
+      <div class="grafico-area" id="grafico-area">
+        <div class="serie" id="serie"><div class="linha-base"></div></div>
+      </div>
+    </section>
+
+    <section class="extrato" id="extrato" hidden>
+      <h2 class="secao-titulo">Últimos gastos</h2>
+      <div id="extrato-lista"></div>
+    </section>
+  </main>
+
+  <script>
+    const FUSO = "America/Sao_Paulo";
+    const MESES_COMPLETOS = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
+                             "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+    const MESES_CURTOS = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+
+    const MENSAGEM_FORA_DO_TELEGRAM = "Abra esta tela pelo botão do bot no Telegram.";
+    const MENSAGEM_401 = "Não foi possível confirmar quem é você. Feche e abra de novo pelo bot.";
+    const MENSAGEM_404 = "Você ainda não tem cadastro. Mande /start no bot para começar.";
+    const MENSAGEM_409 = "Seu cadastro está incompleto. Volte ao bot e informe o dia de fechamento da fatura.";
+    const MENSAGEM_GENERICA = "Não foi possível carregar seus dados agora. Tente de novo em instantes.";
+
+    const tg = window.Telegram && window.Telegram.WebApp;
+    const initData = (tg && tg.initData) || "";
+
+    const $ = (id) => document.getElementById(id);
+
+    // Cria um elemento com classe e texto (sempre textContent, nunca innerHTML com dados da API).
+    function criar(tag, classe, texto) {
+      const e = document.createElement(tag);
+      if (classe) e.className = classe;
+      if (texto !== undefined) e.textContent = texto;
+      return e;
+    }
+
+    // ---------- Formatação ----------
+    const formatadorDinheiro = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+    const formatadorNumero = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    // "R$ 1.234,56"; negativo vira "−R$ 120,00" (sinal de menos de verdade).
+    function formatarDinheiro(valor) {
+      const texto = formatadorDinheiro.format(Math.abs(valor)).replace(/\s/g, " ");
+      return (valor < 0 && texto !== "R$ 0,00" ? "−" : "") + texto;
+    }
+
+    function maiuscula(texto) {
+      return texto.charAt(0).toUpperCase() + texto.slice(1);
+    }
+
+    // Rótulo acima da barra: "4,3 mil", "5 mil" ou o inteiro arredondado ("820").
+    function formatarRotuloValor(total) {
+      if (total >= 1000) {
+        return (total / 1000).toFixed(1).replace(".", ",").replace(/,0$/, "") + " mil";
+      }
+      return String(Math.round(total));
+    }
+
+    // "2026-10" -> índice do mês (0 a 11)
+    function indiceMes(anoMes) {
+      return parseInt(String(anoMes).slice(5, 7), 10) - 1;
+    }
+
+    // Partes da data/hora atual em Brasília.
+    function agoraEmBrasilia() {
+      const partes = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: FUSO, weekday: "long", day: "numeric", month: "long", hour: "numeric", hourCycle: "h23",
+      }).formatToParts(new Date());
+      const pegar = (tipo) => (partes.find((p) => p.type === tipo) || {}).value || "";
+      return {
+        diaSemana: pegar("weekday").replace(/-feira$/, ""),
+        dia: pegar("day"),
+        mes: pegar("month"),
+        hora: parseInt(pegar("hour"), 10),
+      };
+    }
+
+    function saudacaoPorHora(hora) {
+      if (hora >= 5 && hora < 12) return "Bom dia";
+      if (hora >= 12 && hora < 18) return "Boa tarde";
+      return "Boa noite";
+    }
+
+    // ---------- Cabeçalho: data e saudação ----------
+    function mostrarDataESaudacao(nome) {
+      const agora = agoraEmBrasilia();
+      $("data").textContent = maiuscula(agora.diaSemana) + ", " + agora.dia + " de " + agora.mes.toLowerCase();
+      const primeiroNome = nome ? String(nome).trim().split(/\s+/)[0] : "";
+      const saudacao = saudacaoPorHora(agora.hora);
+      $("saudacao").textContent = primeiroNome ? saudacao + ", " + primeiroNome : saudacao;
+    }
+
+    // Valor grande em três partes: "R$ ", inteiro com milhar e ",centavos".
+    function mostrarValorGrande(valor) {
+      const texto = formatadorNumero.format(Math.abs(valor)); // "4.287,90"
+      const posVirgula = texto.lastIndexOf(",");
+      const caixa = $("valor-grande");
+      caixa.replaceChildren(
+        criar("span", "moeda", (valor < 0 ? "−" : "") + "R$ "),
+        criar("span", "inteiro", texto.slice(0, posVirgula)),
+        criar("span", "centavos", texto.slice(posVirgula))
+      );
+    }
+
+    function mostrarCabecalho(me, resumo) {
+      mostrarDataESaudacao(me.nome);
+      $("gasto-rotulo").textContent = "Gastos em " + MESES_COMPLETOS[indiceMes(resumo.ano_mes)];
+      mostrarValorGrande(resumo.total_gasto);
+      $("sobra-valor").textContent = formatarDinheiro(resumo.sobra_mes);
+
+      // Sem renda, a barra e o "de R$ ..." ficam escondidos; a sobra continua.
+      const renda = Number(resumo.renda);
+      const temRenda = Number.isFinite(renda) && renda > 0;
+      $("trilho").hidden = !temRenda;
+      $("renda-texto").hidden = !temRenda;
+      if (temRenda) {
+        const proporcao = Math.min(Math.max(resumo.total_gasto / renda, 0), 1);
+        $("preenchimento").style.width = (proporcao * 100) + "%";
+        $("renda-texto").textContent = "de " + formatarDinheiro(renda);
+      }
+
+      $("carregando").hidden = true;
+      $("numeros").hidden = false;
+    }
+
+    // ---------- Gráfico de barras (HTML feito à mão) ----------
+    function mostrarGrafico(meses) {
+      const serie = $("serie");
+      serie.replaceChildren(criar("div", "linha-base"));
+      if (!meses.length) return;
+
+      const maior = Math.max(...meses.map((m) => m.total_gasto));
+      let indiceAtual = -1;
+
+      meses.forEach((m, i) => {
+        const total = m.total_gasto;
+        // Altura proporcional ao maior total (120px); mínimo de 8px quando há gasto.
+        let altura = 0;
+        if (total > 0 && maior > 0) altura = Math.max(8, Math.round(120 * total / maior));
+        if (m.situacao === "atual") indiceAtual = i;
+
+        const coluna = criar("div", "coluna " + m.situacao);
+        const barra = criar("div", "coluna-barra" + (altura === 0 ? " zerada" : ""));
+        barra.style.height = altura + "px";
+        coluna.append(
+          criar("div", "coluna-valor", formatarRotuloValor(total)),
+          barra,
+          criar("div", "coluna-mes", MESES_CURTOS[indiceMes(m.ano_mes)])
+        );
+        serie.append(coluna);
+      });
+
+      $("legenda").hidden = !meses.some((m) => m.situacao === "previsto");
+      $("grafico").hidden = false;
+      // O mês atual abre como a 4ª coluna visível (passo de 64px por coluna).
+      $("grafico-area").scrollLeft = Math.max(0, indiceAtual - 3) * 64;
+    }
+
+    // ---------- Últimos gastos ----------
+    function rotuloDia(data) {
+      // "2026-10-29" -> "29 Out."
+      return parseInt(data.slice(8, 10), 10) + " " + MESES_CURTOS[parseInt(data.slice(5, 7), 10) - 1] + ".";
+    }
+
+    function mostrarExtrato(gastos) {
+      const lista = $("extrato-lista");
+      lista.replaceChildren();
+
+      if (!gastos.length) {
+        lista.append(criar("p", "extrato-vazio", "Seus próximos gastos aparecem aqui"));
+      } else {
+        let dataAtual = null;
+        let grupo = null;
+        gastos.forEach((g) => {
+          if (g.data !== dataAtual) {
+            dataAtual = g.data;
+            lista.append(criar("div", "grupo-data" + (grupo === null ? " primeiro" : ""), rotuloDia(g.data)));
+            grupo = criar("div", "grupo");
+            lista.append(grupo);
+          }
+          const valor = criar("div", "gasto-valor", formatarDinheiro(g.valor));
+          if (g.parcelado) valor.append(criar("span", "parcelas", " · " + g.total_parcelas + "x"));
+          const linha = criar("div", "gasto");
+          linha.append(criar("div", "gasto-nome", g.descricao), valor);
+          grupo.append(linha);
+        });
+      }
+      $("extrato").hidden = false;
+    }
+
+    // ---------- Chamadas à API ----------
+    // Nunca lança: devolve { dados } ou { erro: status HTTP } (0 = falha de rede).
+    async function chamar(rota) {
+      try {
+        const resposta = await fetch(rota, {
+          headers: { "Authorization": "tma " + initData, "ngrok-skip-browser-warning": "1" },
+        });
+        if (!resposta.ok) return { erro: resposta.status };
+        return { dados: await resposta.json() };
+      } catch (e) {
+        return { erro: 0 };
+      }
+    }
+
+    // Escolhe a mensagem do primeiro erro, na ordem da tabela: 401, 404, 409, outro.
+    function mensagemDeErro(resultados) {
+      const status = resultados.filter((r) => r.erro !== undefined).map((r) => r.erro);
+      if (status.includes(401)) return { texto: MENSAGEM_401, tentarDeNovo: false };
+      if (status.includes(404)) return { texto: MENSAGEM_404, tentarDeNovo: false };
+      if (status.includes(409)) return { texto: MENSAGEM_409, tentarDeNovo: false };
+      return { texto: MENSAGEM_GENERICA, tentarDeNovo: true };
+    }
+
+    function mostrarAviso(texto, comBotao) {
+      $("tela").hidden = true;
+      $("aviso-texto").textContent = texto;
+      $("aviso-botao").hidden = !comBotao;
+      $("aviso").hidden = false;
+    }
+
+    function voltarParaCarregando() {
+      $("aviso").hidden = true;
+      $("tela").hidden = false;
+      $("numeros").hidden = true;
+      $("carregando").hidden = false;
+      $("grafico").hidden = true;
+      $("extrato").hidden = true;
+    }
+
+    async function carregar() {
+      voltarParaCarregando();
+      mostrarDataESaudacao("");
+      const resultados = await Promise.all([
+        chamar("/me"), chamar("/resumo"), chamar("/historico"), chamar("/gastos/recentes"),
+      ]);
+      if (resultados.some((r) => r.erro !== undefined)) {
+        const erro = mensagemDeErro(resultados);
+        mostrarAviso(erro.texto, erro.tentarDeNovo);
+        return;
+      }
+      const [me, resumo, historico, recentes] = resultados.map((r) => r.dados);
+      mostrarCabecalho(me, resumo);
+      mostrarGrafico(historico.meses || []);
+      mostrarExtrato(recentes.gastos || []);
+    }
+
+    // ---------- Telegram ----------
+    function avisarEmBreve() {
+      try { tg.showAlert("Em breve"); } catch (e) { window.alert("Em breve"); }
+    }
+
+    function iniciar() {
+      if (tg) {
+        try { tg.ready(); } catch (e) { /* versão antiga */ }
+        try { tg.expand(); } catch (e) { /* versão antiga */ }
+        try { tg.setHeaderColor("#2F3133"); } catch (e) { /* versão antiga */ }
+        try { tg.setBackgroundColor("#FFFFFF"); } catch (e) { /* versão antiga */ }
+      }
+
+      // Fora do Telegram (initData vazio): só o aviso, nenhuma chamada à API.
+      if (!initData) {
+        mostrarAviso(MENSAGEM_FORA_DO_TELEGRAM, false);
+        return;
+      }
+
+      $("botao-menu").addEventListener("click", avisarEmBreve);
+      document.querySelectorAll(".atalho").forEach((b) => b.addEventListener("click", avisarEmBreve));
+      $("aviso-botao").addEventListener("click", carregar);
+      carregar();
+    }
+
+    iniciar();
+  </script>
+</body>
+</html>

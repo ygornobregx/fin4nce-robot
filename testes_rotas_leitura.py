@@ -541,5 +541,34 @@ class TestGastosRecentes(TesteRotasBase):
         self.assertIsInstance(gasto["total_parcelas"], int)
 
 
+class TestPaginasEstaticas(TesteRotasBase):
+    def test_app_serve_a_home(self):
+        self.iniciar(banco_completo())
+        resposta = self.client.get("/app/")
+        self.assertEqual(resposta.status_code, 200)
+        self.assertIn("Últimos gastos", resposta.text)
+
+    def test_teste_serve_a_pagina_de_diagnostico(self):
+        self.iniciar(banco_completo())
+        resposta = self.client.get("/teste/")
+        self.assertEqual(resposta.status_code, 200)
+        self.assertIn("Teste do initData", resposta.text)
+
+    def test_paginas_pedem_revalidacao_ao_navegador(self):
+        self.iniciar(banco_completo())
+        for caminho in ("/app/", "/teste/"):
+            resposta = self.client.get(caminho)
+            self.assertEqual(resposta.headers.get("cache-control"), "no-cache", caminho)
+
+    def test_pagina_sem_mudanca_responde_304_sem_cache(self):
+        self.iniciar(banco_completo())
+        primeira = self.client.get("/app/")
+        etag = primeira.headers.get("etag")
+        self.assertTrue(etag)
+        segunda = self.client.get("/app/", headers={"If-None-Match": etag})
+        self.assertEqual(segunda.status_code, 304)
+        self.assertEqual(segunda.headers.get("cache-control"), "no-cache")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
