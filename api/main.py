@@ -1,7 +1,7 @@
 """API local do Mini App: autentica pelo initData do Telegram (PRO-72) e expõe
 as rotas de leitura /me, /resumo e /historico (PRO-76) e /gastos/recentes
-(PRO-79). Os números e a consulta vêm todos do calculos.py; as rotas só buscam
-os dados e montam o JSON.
+(PRO-79, com o estabelecimento do gasto desde a PRO-81). Os números e a
+consulta vêm todos do calculos.py; as rotas só buscam os dados e montam o JSON.
 
 Não importa o bot.py. Configuração e conexão com o banco são resolvidas
 sob demanda (dependências), então o módulo importa sem .env e sem rede.
@@ -173,6 +173,7 @@ def gastos_recentes(usuario: dict = Depends(usuario_autenticado), conn=Depends(o
             {
                 "id": id_gasto,
                 "descricao": descricao,
+                "estabelecimento": estabelecimento,
                 "categoria": categoria,
                 "valor": em_reais(valor),
                 "data": data,
@@ -180,7 +181,7 @@ def gastos_recentes(usuario: dict = Depends(usuario_autenticado), conn=Depends(o
                 "total_parcelas": total_parcelas,
                 "valor_total": None if valor_total is None else em_reais(valor_total),
             }
-            for id_gasto, descricao, categoria, valor, data, total_parcelas, valor_total in gastos
+            for id_gasto, descricao, categoria, valor, data, total_parcelas, valor_total, estabelecimento in gastos
         ]
     }
 

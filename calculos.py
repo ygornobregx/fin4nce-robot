@@ -296,10 +296,13 @@ def calcular_serie_gastos_mensais(conn, user_id, dia_fechamento, agora=None):
 def buscar_gastos_recentes(conn, user_id, limite):
     """Os últimos 'limite' gastos do usuário, para o extrato da tela home do
     Mini App. Retorna [(id, descricao, categoria, valor, data, total_parcelas,
-    valor_total)], do mais recente para o mais antigo (empate no mesmo
-    horário: maior id primeiro). 'data' é o dia "AAAA-MM-DD" já gravado no
-    fuso de Brasília. 'total_parcelas' e 'valor_total' vêm None quando o gasto
-    não é parcelado.
+    valor_total, estabelecimento)], do mais recente para o mais antigo (empate
+    no mesmo horário: maior id primeiro). 'data' é o dia "AAAA-MM-DD" já gravado
+    no fuso de Brasília. 'total_parcelas' e 'valor_total' vêm None quando o
+    gasto não é parcelado. 'estabelecimento' (PRO-81) vem sem espaços nas
+    pontas e None quando está vazio, só com espaços ou é anterior à PRO-81;
+    nunca vira texto substituto aqui, e um gasto sem estabelecimento continua
+    na lista.
 
     Regras:
     - só despesas (valor > 0); receitas (valor negativo) ficam de fora;
@@ -319,7 +322,8 @@ def buscar_gastos_recentes(conn, user_id, limite):
       consulta terá de tratá-las."""
     return conn.execute(
         "SELECT t.id, TRIM(t.descricao), t.categoria_nome, t.valor, "
-        "substr(t.data_transacao, 1, 10), p.total_parcelas, p.valor_total "
+        "substr(t.data_transacao, 1, 10), p.total_parcelas, p.valor_total, "
+        "NULLIF(TRIM(t.estabelecimento), '') "
         "FROM transacoes t "
         "LEFT JOIN parcelamentos p ON p.id = t.parcelamento_id AND p.user_id = t.user_id "
         "WHERE t.user_id = ? AND t.valor > 0 "

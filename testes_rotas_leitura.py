@@ -1,5 +1,5 @@
 """Testes das rotas de leitura da API: GET /resumo e GET /historico (PRO-76) e
-GET /gastos/recentes (PRO-79).
+GET /gastos/recentes (PRO-79; campo estabelecimento na PRO-81).
 
 Roda com `python testes_rotas_leitura.py`. Não usa .env nem rede: o token é
 falso, o banco é um SQLite em memória e o "agora" da API é fixo (17/10/2026
@@ -28,7 +28,7 @@ ESQUEMA = '''
         orcamento_mensal REAL, saldo_atual REAL, data_criacao TEXT);
     CREATE TABLE transacoes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, categoria_nome TEXT,
         valor REAL, data_transacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP, metodo_pagamento TEXT,
-        descricao TEXT, parcelamento_id INTEGER);
+        descricao TEXT, parcelamento_id INTEGER, estabelecimento TEXT);
     CREATE TABLE parcelamentos (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, categoria_nome TEXT,
         descricao TEXT, valor_total REAL, valor_parcela REAL, total_parcelas INTEGER,
         parcelas_pagas INTEGER DEFAULT 1, data_criacao TEXT, ativo INTEGER DEFAULT 1, ciclo_referencia TEXT);
@@ -53,22 +53,25 @@ def categoria(conn, nome, limite, data_criacao="2026-01-01 10:00:00"):
                  "VALUES (?, ?, ?, ?, ?)", (USER_ID, nome, limite, limite, data_criacao))
 
 
-def transacao(conn, cat, valor, momento, descricao=None, user_id=USER_ID, parcelamento_id=None):
+def transacao(conn, cat, valor, momento, descricao=None, user_id=USER_ID, parcelamento_id=None,
+              estabelecimento=None):
     conn.execute("INSERT INTO transacoes (user_id, categoria_nome, valor, data_transacao, descricao, "
-                 "parcelamento_id) VALUES (?, ?, ?, ?, ?, ?)",
-                 (user_id, cat, valor, momento, descricao, parcelamento_id))
+                 "parcelamento_id, estabelecimento) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                 (user_id, cat, valor, momento, descricao, parcelamento_id, estabelecimento))
 
 
-def parcelamento(conn, cat, total, n, momento, ciclo_referencia, descricao=None, user_id=USER_ID, ativo=1):
+def parcelamento(conn, cat, total, n, momento, ciclo_referencia, descricao=None, user_id=USER_ID, ativo=1,
+                 estabelecimento=None):
     """Como o bot (desde a PRO-78): a parcela 1 também vira transação, na mesma
     data, e guarda o id da compra em parcelamento_id. A descrição é gravada nas
-    duas linhas; sem ela, a compra fica como 'compra' e a transação sem nome."""
+    duas linhas; sem ela, a compra fica como 'compra' e a transação sem nome.
+    O estabelecimento (PRO-81) fica só na parcela 1, em transacoes."""
     parcela = round(total / n, 2)
     compra = conn.execute("INSERT INTO parcelamentos (user_id, categoria_nome, descricao, valor_total, "
                           "valor_parcela, total_parcelas, parcelas_pagas, data_criacao, ciclo_referencia, ativo) "
                           "VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
                           (user_id, cat, descricao or "compra", total, parcela, n, momento, ciclo_referencia, ativo))
-    transacao(conn, cat, parcela, momento, descricao, user_id, compra.lastrowid)
+    transacao(conn, cat, parcela, momento, descricao, user_id, compra.lastrowid, estabelecimento)
 
 
 def transferencia(conn, origem, destino, valor, momento):
@@ -363,9 +366,58 @@ class TestGastosRecentes(TesteRotasBase):
         self.assertEqual(resposta.status_code, 200)
         # A hora some: "data" é só o dia. Sem parcelamento_id: à vista, campos nulos.
         self.assertEqual(resposta.json(), {"gastos": [{
-            "id": 1, "descricao": "Padaria Pão Quente", "categoria": "Alimentação", "valor": 18.5,
+            "id": 1, "descricao": "Padaria Pão Quente", "estabelecimento": None,
+            "categoria": "Alimentação", "valor": 18.5,
             "data": "2026-10-29", "parcelado": False, "total_parcelas": None, "valor_total": None,
         }]})
+
+    def test_gasto_com_estabelecimento_traz_o_nome_e_a_descricao_intacta(self):
+        conn = novo_banco()
+        transacao(conn, "Roupas", 300.0, "2026-10-10 10:00:00", descricao="Tênis na Nike",
+                  estabelecimento="Nike")
+        conn.commit()
+        self.iniciar(conn)
+        gasto = self.obter("/gastos/recentes").json()["gastos"][0]
+        self.assertEqual(gasto["estabelecimento"], "Nike")
+        self.assertEqual(gasto["descricao"], "Tênis na Nike")
+
+    def test_gasto_sem_estabelecimento_vem_null_e_continua_na_lista(self):
+        conn = novo_banco()
+        transacao(conn, "Alimentação", 12.0, "2026-10-10 10:00:00", descricao="Pão")  # estabelecimento NULL
+        conn.commit()
+        self.iniciar(conn)
+        gastos = self.obter("/gastos/recentes").json()["gastos"]
+        self.assertEqual(len(gastos), 1)
+        self.assertEqual(gastos[0]["descricao"], "Pão")
+        # A API manda null puro: "Sem Informação" é decidido pelo bot e pela tela.
+        self.assertIn("estabelecimento", gastos[0])
+        self.assertIsNone(gastos[0]["estabelecimento"])
+
+    def test_estabelecimento_so_com_espacos_ou_vazio_vem_null(self):
+        conn = novo_banco()
+        transacao(conn, "Lazer", 10.0, "2026-10-10 10:00:00", descricao="A", estabelecimento="   ")  # id 1
+        transacao(conn, "Lazer", 11.0, "2026-10-11 10:00:00", descricao="B", estabelecimento="")     # id 2
+        conn.commit()
+        self.iniciar(conn)
+        gastos = self.obter("/gastos/recentes").json()["gastos"]
+        self.assertEqual([(g["descricao"], g["estabelecimento"]) for g in gastos], [("B", None), ("A", None)])
+
+    def test_estabelecimento_vem_sem_espacos_nas_pontas(self):
+        conn = novo_banco()
+        transacao(conn, "Lazer", 10.0, "2026-10-10 10:00:00", descricao="Lanche", estabelecimento="  iFood  ")
+        conn.commit()
+        self.iniciar(conn)
+        self.assertEqual(self.obter("/gastos/recentes").json()["gastos"][0]["estabelecimento"], "iFood")
+
+    def test_compra_parcelada_com_estabelecimento_na_parcela_1(self):
+        conn = novo_banco()
+        parcelamento(conn, "Casa", 3000.0, 10, "2026-10-28 11:00:00", "2026-10",
+                     descricao="Geladeira nas Casas Bahia", estabelecimento="Casas Bahia")
+        conn.commit()
+        self.iniciar(conn)
+        gasto = self.obter("/gastos/recentes").json()["gastos"][0]
+        self.assertEqual(gasto["estabelecimento"], "Casas Bahia")
+        self.assertEqual((gasto["parcelado"], gasto["total_parcelas"], gasto["valor_total"]), (True, 10, 3000.0))
 
     def test_descricao_vem_sem_espacos_nas_pontas(self):
         conn = novo_banco()
@@ -383,7 +435,8 @@ class TestGastosRecentes(TesteRotasBase):
         self.assertEqual(resposta.status_code, 200)
         # 389,70 em 3x: parcela 1 = 129,90. "valor" é a parcela; "valor_total", a compra.
         self.assertEqual(resposta.json(), {"gastos": [{
-            "id": 1, "descricao": "Magazine Luiza", "categoria": "Casa", "valor": 129.9,
+            "id": 1, "descricao": "Magazine Luiza", "estabelecimento": None,
+            "categoria": "Casa", "valor": 129.9,
             "data": "2026-10-28", "parcelado": True, "total_parcelas": 3, "valor_total": 389.7,
         }]})
 
@@ -404,7 +457,8 @@ class TestGastosRecentes(TesteRotasBase):
         conn.commit()
         self.iniciar(conn)
         self.assertEqual(self.obter("/gastos/recentes").json()["gastos"], [{
-            "id": 1, "descricao": "Netflix", "categoria": "Assinaturas", "valor": 39.9,
+            "id": 1, "descricao": "Netflix", "estabelecimento": None,
+            "categoria": "Assinaturas", "valor": 39.9,
             "data": "2026-10-15", "parcelado": False, "total_parcelas": None, "valor_total": None,
         }])
 

@@ -90,6 +90,7 @@ COLUNAS_ESPERADAS = {
         ('metodo_pagamento', 'TEXT'),
         ('descricao', 'TEXT'),
         ('parcelamento_id', 'INTEGER'),
+        ('estabelecimento', 'TEXT'),
     ],
     'parcelamentos': [
         ('ciclo_referencia', 'TEXT'),
@@ -175,7 +176,23 @@ def dia_valido(dia):
     """Valida se o dia informado é um dia possível dentro de um mês (1 a 31)."""
     return 1 <= dia <= 31
 
-def debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento, metodo_pagamento=None, descricao=None, parcelamento_id=None):
+def normalizar_estabelecimento(valor):
+    """Limpa o estabelecimento devolvido pela IA: texto sem espaços nas pontas,
+    ou None quando não for texto ou vier vazio/só com espaços. Não muda
+    maiúsculas nem minúsculas, para não estragar grafias como "iFood"."""
+    if not isinstance(valor, str):
+        return None
+    valor = valor.strip()
+    return valor or None
+
+def formatar_estabelecimento(estabelecimento):
+    """Texto da linha 'Estabelecimento:' das confirmações (a mensagem usa HTML,
+    então o nome é escapado). Sem estabelecimento, mostra 'Sem Informação'."""
+    if estabelecimento is None:
+        return "Sem Informação"
+    return escape(estabelecimento)
+
+def debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento, metodo_pagamento=None, descricao=None, parcelamento_id=None, estabelecimento=None):
     """Lançamento único usado por todo gasto que impacta uma categoria (comum,
     parcelado ou recorrente): grava a transação e mantém 'saldo_atual' em dia
     (legado, ainda lido pelo histórico e pela edição de limite). 'metodo_pagamento'
@@ -183,7 +200,10 @@ def debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento, met
     e receitas gravam NULL. 'descricao' é o nome do gasto extraído pela IA (ou o
     da recorrência); se não for texto ou vier vazia, grava NULL. 'parcelamento_id'
     só é informado na parcela 1 de uma compra parcelada e aponta para a linha
-    correspondente em 'parcelamentos'; os demais lançamentos gravam NULL. Retorna
+    correspondente em 'parcelamentos'; os demais lançamentos gravam NULL.
+    'estabelecimento' é o local/app citado na mensagem (extraído pela IA) e só
+    vem preenchido em gasto avulso e na parcela 1 de compra parcelada; é limpo
+    por normalizar_estabelecimento (recorrentes e receitas gravam NULL). Retorna
     (cat_id, transacao_id), ou None se a categoria não existir."""
     cat = cursor.execute('SELECT id FROM categorias WHERE user_id = ? AND nome = ?', (user_id, categoria)).fetchone()
     if not cat:
@@ -192,9 +212,10 @@ def debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento, met
     if not descricao:
         descricao = None
     cursor.execute('UPDATE categorias SET saldo_atual = saldo_atual - ? WHERE id = ?', (valor_armazenado, cat[0]))
+    estabelecimento = normalizar_estabelecimento(estabelecimento)
     cursor.execute(
-        'INSERT INTO transacoes (user_id, categoria_nome, valor, data_transacao, metodo_pagamento, descricao, parcelamento_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        (user_id, categoria, valor_armazenado, momento, metodo_pagamento, descricao, parcelamento_id)
+        'INSERT INTO transacoes (user_id, categoria_nome, valor, data_transacao, metodo_pagamento, descricao, parcelamento_id, estabelecimento) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        (user_id, categoria, valor_armazenado, momento, metodo_pagamento, descricao, parcelamento_id, estabelecimento)
     )
     return cat[0], cursor.lastrowid
 
@@ -801,12 +822,26 @@ async def salvar_gasto_livre(update: Update, context: ContextTypes.DEFAULT_TYPE)
         3. NUNCA crie uma nova categoria com nome diferente do que está na lista.
         4. Caso o gasto não tenha relação óbvia com nenhuma, selecione a categoria mais próxima ou "Outros" (se existir na lista).
 
+        REGRAS DO ESTABELECIMENTO:
+        1. Só preencha "estabelecimento" se o usuário mencionou o local na mensagem. NUNCA invente nem deduza: sem local citado, devolva null.
+        2. Em apps e serviços (Uber, iFood, Netflix), o estabelecimento é o nome do app.
+        3. Escreva o nome com a primeira letra maiúscula (ex: "Nike", "Casas Bahia"). Marcas com grafia própria mantêm a grafia oficial (ex: "iFood").
+        4. O campo "estabelecimento" não muda o conteúdo da "descricao": ela traz as mesmas palavras de antes, inclusive o local, quando citado.
+
+        REGRAS DA DESCRIÇÃO:
+        1. Escreva a descrição em formato de título: inicial maiúscula em cada palavra.
+        2. As palavras de ligação ficam em minúsculas: a, o, as, os, de, do, da, dos, das, em, no, na, nos, nas, e, com, para, por, ao.
+        3. A primeira palavra sempre começa com maiúscula, mesmo sendo palavra de ligação.
+        4. Marcas com grafia própria mantêm a grafia oficial (ex: "iFood").
+        5. Exemplo: mensagem "pão na padaria cisne branco 12" -> "descricao": "Pão na Padaria Cisne Branco" e "estabelecimento": "Cisne Branco".
+
         FORMATO DE SAÍDA (JSON PURO):
         {{
           "tipo": "despesa" ou "receita",
           "valor": float (ex: 45.50),
           "categoria": "NOME_EXATO_DA_CATEGORIA_DA_LISTA",
-          "descricao": "resumo curto"
+          "descricao": "resumo curto, em formato de título (ver REGRAS DA DESCRIÇÃO)",
+          "estabelecimento": "nome do local ou app, ou null"
         }}
 
         Mensagem do usuário: "{texto_usuario}"
@@ -822,6 +857,7 @@ async def salvar_gasto_livre(update: Update, context: ContextTypes.DEFAULT_TYPE)
         categoria = dados['categoria'].capitalize()
         tipo = dados['tipo'].strip().lower()
         descricao = dados.get('descricao', '')
+        estabelecimento = normalizar_estabelecimento(dados.get('estabelecimento'))
 
         # Validação do retorno: mesmo com o prompt restringindo as opções,
         # confirmamos em Python se a categoria escolhida pela IA está de fato
@@ -847,6 +883,7 @@ async def salvar_gasto_livre(update: Update, context: ContextTypes.DEFAULT_TYPE)
             'categoria': categoria,
             'valor': valor,
             'descricao': descricao,
+            'estabelecimento': estabelecimento,
             'momento_envio': momento_envio,
         }
 
@@ -879,7 +916,8 @@ async def responder_metodo_pagamento(update: Update, context: ContextTypes.DEFAU
         context.user_data.pop('gasto_pendente', None)
         await _finalizar_gasto_simples(
             context, user_id, pendente['categoria'], pendente['valor'], 'despesa',
-            pendente['descricao'], pendente['momento_envio'], pendente['metodo_pagamento']
+            pendente['descricao'], pendente['momento_envio'], pendente['metodo_pagamento'],
+            estabelecimento=pendente.get('estabelecimento')
         )
         return ConversationHandler.END
 
@@ -889,14 +927,16 @@ async def responder_metodo_pagamento(update: Update, context: ContextTypes.DEFAU
     await atualizar_callback(query, context, texto, reply_markup=teclado)
     return CONFIRMAR_PARCELA
 
-async def _finalizar_gasto_simples(context, user_id, categoria, valor, tipo, descricao, momento_envio, metodo_pagamento=None):
+async def _finalizar_gasto_simples(context, user_id, categoria, valor, tipo, descricao, momento_envio, metodo_pagamento=None, estabelecimento=None):
     """Registra um gasto/receita de uma vez só (sem parcelamento): debita o
     valor cheio da categoria e grava uma única linha em 'transacoes'.
-    'metodo_pagamento' só vem preenchido para despesas do fluxo manual."""
+    'metodo_pagamento' só vem preenchido para despesas do fluxo manual.
+    'estabelecimento' só é informado em despesa; a confirmação da despesa ganha
+    a linha 'Estabelecimento:' e a da receita fica como está."""
     conn = obter_conexao_db()
     cursor = conn.cursor()
     valor_armazenado = valor if tipo == 'despesa' else -valor
-    cat_id, transacao_id = debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento_envio, metodo_pagamento, descricao=descricao)
+    cat_id, transacao_id = debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento_envio, metodo_pagamento, descricao=descricao, estabelecimento=estabelecimento)
     conn.commit()
     novo_saldo = calcular_sobra_categoria(conn, user_id, categoria)
     conn.close()
@@ -916,15 +956,16 @@ async def _finalizar_gasto_simples(context, user_id, categoria, valor, tipo, des
         [InlineKeyboardButton("Editar Gasto", callback_data='editar_ultimo_gasto')],
         [InlineKeyboardButton("← Voltar", callback_data='voltar_menu', style="danger")]
     ]
-    await enviar_fluxo(
-        context, user_id,
+    texto_confirmacao = (
         f"Gasto Registrado com Sucesso!\n\n"
         f"Categoria: <b>{categoria}</b>\n"
         f"Valor: <b>{formatar_real(valor)}</b>\n"
         f"Resta na Categoria: <b>{formatar_real(novo_saldo)}</b>\n"
-        f"Descrição: {descricao}",
-        reply_markup=InlineKeyboardMarkup(teclado)
+        f"Descrição: {descricao}"
     )
+    if tipo == 'despesa':
+        texto_confirmacao += f"\nEstabelecimento: {formatar_estabelecimento(estabelecimento)}"
+    await enviar_fluxo(context, user_id, texto_confirmacao, reply_markup=InlineKeyboardMarkup(teclado))
 
 async def iniciar_editar_ultimo_gasto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Botão para editar gasto recém-registrado.
@@ -1144,6 +1185,7 @@ async def _finalizar_gasto_parcelado(context, user_id, total_parcelas):
     categoria = pendente['categoria']
     valor_total = pendente['valor']
     descricao = pendente['descricao']
+    estabelecimento = pendente.get('estabelecimento')
     momento_envio = pendente['momento_envio']
     metodo_pagamento = pendente.get('metodo_pagamento')
     valor_parcela = round(valor_total / total_parcelas, 2)
@@ -1168,7 +1210,7 @@ async def _finalizar_gasto_parcelado(context, user_id, total_parcelas):
         parcelamento_id = cursor.lastrowid
         lancamento = debitar_categoria(
             cursor, user_id, categoria, valor_parcela, momento_envio, metodo_pagamento,
-            descricao=descricao, parcelamento_id=parcelamento_id
+            descricao=descricao, parcelamento_id=parcelamento_id, estabelecimento=estabelecimento
         )
         if lancamento is None:
             conn.rollback()
@@ -1192,6 +1234,7 @@ async def _finalizar_gasto_parcelado(context, user_id, total_parcelas):
         context, user_id,
         f"Compra Parcelada Registrada!\n\n"
         f"Categoria: <b>{categoria}</b>\n"
+        f"Estabelecimento: {formatar_estabelecimento(estabelecimento)}\n"
         f"Total: <b>{formatar_real(valor_total)}</b> em <b>{total_parcelas}x</b> de <b>{formatar_real(valor_parcela)}</b>\n"
         f"Resta na Categoria: <b>{formatar_real(novo_saldo)}</b>\n"
         f"Fatura de referência: <b>{ciclo_referencia}</b>\n\n"
@@ -1220,7 +1263,8 @@ async def responder_parcela_sim_nao(update: Update, context: ContextTypes.DEFAUL
         # Exibe mensagem temporária de confirmação do gasto registrado.
         await _finalizar_gasto_simples(
             context, user_id, pendente['categoria'], pendente['valor'], 'despesa',
-            pendente['descricao'], pendente['momento_envio'], pendente.get('metodo_pagamento')
+            pendente['descricao'], pendente['momento_envio'], pendente.get('metodo_pagamento'),
+            estabelecimento=pendente.get('estabelecimento')
         )
         return ConversationHandler.END
 

@@ -85,7 +85,7 @@ def novo_banco(dia_fechamento=28, renda=5000.0):
             orcamento_mensal REAL, saldo_atual REAL, data_criacao TEXT);
         CREATE TABLE transacoes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, categoria_nome TEXT,
             valor REAL, data_transacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP, metodo_pagamento TEXT,
-            descricao TEXT, parcelamento_id INTEGER);
+            descricao TEXT, parcelamento_id INTEGER, estabelecimento TEXT);
         CREATE TABLE parcelamentos (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, categoria_nome TEXT,
             descricao TEXT, valor_total REAL, valor_parcela REAL, total_parcelas INTEGER,
             parcelas_pagas INTEGER DEFAULT 1, data_criacao TEXT, ativo INTEGER DEFAULT 1, ciclo_referencia TEXT);

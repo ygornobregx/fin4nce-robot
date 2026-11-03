@@ -28,7 +28,8 @@ Rotas:
 - `GET /historico`: gasto total de cada mês com movimento, com os futuros marcados
   como `previsto` (exige o mesmo cabeçalho).
 - `GET /gastos/recentes`: os 10 últimos gastos com descrição (os registrados a partir da PRO-78),
-  com o vínculo da compra parcelada (exige o mesmo cabeçalho).
+  com o vínculo da compra parcelada e o `estabelecimento` (PRO-81; `null` quando o gasto não tem
+  estabelecimento, nunca um texto substituto) (exige o mesmo cabeçalho).
 - Página de teste em `/app/`, que chama `/me`, `/resumo`, `/historico` e `/gastos/recentes` e mostra as quatro respostas.
 
 Erros de `/resumo`, `/historico` e `/gastos/recentes`: `401 nao_autorizado`, `404 usuario_nao_cadastrado` e
@@ -60,5 +61,6 @@ Todos rodam sem `.env` e sem internet:
 ```
 python testes_initdata.py
 python testes_rotas_leitura.py
+python testes_estabelecimento.py
 python testes_calculos.py
 ```
