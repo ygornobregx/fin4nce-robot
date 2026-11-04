@@ -650,14 +650,18 @@
       mostrarDataESaudacao(me.nome);
       $("gasto-rotulo").textContent = "Gastos em " + MESES_COMPLETOS[indiceMes(resumo.ano_mes)];
       mostrarValorGrande(resumo.total_gasto);
-      $("sobra-valor").textContent = formatarDinheiro(resumo.sobra_mes);
+      // sobra_mes null (fatura anterior à data de corte, PRO-83): "—" no valor,
+      // sem a barra e sem o "de R$ ...".
+      const temSobra = resumo.sobra_mes !== null && resumo.sobra_mes !== undefined;
+      $("sobra-valor").textContent = temSobra ? formatarDinheiro(resumo.sobra_mes) : "—";
 
       // Sem renda, a barra e o "de R$ ..." ficam escondidos; a sobra continua.
       const renda = Number(resumo.renda);
       const temRenda = Number.isFinite(renda) && renda > 0;
-      $("trilho").hidden = !temRenda;
-      $("renda-texto").hidden = !temRenda;
-      if (temRenda) {
+      const mostrarBarra = temSobra && temRenda;
+      $("trilho").hidden = !mostrarBarra;
+      $("renda-texto").hidden = !mostrarBarra;
+      if (mostrarBarra) {
         const proporcao = Math.min(Math.max(resumo.total_gasto / renda, 0), 1);
         $("preenchimento").style.width = (proporcao * 100) + "%";
         $("renda-texto").textContent = "de " + formatarDinheiro(renda);

@@ -18,10 +18,8 @@ from calculos import (
     buscar_meses_com_parcelas,
     calcular_ciclo_fatura,
     calcular_dados_resumo_mensal,
-    calcular_sobra_categoria,
-    calcular_status_categoria,
-    calcular_totais_mes,
-    montar_categorias_fatura,
+    calcular_gasto_categoria,
+    calcular_resumo_fatura,
     obter_ciclo_atual,
 )
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -56,15 +54,18 @@ def obter_conexao_db():
 HORARIO_COBRANCA_RECORRENTE = time(hour=5, minute=0, tzinfo=FUSO_BRASILIA)
 
 # Estados das conversas
-NOME_USUARIO, RENDA_MENSAL, NOMES_CATEGORIAS, VALORES_CATEGORIAS, DIA_FECHAMENTO = range(5)
-AGUARDANDO_NOME_CAT, AGUARDANDO_VALOR_CAT = range(10, 12)
+# (Os números 3, 11 e 61 eram das etapas de limite de categoria, removidas na
+# PRO-83; os demais estados mantêm os números de antes.)
+NOME_USUARIO, RENDA_MENSAL, NOMES_CATEGORIAS = range(3)
+DIA_FECHAMENTO = 4
+AGUARDANDO_NOME_CAT = 10
 GASTO_VALOR = 30
 CONFIRMAR_PARCELA, ESCOLHER_PARCELAS, DIGITAR_PARCELAS = range(31, 34)
 EDITAR_ULTIMO_GASTO = 34
 METODO_PAGAMENTO = 35
 EDITAR_GASTO_ESCOLHA, EDITAR_CATEGORIA_GASTO = range(36, 38)
 ALERTA_ESCOLHA, ALERTA_CUSTOM, ALERTA_VISUALIZACAO = range(50, 53)
-EDITAR_NOME_CAT, EDITAR_VALOR_CAT = range(60, 62)
+EDITAR_NOME_CAT = 60
 EDITAR_DIA_VENCIMENTO = 70
 RECORRENTE_TEXTO_LIVRE, RECORRENTE_COMPLETAR = range(80, 82)
 RECORRENTE_EDITAR_DIA, RECORRENTE_EDITAR_VALOR, RECORRENTE_EDITAR_NOME = range(82, 85)
@@ -192,17 +193,18 @@ def formatar_estabelecimento(estabelecimento):
     return escape(estabelecimento)
 
 def debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento, metodo_pagamento=None, descricao=None, parcelamento_id=None, estabelecimento=None):
-    """Lançamento único usado por todo gasto que impacta uma categoria (comum,
-    parcelado ou recorrente): grava a transação e mantém 'saldo_atual' em dia
-    (legado, ainda lido pelo histórico e pela edição de limite). 'metodo_pagamento'
+    """Lançamento único usado por todo gasto de uma categoria (comum, parcelado
+    ou recorrente): confere que a categoria existe e grava a transação. Desde a
+    PRO-83 não mexe mais em 'saldo_atual' (coluna sem uso: o gasto é calculado
+    na hora pelo calculos.py). 'metodo_pagamento'
     só é informado pelo fluxo manual de registro (Crédito/Débito/Pix); recorrentes
-    e receitas gravam NULL. 'descricao' é o nome do gasto extraído pela IA (ou o
+    gravam NULL. 'descricao' é o nome do gasto extraído pela IA (ou o
     da recorrência); se não for texto ou vier vazia, grava NULL. 'parcelamento_id'
     só é informado na parcela 1 de uma compra parcelada e aponta para a linha
     correspondente em 'parcelamentos'; os demais lançamentos gravam NULL.
     'estabelecimento' é o local/app citado na mensagem (extraído pela IA) e só
     vem preenchido em gasto avulso e na parcela 1 de compra parcelada; é limpo
-    por normalizar_estabelecimento (recorrentes e receitas gravam NULL). Retorna
+    por normalizar_estabelecimento (recorrentes gravam NULL). Retorna
     (cat_id, transacao_id), ou None se a categoria não existir."""
     cat = cursor.execute('SELECT id FROM categorias WHERE user_id = ? AND nome = ?', (user_id, categoria)).fetchone()
     if not cat:
@@ -210,7 +212,6 @@ def debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento, met
     descricao = descricao.strip() if isinstance(descricao, str) else None
     if not descricao:
         descricao = None
-    cursor.execute('UPDATE categorias SET saldo_atual = saldo_atual - ? WHERE id = ?', (valor_armazenado, cat[0]))
     estabelecimento = normalizar_estabelecimento(estabelecimento)
     cursor.execute(
         'INSERT INTO transacoes (user_id, categoria_nome, valor, data_transacao, metodo_pagamento, descricao, parcelamento_id, estabelecimento) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
@@ -234,35 +235,31 @@ def montar_grade(botoes, colunas=3):
     """Distribui os botões em linhas de 'colunas' itens (grelha para o telemóvel)."""
     return [botoes[i:i + colunas] for i in range(0, len(botoes), colunas)]
 
-def montar_texto_painel(titulo, renda, dia_fechamento, categorias, rotulo_gastos="Gastos Atuais"):
+def montar_texto_painel(titulo, resumo, dia_fechamento, rotulo_gastos="Gastos Atuais"):
     """Painel compartilhado pelo 'Ver Resumo' e pelo detalhe de cada mês do
-    histórico (mesmo layout). 'categorias' é uma lista de (nome, limite, sobra,
-    gasto): 'limite' e 'sobra' são None para categorias já excluídas (só
-    mostram o gasto). O gasto é sempre o total consolidado da categoria."""
-    comprometido, total_gastos, sobra_mes = calcular_totais_mes(renda, categorias)
-
+    histórico (mesmo layout). 'resumo' é o ResumoFatura de
+    calcular_resumo_fatura (renda, categorias (nome, gasto), gasto total e
+    Sobra do Mês). A linha 'Sobra do Mês' só aparece quando a fatura tem Sobra
+    (sobra_mes não é None: fatura da data de corte em diante)."""
+    linha_sobra = (
+        f"Sobra do Mês: {formatar_real(resumo.sobra_mes)}\n" if resumo.sobra_mes is not None else ""
+    )
     texto = (
         f"{titulo}\n\n"
         f"{DIVISOR}\n\n"
-        f"Receita: {formatar_real(renda)}\n"
-        f"Comprometido: {formatar_real(comprometido)}\n"
-        f"{rotulo_gastos}: {formatar_real(total_gastos)}\n"
-        f"Sobra do Mês: {formatar_real(sobra_mes)}\n"
+        f"Renda: {formatar_real(resumo.renda)}\n"
+        f"{rotulo_gastos}: {formatar_real(resumo.total_gasto)}\n"
+        f"{linha_sobra}"
         f"Fechamento Fatura: Dia {dia_fechamento}\n\n"
         f"{DIVISOR}\n\n"
         "Categorias ↓\n\n"
         f"{DIVISOR}\n"
     )
 
-    blocos = []
-    for nome, limite, sobra, gasto in categorias:
-        linhas = [f"📂 {escape(nome)}"]
-        if limite is not None:
-            linhas.append(f"Orçamento: {formatar_real(limite)}")
-        linhas.append(f"Gastos: {formatar_real(gasto)}")
-        if limite is not None:
-            linhas.append(f"Sobra: {formatar_real(sobra)}")
-        blocos.append("\n".join(linhas))
+    blocos = [
+        f"📂 {escape(nome)}\nGastos: {formatar_real(gasto)}"
+        for nome, gasto in resumo.categorias
+    ]
     if not blocos:
         blocos.append("Nenhuma categoria neste mês.")
 
@@ -469,8 +466,8 @@ async def _reverter_para_menu(context: ContextTypes.DEFAULT_TYPE):
 
 async def montar_texto_menu_principal(user_id):
     """
-    Texto do cabeçalho do Menu Principal. As métricas financeiras (SALÁRIO,
-    COMPROMETIDO, GASTOS, SOBRA DO MÊS) aparecem exclusivamente na tela
+    Texto do cabeçalho do Menu Principal. As métricas financeiras (RENDA,
+    GASTOS, SOBRA DO MÊS) aparecem exclusivamente na tela
     "Ver Resumo" (botao_clicado) — aqui o Menu Principal fica limpo, sem
     poluir a navegação com números repetidos a cada clique.
     """
@@ -499,8 +496,8 @@ def linha_voltar_com_menu(callback_voltar):
 
 # Chaves temporárias de sub-fluxos descartadas ao voltar ao Menu Principal.
 CHAVES_ESTADO_TEMPORARIO = (
-    'gasto_pendente', 'ultimo_gasto', 'cat_em_edicao', 'nova_cat_nome',
-    'nome_temp', 'renda_temp', 'categorias_temp', 'orcamentos_temp', 'index_atual',
+    'gasto_pendente', 'ultimo_gasto', 'cat_em_edicao',
+    'nome_temp', 'renda_temp', 'categorias_temp',
 )
 
 def resetar_conversas(application, chat_id, user_id):
@@ -593,48 +590,29 @@ async def receber_nomes_categorias(update: Update, context: ContextTypes.DEFAULT
     except Exception:
         pass
 
-    categorias = [c.strip().capitalize() for c in texto.split(',') if c.strip()]
+    # Nomes repetidos ("Lazer, lazer", "Alimentação, alimentacao") viram uma
+    # categoria só: mesma comparação do rename (_normalizar_texto), mantendo a
+    # primeira grafia e a ordem digitada. O vínculo é por nome, então duas
+    # categorias iguais misturariam os registros.
+    categorias = []
+    vistos = set()
+    for c in texto.split(','):
+        nome_cat = c.strip().capitalize()
+        chave = _normalizar_texto(nome_cat)
+        if not chave or chave in vistos:
+            continue
+        vistos.add(chave)
+        categorias.append(nome_cat)
     if not categorias:
         return NOMES_CATEGORIAS
 
     context.user_data['categorias_temp'] = categorias
-    context.user_data['orcamentos_temp'] = {}
-    context.user_data['index_atual'] = 0
 
-    primeira_cat = categorias[0]
-    texto_perq = f"Categorias anotadas! Vamos definir os orçamentos.\n\nQual o valor limite para a primeira categoria, <b>{primeira_cat}</b>? (ex: <code>500,00</code>)"
+    # A categoria não tem limite (PRO-83): dos nomes, direto ao dia de vencimento.
+    nome = context.user_data.get('nome_temp', 'usuário')
+    texto_perq = f"Excelente, <b>{nome}</b>! Todas as categorias foram configuradas.\n\nAgora para finalizar, me informe a sua <b>data de vencimento da fatura</b> (dia entre 1 e 31, ex: <code>10</code>):"
     await enviar_fluxo(context, update.effective_chat.id, texto_perq)
-    return VALORES_CATEGORIAS
-
-async def receber_valores_categorias(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = update.message.text
-    try:
-        await update.message.delete()
-    except Exception:
-        pass
-
-    try:
-        valor = parse_valor(texto)
-        cats = context.user_data['categorias_temp']
-        idx = context.user_data['index_atual']
-        cat_atual = cats[idx]
-        context.user_data['orcamentos_temp'][cat_atual] = valor
-        idx += 1
-        context.user_data['index_atual'] = idx
-
-        nome = context.user_data.get('nome_temp', 'usuário')
-
-        if idx < len(cats):
-            proxima_cat = cats[idx]
-            texto_perq = f"Perfeito! O limite de <b>{cat_atual}</b> foi registrado com sucesso.\n\nAgora, qual será o limite para a próxima categoria: <b>{proxima_cat}</b>?"
-            await enviar_fluxo(context, update.effective_chat.id, texto_perq)
-            return VALORES_CATEGORIAS
-        else:
-            texto_perq = f"Excelente, <b>{nome}</b>! Todas as categorias foram configuradas.\n\nAgora para finalizar, me informe a sua <b>data de vencimento da fatura</b> (dia entre 1 e 31, ex: <code>10</code>):"
-            await enviar_fluxo(context, update.effective_chat.id, texto_perq)
-            return DIA_FECHAMENTO
-    except ValueError:
-        return VALORES_CATEGORIAS
+    return DIA_FECHAMENTO
 
 async def receber_dia_fechamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text.strip()
@@ -662,8 +640,10 @@ async def receber_dia_fechamento(update: Update, context: ContextTypes.DEFAULT_T
     cursor.execute('INSERT OR REPLACE INTO usuarios (user_id, nome, renda_mensal, dia_fechamento, horario_alerta) VALUES (?, ?, ?, ?, ?)', (user_id, nome, renda, dia, "20:00"))
     cursor.execute('DELETE FROM categorias WHERE user_id = ?', (user_id,))
     data_criacao = datetime.now(FUSO_BRASILIA).strftime('%Y-%m-%d %H:%M:%S')
-    for cat_nome, valor in context.user_data['orcamentos_temp'].items():
-        cursor.execute('INSERT INTO categorias (user_id, nome, orcamento_mensal, saldo_atual, data_criacao) VALUES (?, ?, ?, ?, ?)', (user_id, cat_nome, valor, valor, data_criacao))
+    # orcamento_mensal e saldo_atual ficam sem uso desde a PRO-83: gravados com
+    # 0, nunca nulos (o código antigo, numa reversão, ainda os lê).
+    for cat_nome in context.user_data['categorias_temp']:
+        cursor.execute('INSERT INTO categorias (user_id, nome, orcamento_mensal, saldo_atual, data_criacao) VALUES (?, ?, ?, ?, ?)', (user_id, cat_nome, 0.0, 0.0, data_criacao))
     conn.commit()
     conn.close()
 
@@ -852,9 +832,23 @@ async def salvar_gasto_livre(update: Update, context: ContextTypes.DEFAULT_TYPE)
         response = await gerar_conteudo_com_retry(prompt)
         dados = limpar_json_ia(response.text)
 
+        tipo = dados['tipo'].strip().lower()
+
+        # Receita (PRO-83): recusada sem gravar nada, até a PRO-86 trazer o
+        # registro de receita. A IA continua separando "despesa" e "receita"
+        # justamente para um "recebi 5.000 de salário" nunca virar gasto.
+        # Vem antes da checagem de categoria: para a receita, a categoria não
+        # importa, e o aviso combinado aparece mesmo com categoria fora da lista.
+        if tipo != 'despesa':
+            await enviar_fluxo(
+                context, user_id,
+                "Registro de receita chega em breve. Por enquanto, registre só gastos.",
+                reply_markup=obter_teclado_menu()
+            )
+            return ConversationHandler.END
+
         valor = float(dados['valor'])
         categoria = dados['categoria'].capitalize()
-        tipo = dados['tipo'].strip().lower()
         descricao = dados.get('descricao', '')
         estabelecimento = normalizar_estabelecimento(dados.get('estabelecimento'))
 
@@ -869,11 +863,6 @@ async def salvar_gasto_livre(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"Crie a categoria antes de registrar um gasto nela, ou informe o nome corretamente.",
                 reply_markup=obter_teclado_menu()
             )
-            return ConversationHandler.END
-
-        # Receitas não entram no fluxo de parcelamento — fecham direto como antes.
-        if tipo != 'despesa':
-            await _finalizar_gasto_simples(context, user_id, categoria, valor, tipo, descricao, momento_envio)
             return ConversationHandler.END
 
         # Despesa: ainda não debitamos nada. Guardamos o gasto em memória até
@@ -927,17 +916,17 @@ async def responder_metodo_pagamento(update: Update, context: ContextTypes.DEFAU
     return CONFIRMAR_PARCELA
 
 async def _finalizar_gasto_simples(context, user_id, categoria, valor, tipo, descricao, momento_envio, metodo_pagamento=None, estabelecimento=None):
-    """Registra um gasto/receita de uma vez só (sem parcelamento): debita o
-    valor cheio da categoria e grava uma única linha em 'transacoes'.
+    """Registra um gasto de uma vez só (sem parcelamento): grava uma única
+    linha em 'transacoes' com o valor cheio. Desde a PRO-83 só é chamada com
+    tipo 'despesa' (a receita é recusada em salvar_gasto_livre).
     'metodo_pagamento' só vem preenchido para despesas do fluxo manual.
     'estabelecimento' só é informado em despesa; a confirmação da despesa ganha
-    a linha 'Estabelecimento:' e a da receita fica como está."""
+    a linha 'Estabelecimento:'."""
     conn = obter_conexao_db()
     cursor = conn.cursor()
     valor_armazenado = valor if tipo == 'despesa' else -valor
     cat_id, transacao_id = debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento_envio, metodo_pagamento, descricao=descricao, estabelecimento=estabelecimento)
     conn.commit()
-    novo_saldo = calcular_sobra_categoria(conn, user_id, categoria)
     conn.close()
 
     # Guarda a referência do gasto recém-criado para permitir a correção
@@ -959,7 +948,6 @@ async def _finalizar_gasto_simples(context, user_id, categoria, valor, tipo, des
         f"Gasto Registrado com Sucesso!\n\n"
         f"Categoria: <b>{categoria}</b>\n"
         f"Valor: <b>{formatar_real(valor)}</b>\n"
-        f"Resta na Categoria: <b>{formatar_real(novo_saldo)}</b>\n"
         f"Descrição: {descricao}"
     )
     if tipo == 'despesa':
@@ -1081,25 +1069,14 @@ async def salvar_categoria_editada_gasto(update: Update, context: ContextTypes.D
             await enviar_fluxo(context, user_id, texto, reply_markup=TECLADO_VOLTAR)
             return EDITAR_CATEGORIA_GASTO
 
-        # Gasto e Sobra são calculados a partir de 'transacoes.categoria_nome'
-        # (calcular_status_categoria), então mover a transação já corrige as
-        # duas categorias. 'saldo_atual' (legado) é ajustado dos dois lados:
-        # a origem recupera o valor que foi debitado e o destino o recebe.
+        # O gasto de cada categoria é calculado a partir de
+        # 'transacoes.categoria_nome' (calculos.py), então mover a transação já
+        # corrige as duas categorias.
         cursor.execute(
             'UPDATE transacoes SET categoria_nome = ? WHERE id = ? AND user_id = ?',
             (categoria_destino, ultimo_gasto['transacao_id'], user_id)
         )
-        cursor.execute(
-            'UPDATE categorias SET saldo_atual = saldo_atual + ? WHERE user_id = ? AND nome = ?',
-            (valor_armazenado, user_id, categoria_origem)
-        )
-        cursor.execute(
-            'UPDATE categorias SET saldo_atual = saldo_atual - ? WHERE user_id = ? AND nome = ?',
-            (valor_armazenado, user_id, categoria_destino)
-        )
         conn.commit()
-        sobra_destino = calcular_sobra_categoria(conn, user_id, categoria_destino)
-        sobra_origem = calcular_sobra_categoria(conn, user_id, categoria_origem)
     finally:
         conn.close()
 
@@ -1109,9 +1086,7 @@ async def salvar_categoria_editada_gasto(update: Update, context: ContextTypes.D
         context, user_id,
         f"Gasto Corrigido com Sucesso!\n\n"
         f"Categoria: <b>{escape(categoria_destino)}</b>\n"
-        f"Valor: <b>{formatar_real(abs(valor_armazenado))}</b>\n"
-        f"Resta na Categoria: <b>{formatar_real(sobra_destino)}</b>\n\n"
-        f"Resta em {escape(categoria_origem)}: <b>{formatar_real(sobra_origem)}</b>"
+        f"Valor: <b>{formatar_real(abs(valor_armazenado))}</b>"
     )
     return ConversationHandler.END
 
@@ -1135,13 +1110,12 @@ async def salvar_valor_editado_gasto(update: Update, context: ContextTypes.DEFAU
         return EDITAR_ULTIMO_GASTO
 
     transacao_id = ultimo_gasto['transacao_id']
-    cat_id = ultimo_gasto['categoria_id']
     categoria = ultimo_gasto['categoria']
     tipo = ultimo_gasto['tipo']
     novo_valor_armazenado = novo_valor if tipo == 'despesa' else -novo_valor
 
-    # Atualiza o valor do gasto no banco de dados, ajustando o saldo da
-    # categoria pela diferença entre o valor antigo e o novo.
+    # Atualiza só o valor do gasto: o gasto da categoria é calculado na hora
+    # a partir de 'transacoes' (calculos.py).
     conn = obter_conexao_db()
     cursor = conn.cursor()
     linha = cursor.execute('SELECT valor FROM transacoes WHERE id = ? AND user_id = ?', (transacao_id, user_id)).fetchone()
@@ -1150,14 +1124,8 @@ async def salvar_valor_editado_gasto(update: Update, context: ContextTypes.DEFAU
         await enviar_fluxo(context, user_id, "Gasto não encontrado. Registre novamente.", reply_markup=obter_teclado_menu())
         return ConversationHandler.END
 
-    valor_antigo_armazenado = linha[0]
     cursor.execute('UPDATE transacoes SET valor = ? WHERE id = ? AND user_id = ?', (novo_valor_armazenado, transacao_id, user_id))
-    cursor.execute(
-        'UPDATE categorias SET saldo_atual = saldo_atual - ? WHERE id = ?',
-        (novo_valor_armazenado - valor_antigo_armazenado, cat_id)
-    )
     conn.commit()
-    novo_saldo = calcular_sobra_categoria(conn, user_id, categoria)
     conn.close()
 
     context.user_data.pop('ultimo_gasto', None)
@@ -1166,8 +1134,7 @@ async def salvar_valor_editado_gasto(update: Update, context: ContextTypes.DEFAU
         context, user_id,
         f"Gasto Corrigido com Sucesso!\n\n"
         f"Categoria: <b>{categoria}</b>\n"
-        f"Novo Valor: <b>{formatar_real(novo_valor)}</b>\n"
-        f"Resta na Categoria: <b>{formatar_real(novo_saldo)}</b>"
+        f"Novo Valor: <b>{formatar_real(novo_valor)}</b>"
     )
     return ConversationHandler.END
 
@@ -1215,7 +1182,6 @@ async def _finalizar_gasto_parcelado(context, user_id, total_parcelas):
             conn.rollback()
         else:
             conn.commit()
-            novo_saldo = calcular_sobra_categoria(conn, user_id, categoria)
     except Exception:
         conn.rollback()
         raise
@@ -1235,7 +1201,6 @@ async def _finalizar_gasto_parcelado(context, user_id, total_parcelas):
         f"Categoria: <b>{categoria}</b>\n"
         f"Estabelecimento: {formatar_estabelecimento(estabelecimento)}\n"
         f"Total: <b>{formatar_real(valor_total)}</b> em <b>{total_parcelas}x</b> de <b>{formatar_real(valor_parcela)}</b>\n"
-        f"Resta na Categoria: <b>{formatar_real(novo_saldo)}</b>\n"
         f"Fatura de referência: <b>{ciclo_referencia}</b>\n\n"
         f"Parcela 1/{total_parcelas} debitada agora. Se o banco jogar essa compra pra fatura seguinte, "
         f"corrija em Categorias → {categoria} → Conferir Parcelas."
@@ -1314,10 +1279,6 @@ def _montar_tela_nome_categoria():
     cancela e volta ao Menu Principal, pois não há passo anterior."""
     return "Qual será o <b>nome</b> da nova categoria?", TECLADO_VOLTAR
 
-# Teclado da etapa de valor: '← Voltar' retorna para a etapa de nome
-# (voltar_nome_cat), etapa imediatamente anterior.
-TECLADO_VOLTAR_NOME_CAT = InlineKeyboardMarkup([[InlineKeyboardButton("← Voltar", callback_data='voltar_nome_cat', style="danger")]])
-
 async def iniciar_adicionar_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await responder_callback(query)
@@ -1325,45 +1286,23 @@ async def iniciar_adicionar_categoria(update: Update, context: ContextTypes.DEFA
     await atualizar_callback(query, context, texto, reply_markup=teclado)
     return AGUARDANDO_NOME_CAT
 
-async def voltar_nome_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Retorna da etapa de valor para a etapa de nome da nova categoria.
-    query = update.callback_query
-    await responder_callback(query)
-    context.user_data.pop('nova_cat_nome', None)
-    texto, teclado = _montar_tela_nome_categoria()
-    await atualizar_callback(query, context, texto, reply_markup=teclado)
-    return AGUARDANDO_NOME_CAT
-
 async def receber_nome_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['nova_cat_nome'] = update.message.text.strip().capitalize()
-    try:
-        await update.message.delete()
-    except Exception:
-        pass
-    await enviar_fluxo(context, update.effective_chat.id, "Qual o <b>limite mensal</b> dela? (ex: <code>500,00</code>)", reply_markup=TECLADO_VOLTAR_NOME_CAT)
-    return AGUARDANDO_VALOR_CAT
-
-async def salvar_nova_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = update.message.text
+    # A categoria não tem limite (PRO-83): é gravada logo depois do nome.
+    # orcamento_mensal e saldo_atual (sem uso) recebem 0, nunca nulo.
+    nome_cat = update.message.text.strip().capitalize()
     try:
         await update.message.delete()
     except Exception:
         pass
 
-    try:
-        valor = parse_valor(texto)
+    conn = obter_conexao_db()
+    data_criacao = datetime.now(FUSO_BRASILIA).strftime('%Y-%m-%d %H:%M:%S')
+    conn.execute('INSERT INTO categorias (user_id, nome, orcamento_mensal, saldo_atual, data_criacao) VALUES (?, ?, ?, ?, ?)', (update.effective_user.id, nome_cat, 0.0, 0.0, data_criacao))
+    conn.commit()
+    conn.close()
 
-        conn = obter_conexao_db()
-        data_criacao = datetime.now(FUSO_BRASILIA).strftime('%Y-%m-%d %H:%M:%S')
-        conn.execute('INSERT INTO categorias (user_id, nome, orcamento_mensal, saldo_atual, data_criacao) VALUES (?, ?, ?, ?, ?)', (update.effective_user.id, context.user_data['nova_cat_nome'], valor, valor, data_criacao))
-        conn.commit()
-        conn.close()
-
-        await mostrar_resumo_temporario(context, update.effective_user.id, "Categoria criada com sucesso!")
-        return ConversationHandler.END
-    except ValueError:
-        await enviar_fluxo(context, update.effective_user.id, "Valor inválido. Digite no formato correto (ex: <code>500,00</code>):", reply_markup=TECLADO_VOLTAR_NOME_CAT)
-        return AGUARDANDO_VALOR_CAT
+    await mostrar_resumo_temporario(context, update.effective_user.id, "Categoria criada com sucesso!")
+    return ConversationHandler.END
 
 # --- EDITAR CATEGORIAS E DADOS DA CONTA ---
 async def menu_editar_categorias(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1402,20 +1341,20 @@ async def gerenciar_categoria_especifica(update: Update, context: ContextTypes.D
     user_id = query.from_user.id
 
     conn = obter_conexao_db()
-    cat = conn.execute('SELECT nome, orcamento_mensal FROM categorias WHERE id = ? AND user_id = ?', (cat_id, user_id)).fetchone()
+    cat = conn.execute('SELECT nome FROM categorias WHERE id = ? AND user_id = ?', (cat_id, user_id)).fetchone()
 
     if not cat:
         conn.close()
         await atualizar_callback(query, context, "Categoria não encontrada.", reply_markup=obter_teclado_menu())
         return ConversationHandler.END
 
-    nome, limite = cat
+    nome = cat[0]
 
     linha_dia = conn.execute('SELECT dia_fechamento FROM usuarios WHERE user_id = ?', (user_id,)).fetchone()
     dia_fechamento = linha_dia[0] if linha_dia else None
 
-    # Orçamento/Gasto/Sobra do ciclo vigente: mesma fonte da tela "Ver Resumo".
-    orcamento, gasto, saldo = calcular_status_categoria(conn, user_id, nome)
+    # Gasto do ciclo vigente: mesma definição de gasto da tela "Ver Resumo".
+    gasto = calcular_gasto_categoria(conn, user_id, nome) or 0.0
     conn.close()
 
     # Nome do mês da fatura vigente (mesmo rótulo usado no histórico); sem
@@ -1426,14 +1365,10 @@ async def gerenciar_categoria_especifica(update: Update, context: ContextTypes.D
         mes_num = datetime.now(FUSO_BRASILIA).month
     nome_mes = NOMES_MESES[mes_num - 1]
 
-    # Só mostra o orçamento do ciclo quando transferências o tiraram do limite fixo.
-    linha_orcamento = f"└ Orçamento em {nome_mes}: <b>{formatar_real(orcamento)}</b>\n" if abs(orcamento - limite) >= 0.005 else ""
-
     # Retorna para a lista de categorias (etapa imediatamente anterior),
     # reaproveitando o mesmo handler da tela 'menu_editar_cat'.
     teclado = [
         [InlineKeyboardButton("Editar Nome", callback_data=f"acao_renomear_{cat_id}")],
-        [InlineKeyboardButton("Editar Limite", callback_data=f"acao_limite_{cat_id}")],
         [InlineKeyboardButton("Conferir Parcelas", callback_data=f"view_installments_{cat_id}")],
         [InlineKeyboardButton("Excluir Categoria", callback_data=f"acao_excluir_{cat_id}")],
         linha_voltar_com_menu('menu_editar_cat')
@@ -1442,10 +1377,7 @@ async def gerenciar_categoria_especifica(update: Update, context: ContextTypes.D
     await atualizar_callback(
         query, context,
         f"Categoria: {nome}\n\n"
-        f"└ Limite Atual: <b>{formatar_real(limite)}</b>\n"
-        f"{linha_orcamento}"
-        f"└ Gasto em {nome_mes}: <b>{formatar_real(gasto)}</b>\n"
-        f"└ Saldo Atual: <b>{formatar_real(saldo)}</b>\n\n"
+        f"└ Gasto em {nome_mes}: <b>{formatar_real(gasto)}</b>\n\n"
         "O Que Você Deseja Fazer?",
         reply_markup=InlineKeyboardMarkup(teclado)
     )
@@ -1685,77 +1617,6 @@ async def salvar_novo_nome(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await mostrar_resumo_temporario(context, user_id, f"Categoria renomeada para <b>{escape(novo_nome)}</b> com sucesso!")
     return ConversationHandler.END
-
-async def iniciar_mudar_limite(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await responder_callback(query)
-    cat_id = int(query.data.replace('acao_limite_', ''))
-    context.user_data['cat_em_edicao'] = cat_id
-
-    conn = obter_conexao_db()
-    user_id = query.from_user.id
-    cat = conn.execute('SELECT nome, orcamento_mensal FROM categorias WHERE id = ? AND user_id = ?', (cat_id, user_id)).fetchone()
-    if cat:
-        nome, limite = cat
-        orcamento, _, saldo = calcular_status_categoria(conn, user_id, nome)
-        # Efeito líquido das transferências no ciclo: orçamento (já com
-        # transferências) menos o limite fixo cadastrado.
-        transferencias = orcamento - limite
-    else:
-        nome, limite, saldo, transferencias = "Categoria", 0.0, 0.0, 0.0
-    conn.close()
-
-    # '← Voltar' retorna para o detalhe da categoria (etapa anterior).
-    await atualizar_callback(
-        query, context,
-        f"A Categoria <b>{nome}</b> Está Atualmente Com:\n\n"
-        f"└ Limite Atual: <b>{formatar_real(limite)}</b>\n"
-        f"└ Saldo Disponível: <b>{formatar_real(saldo)}</b>\n"
-        f"└ Transferências: <b>{formatar_real(transferencias)}</b>\n\n"
-        "Envie o <b>Novo Valor de Limite /</b> (Exemplo: <code>545,00</code>):",
-        reply_markup=InlineKeyboardMarkup([linha_voltar_com_menu(f"edit_cat_{cat_id}")])
-    )
-    return EDITAR_VALOR_CAT
-
-async def salvar_novo_limite(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = update.message.text
-    cat_id = context.user_data.get('cat_em_edicao')
-    user_id = update.effective_user.id
-
-    try:
-        await update.message.delete()
-    except Exception:
-        pass
-
-    try:
-        novo_limite = parse_valor(texto)
-
-        if not cat_id:
-            await enviar_fluxo(context, user_id, "Erro de sessão. Volte ao menu.", reply_markup=obter_teclado_menu())
-            return ConversationHandler.END
-
-        conn = obter_conexao_db()
-        cat = conn.execute('SELECT orcamento_mensal, saldo_atual FROM categorias WHERE id = ?', (cat_id,)).fetchone()
-        if cat:
-            limite_antigo, saldo_atual = cat
-            gasto_total = limite_antigo - saldo_atual
-            novo_saldo = novo_limite - gasto_total
-            conn.execute('UPDATE categorias SET orcamento_mensal = ?, saldo_atual = ? WHERE id = ?', (novo_limite, novo_saldo, cat_id))
-        conn.commit()
-        conn.close()
-
-        await mostrar_resumo_temporario(context, user_id, f"Limite atualizado para <b>{formatar_real(novo_limite)}</b> com sucesso!")
-        return ConversationHandler.END
-    except ValueError:
-        # cat_id pode não existir se a sessão já tiver expirado; nesse caso,
-        # o '← Voltar' cai no fallback padrão (Menu Principal).
-        teclado_voltar = InlineKeyboardMarkup([linha_voltar_com_menu(f"edit_cat_{cat_id}")]) if cat_id else TECLADO_VOLTAR
-        await enviar_fluxo(
-            context, user_id,
-            "Valor inválido. Digite no formato correto (ex: <code>500,00</code>):",
-            reply_markup=teclado_voltar
-        )
-        return EDITAR_VALOR_CAT
 
 async def excluir_categoria_botao(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -2567,15 +2428,17 @@ def agendar_tarefa_alerta(job_queue, user_id, horario_str):
     except Exception as e:
         print(f"Erro ao agendar alerta para o usuário {user_id}: {e}")
 
-def _montar_mensagem_resumo_diario(nome, gastos_hoje, sobras_categoria):
+def _montar_mensagem_resumo_diario(nome, gastos_hoje, resumo_mes=None):
     """
     Monta a mensagem do resumo diário de forma direta, sem IA: o total
     gasto, a categoria de maior gasto em destaque (só o nome, o valor já
-    aparece na lista abaixo) e a lista de categorias com gasto e sobra do
-    ciclo. Sem depender do Gemini, a formatação é sempre limpa e
-    consistente, e a mensagem nunca atrasa por causa de instabilidade ou
-    alta demanda do Google. 'sobras_categoria' é um dict {categoria: sobra}
-    com a sobra do ciclo vigente de cada categoria que teve gasto hoje.
+    aparece na lista abaixo), o gasto do dia de cada categoria e, no fim, o
+    "Gasto no Mês" e a "Sobra do Mês" da fatura vigente. Sem depender do
+    Gemini, a formatação é sempre limpa e consistente, e a mensagem nunca
+    atrasa por causa de instabilidade ou alta demanda do Google.
+    'resumo_mes' é o ResumoFatura da fatura vigente (calcular_resumo_fatura);
+    a linha da Sobra só aparece quando ela não é None, e sem 'resumo_mes'
+    (usuário sem dia de fechamento) o bloco do mês não aparece.
     """
     if not gastos_hoje:
         return (
@@ -2589,17 +2452,21 @@ def _montar_mensagem_resumo_diario(nome, gastos_hoje, sobras_categoria):
 
     linhas_categorias = "\n\n".join(
         f"{cat}:\n"
-        f"└ Gasto: <b>{formatar_real(valor)}</b>\n"
-        f"└ Sobra: <b>{formatar_real(sobras_categoria.get(cat, 0.0))}</b>"
+        f"└ Gasto: <b>{formatar_real(valor)}</b>"
         for cat, valor in categorias_ordenadas
     )
 
-    return (
+    texto = (
         "<b>Resumo Financeiro de Hoje</b>\n\n"
         f"Total Gasto: <b>{formatar_real(total_gasto)}</b>\n\n"
         f"Maior Gasto: <b>{categoria_maior}</b>\n\n"
         f"Categorias:\n\n{linhas_categorias}"
     )
+    if resumo_mes is not None:
+        texto += f"\n\n{DIVISOR}\n\nGasto no Mês: <b>{formatar_real(resumo_mes.total_gasto)}</b>"
+        if resumo_mes.sobra_mes is not None:
+            texto += f"\nSobra do Mês: <b>{formatar_real(resumo_mes.sobra_mes)}</b>"
+    return texto
 
 async def enviar_resumo_diario(context: ContextTypes.DEFAULT_TYPE):
     """
@@ -2613,14 +2480,14 @@ async def enviar_resumo_diario(context: ContextTypes.DEFAULT_TYPE):
     print(f"📤 Enviando resumo diário para usuário {user_id} às {agora_brasilia.strftime('%H:%M:%S')} (Brasília)")
 
     conn = obter_conexao_db()
-    user_data = conn.execute('SELECT nome FROM usuarios WHERE user_id = ?', (user_id,)).fetchone()
+    user_data = conn.execute('SELECT nome, dia_fechamento FROM usuarios WHERE user_id = ?', (user_id,)).fetchone()
 
     if not user_data:
         conn.close()
         print(f"⚠️ Usuário {user_id} não encontrado no banco de dados")
         return
 
-    nome = user_data[0]
+    nome, dia_fechamento = user_data
 
     data_brasilia_str = agora_brasilia.strftime('%Y-%m-%d')
     gastos_hoje = conn.execute(
@@ -2629,13 +2496,18 @@ async def enviar_resumo_diario(context: ContextTypes.DEFAULT_TYPE):
            GROUP BY categoria_nome''',
         (user_id, data_brasilia_str)
     ).fetchall()
-    sobras_categoria = {
-        cat: calcular_sobra_categoria(conn, user_id, cat) for cat, _ in gastos_hoje
-    }
+    # Gasto e Sobra do Mês da fatura vigente, pela mesma função do "Ver
+    # Resumo". Só é buscado quando houve gasto hoje (o dia sem gasto tem a
+    # mensagem curta de sempre).
+    resumo_mes = None
+    if gastos_hoje and dia_fechamento:
+        resumo_mes = calcular_resumo_fatura(
+            conn, user_id, obter_ciclo_atual(dia_fechamento, agora_brasilia), dia_fechamento
+        )
 
     conn.close()
 
-    mensagem = _montar_mensagem_resumo_diario(nome, gastos_hoje, sobras_categoria)
+    mensagem = _montar_mensagem_resumo_diario(nome, gastos_hoje, resumo_mes)
 
     # Limpa qualquer mensagem antiga de fluxo (igual mostrar_resumo_temporario
     # fazia), pra o resumo aparecer como a única mensagem do chat.
@@ -2679,10 +2551,12 @@ async def resumo_diario_menu_callback(update: Update, context: ContextTypes.DEFA
     context.user_data['msgs_fluxo'] = [nova_msg.message_id]
 
 # --- RESUMO MENSAL (ENVIADO NO FECHAMENTO DA FATURA) ---
-def _montar_mensagem_resumo_mensal(nome, nome_mes, top3, total_gasto, sobra_mes):
+def _montar_mensagem_resumo_mensal(nome, nome_mes, top3, renda, total_gasto, sobra_mes, nome_mes_seguinte):
     """Texto do Resumo Mensal, direto e sem IA, seguindo o template aprovado.
     Com menos de 3 categorias com gasto mostra só as existentes; sem nenhuma,
-    omite os blocos numerados."""
+    omite os blocos numerados. A linha 'Sobra do Mês' só aparece quando
+    'sobra_mes' não é None (fatura da data de corte em diante).
+    'nome_mes_seguinte' é o mês da fatura que começa hoje."""
     texto = f"Olá, {escape(nome)}! Tudo bem? Segue abaixo o seu Resumo Mensal de Gastos no Mês {nome_mes}!\n\n\n"
     for posicao, (cat, valor) in enumerate(top3, start=1):
         texto += (
@@ -2690,12 +2564,14 @@ def _montar_mensagem_resumo_mensal(nome, nome_mes, top3, total_gasto, sobra_mes)
             f"└ Total Gasto: {formatar_real(valor)}\n\n"
             f"{DIVISOR}\n\n"
         )
+    linha_sobra = f"\nSobra do Mês: {formatar_real(sobra_mes)}" if sobra_mes is not None else ""
     texto += (
-        f"Total Gasto do Mês Inteiro: {formatar_real(total_gasto)}\n"
-        f"Sobra do Mês: {formatar_real(sobra_mes)}\n\n"
+        f"Renda: {formatar_real(renda)}\n"
+        f"Total Gasto do Mês Inteiro: {formatar_real(total_gasto)}"
+        f"{linha_sobra}\n\n"
         f"{DIVISOR}\n\n"
-        "Hoje, suas categorias zeram os valores de gastos e voltam à estaca zero, "
-        "seguindo a lógica de fechamento da sua fatura."
+        f"Hoje começa a fatura de {nome_mes_seguinte}. "
+        "A contagem dos seus gastos recomeça do zero."
     )
     return texto
 
@@ -2705,11 +2581,13 @@ async def enviar_resumo_mensal(bot, user_data, user_id, nome, dia_fechamento, ag
     Principal' (callback 'resumo_diario_menu') e registra o id dela."""
     conn = obter_conexao_db()
     try:
-        ano_mes, top3, total_gasto, sobra_mes = calcular_dados_resumo_mensal(conn, user_id, dia_fechamento, agora)
+        ano_mes, top3, renda, total_gasto, sobra_mes = calcular_dados_resumo_mensal(conn, user_id, dia_fechamento, agora)
     finally:
         conn.close()
-    nome_mes = NOMES_MESES[int(ano_mes.split('-')[1]) - 1]
-    mensagem = _montar_mensagem_resumo_mensal(nome, nome_mes, top3, total_gasto, sobra_mes)
+    nome_mes = rotulo_mes(ano_mes)
+    # A fatura que começa hoje é a seguinte à que acabou de fechar.
+    nome_mes_seguinte = rotulo_mes(_somar_meses(ano_mes, 1))
+    mensagem = _montar_mensagem_resumo_mensal(nome, nome_mes, top3, renda, total_gasto, sobra_mes, nome_mes_seguinte)
 
     # limpar_historico_mensagens só usa .bot e .user_data do contexto.
     await limpar_historico_mensagens(SimpleNamespace(bot=bot, user_data=user_data), user_id)
@@ -2721,20 +2599,20 @@ async def enviar_resumo_mensal(bot, user_data, user_id, nome, dia_fechamento, ag
     user_data['ultima_msg_bot'] = resumo_msg.message_id
     user_data['msgs_fluxo'] = [resumo_msg.message_id]
 
-# --- RESET DE SALDOS NO DIA DE VENCIMENTO ---
+# --- FECHAMENTO DA FATURA NO DIA DE VENCIMENTO ---
 async def _executar_verificacao_resets(bot, user_data_global):
     """
-    Lógica central do reset: para cada usuário, verifica se hoje (no fuso de
+    Fechamento da fatura: para cada usuário, verifica se hoje (no fuso de
     Brasília) é o dia de vencimento configurado e, se for e ainda não tiver
-    sido resetado hoje, restaura o saldo de todas as categorias para o
-    "Valor Fixo" (orcamento_mensal) — apagando o efeito de transferências e
-    gastos acumulados no ciclo que terminou.
+    sido feito hoje, marca 'ultimo_reset' e envia o Resumo Mensal da fatura
+    que fechou. Não mexe em 'categorias' desde a PRO-83: o gasto de cada
+    fatura é calculado na hora (calculos.py), então nada precisa ser zerado.
 
     Trata o caso de meses mais curtos que o dia configurado (ex: vencimento
     dia 31 num mês com 30 dias, ou fevereiro) disparando no último dia do
     mês nesse caso.
 
-    Idempotente: usa 'ultimo_reset' pra nunca resetar duas vezes no mesmo
+    Idempotente: usa 'ultimo_reset' pra nunca enviar duas vezes no mesmo
     dia, mesmo se essa função for chamada tanto pelo job diário quanto pela
     checagem de segurança feita na subida do bot.
     """
@@ -2751,16 +2629,15 @@ async def _executar_verificacao_resets(bot, user_data_global):
     resets_feitos = 0
     for user_id, nome, dia_fechamento, ultimo_reset in usuarios:
         # Se o vencimento é dia 31 mas o mês só tem 30 dias (ou 28/29 em
-        # fevereiro), o reset acontece no último dia do mês.
+        # fevereiro), o fechamento acontece no último dia do mês.
         dia_alvo = min(dia_fechamento, ultimo_dia_mes)
 
         if dia_hoje != dia_alvo:
             continue
         if ultimo_reset == hoje_str:
-            continue  # já resetado hoje, evita duplicar
+            continue  # já feito hoje, evita duplicar
 
         cursor = conn.cursor()
-        cursor.execute('UPDATE categorias SET saldo_atual = orcamento_mensal WHERE user_id = ?', (user_id,))
         cursor.execute('UPDATE usuarios SET ultimo_reset = ? WHERE user_id = ?', (hoje_str, user_id))
         conn.commit()
         resets_feitos += 1
@@ -2772,7 +2649,7 @@ async def _executar_verificacao_resets(bot, user_data_global):
 
     conn.close()
     if resets_feitos:
-        print(f"🔄 {resets_feitos} usuário(s) tiveram os saldos resetados para os valores fixos em {hoje_str}.")
+        print(f"🔄 {resets_feitos} usuário(s) tiveram a fatura fechada (Resumo Mensal) em {hoje_str}.")
 
 async def verificar_resets_vencimento(context: ContextTypes.DEFAULT_TYPE):
     """Job diário (agendado às 00:05 de Brasília) que aciona a verificação
@@ -2842,8 +2719,8 @@ def _teclado_recorrente_diario():
 
 def _lancar_item_recorrente(conn, user_id, gr_id, ciclo):
     """
-    Lança um único gasto recorrente: debita a categoria e grava a transação
-    (mesma lógica de um "Registrar Gasto" comum). Reconfirma
+    Lança um único gasto recorrente: grava a transação na categoria (mesma
+    lógica de um "Registrar Gasto" comum). Reconfirma
     'ultimo_ciclo_cobrado' na hora de rodar (não só no momento em que
     verificar_gastos_recorrentes agendou o job), pra nunca cobrar duas vezes
     no mesmo ciclo. Devolve o corpo (HTML) da notificação, ou None se a
@@ -2863,21 +2740,19 @@ def _lancar_item_recorrente(conn, user_id, gr_id, ciclo):
 
     momento = datetime.now(FUSO_BRASILIA).strftime('%Y-%m-%d %H:%M:%S')
     cursor = conn.cursor()
-    # Mesmo lançamento de um gasto comum: o impacto em Orçamento/Gasto/Sobra
-    # sai da fonte única (calcular_status_categoria), sem cálculo próprio aqui.
+    # Mesmo lançamento de um gasto comum: o gasto da categoria e a Sobra do
+    # Mês saem da fonte única (calculos.py), sem cálculo próprio aqui.
     if not debitar_categoria(cursor, user_id, categoria_nome, valor, momento, descricao=descricao):
         print(f"⚠️ Gasto recorrente {gr_id} não lançado: categoria '{categoria_nome}' não existe mais para o usuário {user_id}.")
         return None
 
     cursor.execute('UPDATE gastos_recorrentes SET ultimo_ciclo_cobrado = ? WHERE id = ?', (ciclo, gr_id))
     conn.commit()
-    novo_saldo = calcular_sobra_categoria(conn, user_id, categoria_nome)
 
     return (
         f"Descrição: <b>{escape(descricao)}</b>\n"
         f"Categoria: <b>{escape(categoria_nome)}</b>\n"
-        f"Valor: <b>{formatar_real(valor)}</b>\n"
-        f"Resta na Categoria: <b>{formatar_real(novo_saldo)}</b>"
+        f"Valor: <b>{formatar_real(valor)}</b>"
     )
 
 async def _lancar_gastos_recorrentes_job(context: ContextTypes.DEFAULT_TYPE):
@@ -3155,29 +3030,25 @@ async def botao_clicado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == 'menu_resumo':
         user_id = query.from_user.id
         conn = obter_conexao_db()
-        user_data = conn.execute('SELECT nome, renda_mensal, dia_fechamento FROM usuarios WHERE user_id = ?', (user_id,)).fetchone()
+        user_data = conn.execute('SELECT nome, dia_fechamento FROM usuarios WHERE user_id = ?', (user_id,)).fetchone()
 
         if not user_data:
             await atualizar_callback(query, context, "Conta não configurada. Use /start", reply_markup=obter_teclado_menu())
             conn.close()
             return
 
-        nome, renda, dia_fechamento = user_data
-        categorias = conn.execute('SELECT nome FROM categorias WHERE user_id = ?', (user_id,)).fetchall()
+        nome, dia_fechamento = user_data
 
-        # Orçamento (já com transferências), Gasto e Sobra de cada categoria
-        # vêm da fonte única; o cabeçalho e os blocos (mesmo layout do
-        # histórico mensal) são montados por montar_texto_painel.
-        gastos_por_categoria = []
-        for (n,) in categorias:
-            orcamento, gasto, sobra = calcular_status_categoria(conn, user_id, n)
-            gastos_por_categoria.append((n, orcamento, sobra, gasto))
+        # Fatura vigente pela função única de resumo (a mesma do histórico, do
+        # /resumo da home e dos resumos diário e mensal): inclui as categorias
+        # excluídas que têm gasto no ciclo. Sem dia de fechamento, todo o
+        # histórico e sem Sobra.
+        ano_mes = obter_ciclo_atual(dia_fechamento) if dia_fechamento else None
+        resumo = calcular_resumo_fatura(conn, user_id, ano_mes, dia_fechamento)
 
         conn.close()
 
-        texto = montar_texto_painel(
-            f"Painel Financeiro de {nome}", renda, dia_fechamento, gastos_por_categoria
-        )
+        texto = montar_texto_painel(f"Painel Financeiro de {nome}", resumo, dia_fechamento)
 
         teclado = InlineKeyboardMarkup([
             [InlineKeyboardButton("Categorias", callback_data='menu_editar_cat')],
@@ -3249,14 +3120,15 @@ async def ver_mes_historico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
 
     conn = obter_conexao_db()
-    user_data = conn.execute('SELECT renda_mensal, dia_fechamento FROM usuarios WHERE user_id = ?', (user_id,)).fetchone()
-    if not user_data or not user_data[1]:
+    user_data = conn.execute('SELECT dia_fechamento FROM usuarios WHERE user_id = ?', (user_id,)).fetchone()
+    if not user_data or not user_data[0]:
         conn.close()
         await atualizar_callback(query, context, "Conta não configurada. Use /start", reply_markup=obter_teclado_menu())
         return
-    renda, dia_fechamento = user_data
+    dia_fechamento = user_data[0]
 
-    categorias = montar_categorias_fatura(conn, user_id, ano_mes, dia_fechamento)
+    # Sem a linha "Sobra do Mês" nas faturas anteriores à data de corte.
+    resumo = calcular_resumo_fatura(conn, user_id, ano_mes, dia_fechamento)
     conn.close()
 
     ciclo_atual = obter_ciclo_atual(dia_fechamento)
@@ -3269,7 +3141,7 @@ async def ver_mes_historico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         titulo = nome_mes if ano == ciclo_atual[:4] else f"{nome_mes} de {ano}"
 
     texto = montar_texto_painel(
-        titulo, renda, dia_fechamento, categorias,
+        titulo, resumo, dia_fechamento,
         rotulo_gastos="Gastos Atuais" if mes_atual else "Gastos do Mês"
     )
 
@@ -3359,7 +3231,6 @@ if __name__ == '__main__':
             NOME_USUARIO: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_nome)],
             RENDA_MENSAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_renda)],
             NOMES_CATEGORIAS: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_nomes_categorias)],
-            VALORES_CATEGORIAS: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_valores_categorias)],
             DIA_FECHAMENTO: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_dia_fechamento)],
         },
         fallbacks=[CommandHandler('cancelar', cancelar)],
@@ -3416,11 +3287,6 @@ if __name__ == '__main__':
         entry_points=[CallbackQueryHandler(iniciar_adicionar_categoria, pattern='^menu_add_cat$')],
         states={
             AGUARDANDO_NOME_CAT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_nome_categoria)],
-            # Retorna do estado de valor para o estado de nome da categoria.
-            AGUARDANDO_VALOR_CAT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, salvar_nova_categoria),
-                CallbackQueryHandler(voltar_nome_categoria, pattern='^voltar_nome_cat$'),
-            ],
         },
         # Manipulador para cancelar o fluxo e voltar ao menu, disponível em qualquer estado.
         fallbacks=[CallbackQueryHandler(voltar_para_menu, pattern='^voltar_menu$'), CommandHandler('cancelar', cancelar)],
@@ -3460,7 +3326,6 @@ if __name__ == '__main__':
             CallbackQueryHandler(menu_editar_categorias, pattern='^menu_editar_cat$'),
             CallbackQueryHandler(gerenciar_categoria_especifica, pattern='^edit_cat_'),
             CallbackQueryHandler(iniciar_renomear, pattern='^acao_renomear_'),
-            CallbackQueryHandler(iniciar_mudar_limite, pattern='^acao_limite_'),
             CallbackQueryHandler(iniciar_editar_dia_vencimento, pattern='^menu_editar_dia$'),
             # Telas desta conversa costumam ficar sem estado rastreado (retornam None),
             # então o botão "← Voltar" também precisa estar nos entry_points para ser
@@ -3469,14 +3334,13 @@ if __name__ == '__main__':
         ],
         states={
             EDITAR_NOME_CAT: [MessageHandler(filters.TEXT & ~filters.COMMAND, salvar_novo_nome)],
-            EDITAR_VALOR_CAT: [MessageHandler(filters.TEXT & ~filters.COMMAND, salvar_novo_limite)],
             EDITAR_DIA_VENCIMENTO: [MessageHandler(filters.TEXT & ~filters.COMMAND, salvar_novo_dia_vencimento)],
         },
         fallbacks=[
             CallbackQueryHandler(voltar_para_menu, pattern='^voltar_menu$'),
             CallbackQueryHandler(menu_editar_categorias, pattern='^menu_editar_cat$'),
-            # Retorna dos estados de renomear/mudar limite (EDITAR_NOME_CAT,
-            # EDITAR_VALOR_CAT) para o detalhe da categoria (edit_cat_<id>).
+            # Retorna do estado de renomear (EDITAR_NOME_CAT) para o detalhe
+            # da categoria (edit_cat_<id>).
             CallbackQueryHandler(gerenciar_categoria_especifica, pattern='^edit_cat_'),
             CommandHandler('cancelar', cancelar)
         ],

@@ -24,7 +24,8 @@ Rotas:
 
 - `GET /saude`: sem autenticação.
 - `GET /me`: nome do usuário (exige `Authorization: tma <initData>`).
-- `GET /resumo`: fatura vigente (gasto, sobra do mês e categorias; exige o mesmo cabeçalho).
+- `GET /resumo`: fatura vigente (renda, gasto total, Sobra do Mês = renda − gasto, ou `null`
+  antes da data de corte, e o gasto de cada categoria; exige o mesmo cabeçalho).
 - `GET /historico`: gasto total de cada mês com movimento, com os futuros marcados
   como `previsto` (exige o mesmo cabeçalho).
 - `GET /gastos/recentes`: os 10 últimos gastos com descrição (os registrados a partir da PRO-78),

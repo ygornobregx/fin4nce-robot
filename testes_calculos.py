@@ -5,26 +5,30 @@ Turso, não precisa de .env nem de internet). Usa as funções do `calculos.py`
 quando ele existe; antes da extração, lê as mesmas funções direto do código
 do `bot.py` (sem importá-lo, para não abrir conexão nem criar o cliente da IA).
 
-A saída é determinística (o "agora" é congelado em 17/10/2026 12:00 BRT), então
-dá para comparar a execução de antes e de depois linha a linha.
+A saída é determinística (o "agora" é congelado em 17/10/2026 12:00 BRT e a
+data de corte da Sobra em 28/09/2026, início da fatura 2026-10 com fechamento
+dia 28), então dá para comparar a execução de antes e de depois linha a linha.
 """
 import ast
 import calendar
 import os
 import sqlite3
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 FUSO_BRASILIA = ZoneInfo("America/Sao_Paulo")
 AGORA_FIXO = datetime(2026, 10, 17, 12, 0, tzinfo=FUSO_BRASILIA)
+# Data de corte da Sobra fixada no teste (como o "agora"): a fatura 2026-10
+# (fechamento 28) e as seguintes têm Sobra do Mês.
+DATA_CORTE_FIXA = date(2026, 9, 28)
 NOMES_MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
                'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
 
 # Nomes lidos do bot.py quando o calculos.py ainda não existe (baseline).
 NOMES_DO_BOT = {
     '_somar_meses', 'calcular_ciclo_fatura', '_intervalo_fatura', '_parametros_itens_gasto',
-    'calcular_gasto_fatura', 'calcular_status_categoria', 'calcular_sobra_categoria',
+    'calcular_gasto_fatura', 'calcular_gasto_categoria',
     '_SQL_PARCELAS_EXPANDIDAS', '_SQL_ITENS_GASTO', '_SQL_FATURA_TRANSACAO',
     'obter_ciclo_atual', 'obter_intervalo_ciclo', 'mes_fechado',
     'buscar_meses_com_parcelas', 'buscar_meses_com_movimento',
@@ -49,6 +53,7 @@ def carregar_funcoes():
         calculos = None
     if calculos is not None:
         calculos.datetime = _DatetimeCongelado
+        calculos.DATA_CORTE_SOBRA = DATA_CORTE_FIXA
         return 'calculos.py', vars(calculos)
 
     with open(os.path.join(raiz, 'bot.py'), encoding='utf-8') as f:
@@ -149,17 +154,20 @@ def c5(conn):  # Tudo junto + transferência de 50 (Lazer -> Mercado)
     c1(conn); c2(conn); c3(conn); c4(conn)
     transferencia(conn, 'Lazer', 'Mercado', 50.0, '2026-10-15 09:00:00')
 
-def c6(conn):  # Estouro (parcela 2 de 3.000 em 3x)
+def c6(conn):  # Gasto alto (parcela 2 de 3.000 em 3x)
     parcelamento(conn, 'Mercado', 3000.0, 3, '2026-09-10 12:00:00', '2026-09')
 
 
+# (rótulo, montagem, gasto do Mercado na fatura 2026-10, Sobra do Mês com renda
+# 5.000). Sobra = renda − gasto da fatura; a receita de −30 do base_mercado não
+# entra, e a transferência do cenário 5 não muda nada.
 CENARIOS = [
-    ('1. Compra 3x de 300 no ciclo atual', c1, (200.0, 830.0)),
-    ('2. Parcela 2 de compra antiga (600 em 3x)', c2, (300.0, 730.0)),
-    ('3. "Banco Adiou" (400 em 2x)', c3, (100.0, 930.0)),
-    ('4. Parcelamento inativo', c4, (100.0, 930.0)),
-    ('5. Tudo junto + transferência de 50', c5, (400.0, 680.0)),
-    ('6. Estouro (parcela 2 de 3.000 em 3x)', c6, (1100.0, -70.0)),
+    ('1. Compra 3x de 300 no ciclo atual', c1, 200.0, 4800.0),
+    ('2. Parcela 2 de compra antiga (600 em 3x)', c2, 300.0, 4700.0),
+    ('3. "Banco Adiou" (400 em 2x)', c3, 100.0, 4900.0),
+    ('4. Parcelamento inativo', c4, 100.0, 4900.0),
+    ('5. Tudo junto + transferência de 50', c5, 400.0, 4600.0),
+    ('6. Gasto alto (parcela 2 de 3.000 em 3x)', c6, 1100.0, 3900.0),
 ]
 
 saida = []
@@ -186,31 +194,39 @@ def nome_mes_resumo(dados):
     return (mes,) + tuple(dados[1:])
 
 
-def resumo_mensal(conn, dia_fechamento, agora):
+def resumo_mensal(conn, dia_fechamento, agora, **kwargs):
     if 'calcular_dados_resumo_mensal' in F:
-        return nome_mes_resumo(F['calcular_dados_resumo_mensal'](conn, UID, dia_fechamento, agora))
+        return nome_mes_resumo(F['calcular_dados_resumo_mensal'](conn, UID, dia_fechamento, agora, **kwargs))
     return nome_mes_resumo(F['_calcular_dados_resumo_mensal'](conn, UID, dia_fechamento, agora))
 
 
+def resumo_fatura(conn, ano_mes, dia_fechamento=28, **kwargs):
+    """(renda, total_gasto, sobra_mes) de calcular_resumo_fatura."""
+    r = F['calcular_resumo_fatura'](conn, UID, ano_mes, dia_fechamento, **kwargs)
+    return (r.renda, r.total_gasto, r.sobra_mes)
+
+
+FIM_DA_FATURA = datetime(2026, 10, 28, 0, 5, tzinfo=FUSO_BRASILIA)
+
 # --- Cenários de Gasto / Sobra (ciclo 2026-10, fechamento 28) ---
 saida.append("== Cenários Mercado (Gasto / Sobra) ==")
-for rotulo, montar, esperado in CENARIOS:
+for rotulo, montar, gasto_esperado, sobra_esperada in CENARIOS:
     conn = base_mercado()
     montar(conn)
-    orcamento, gasto, sobra = F['calcular_status_categoria'](conn, UID, 'Mercado', CICLO)
-    conferir(rotulo, (round(gasto, 2), round(sobra, 2)), esperado)
-    mostrar("   status (orçamento, gasto, sobra)", (orcamento, gasto, sobra))
-    mostrar("   status sem ano_mes (ciclo vigente)", F['calcular_status_categoria'](conn, UID, 'Mercado'))
-    mostrar("   sobra_categoria", F['calcular_sobra_categoria'](conn, UID, 'Mercado'))
+    gasto = F['calcular_gasto_categoria'](conn, UID, 'Mercado', CICLO)
+    conferir(rotulo, round(gasto, 2), gasto_esperado)
+    mostrar("   gasto_categoria sem ano_mes (ciclo vigente)", F['calcular_gasto_categoria'](conn, UID, 'Mercado'))
     mostrar("   gasto_fatura 2026-10", sorted(F['calcular_gasto_fatura'](conn, UID, CICLO, 28).items()))
     mostrar("   gasto_fatura 2026-11", sorted(F['calcular_gasto_fatura'](conn, UID, '2026-11', 28).items()))
     cats = F['montar_categorias_fatura'](conn, UID, CICLO, 28)
     mostrar("   categorias_fatura", cats)
-    mostrar("   totais_mes (renda 5000)", F['calcular_totais_mes'](5000.0, cats))
+    conferir("   totais_mes (renda 5000)", F['calcular_totais_mes'](5000.0, cats), (gasto_esperado, sobra_esperada))
+    conferir("   resumo_fatura 2026-10 (renda, gasto, sobra)", resumo_fatura(conn, CICLO),
+             (5000.0, gasto_esperado, sobra_esperada))
     mostrar("   meses_com_parcelas", F['buscar_meses_com_parcelas'](conn, UID))
     mostrar("   meses_com_movimento", F['buscar_meses_com_movimento'](conn, UID, 28))
-    mostrar("   resumo_mensal (agora 28/10 00:05)",
-            resumo_mensal(conn, 28, datetime(2026, 10, 28, 0, 5, tzinfo=FUSO_BRASILIA)))
+    conferir("   resumo_mensal (agora 28/10 00:05)", resumo_mensal(conn, 28, FIM_DA_FATURA),
+             ('Outubro', [('Mercado', gasto_esperado)], 5000.0, gasto_esperado, sobra_esperada))
     conn.close()
 
 # --- Fechamento dia 31 em mês curto ---
@@ -230,8 +246,8 @@ conn = novo_banco(dia_fechamento=31)
 categoria(conn, 'Mercado', 1000.0)
 transacao(conn, 'Mercado', 70.0, '2026-04-29 23:00:00')
 transacao(conn, 'Mercado', 40.0, '2026-04-30 08:00:00')
-conferir("gasto fatura 2026-04 (dia 31)", F['calcular_status_categoria'](conn, UID, 'Mercado', '2026-04')[1], 70.0)
-conferir("gasto fatura 2026-05 (dia 31)", F['calcular_status_categoria'](conn, UID, 'Mercado', '2026-05')[1], 40.0)
+conferir("gasto fatura 2026-04 (dia 31)", F['calcular_gasto_categoria'](conn, UID, 'Mercado', '2026-04'), 70.0)
+conferir("gasto fatura 2026-05 (dia 31)", F['calcular_gasto_categoria'](conn, UID, 'Mercado', '2026-05'), 40.0)
 mostrar("meses_com_movimento (dia 31)", F['buscar_meses_com_movimento'](conn, UID, 31))
 conn.close()
 
@@ -252,9 +268,9 @@ categoria(conn, 'Mercado', 1000.0)
 transacao(conn, 'Mercado', 60.0, '2026-10-27 23:59:00')
 transacao(conn, 'Mercado', 25.0, '2026-10-28 00:01:00')
 transacao(conn, 'Mercado', 15.0, '2026-09-27 18:00:00')
-conferir("gasto fatura 2026-09", F['calcular_status_categoria'](conn, UID, 'Mercado', '2026-09')[1], 15.0)
-conferir("gasto fatura 2026-10", F['calcular_status_categoria'](conn, UID, 'Mercado', '2026-10')[1], 60.0)
-conferir("gasto fatura 2026-11", F['calcular_status_categoria'](conn, UID, 'Mercado', '2026-11')[1], 25.0)
+conferir("gasto fatura 2026-09", F['calcular_gasto_categoria'](conn, UID, 'Mercado', '2026-09'), 15.0)
+conferir("gasto fatura 2026-10", F['calcular_gasto_categoria'](conn, UID, 'Mercado', '2026-10'), 60.0)
+conferir("gasto fatura 2026-11", F['calcular_gasto_categoria'](conn, UID, 'Mercado', '2026-11'), 25.0)
 mostrar("meses_com_movimento", F['buscar_meses_com_movimento'](conn, UID, 28))
 conn.close()
 
@@ -277,9 +293,10 @@ conferir("categorias em 2026-10", nomes_out, ['Mercado', 'Lazer', 'Antiga'])
 conferir("categorias em 2026-11", nomes_nov, ['Mercado', 'Lazer', 'Viagem'])
 cats = F['montar_categorias_fatura'](conn, UID, '2026-10', 28)
 mostrar("categorias_fatura 2026-10", cats)
-mostrar("totais_mes 2026-10 (renda 5000)", F['calcular_totais_mes'](5000.0, cats))
-mostrar("status categoria inexistente", F['calcular_status_categoria'](conn, UID, 'Nada', '2026-10'))
-mostrar("sobra categoria inexistente", F['calcular_sobra_categoria'](conn, UID, 'Nada'))
+# Mercado 100 + Lazer 0 + Antiga 45 = 145; Sobra = 5.000 - 145 (o -30 não entra).
+conferir("totais_mes 2026-10 (renda 5000)", F['calcular_totais_mes'](5000.0, cats), (145.0, 4855.0))
+conferir("resumo_fatura 2026-10 (renda, gasto, sobra)", resumo_fatura(conn, '2026-10'), (5000.0, 145.0, 4855.0))
+mostrar("gasto categoria inexistente", F['calcular_gasto_categoria'](conn, UID, 'Nada', '2026-10'))
 conn.close()
 
 # --- Usuário sem dia de fechamento (todo o histórico) ---
@@ -289,8 +306,65 @@ conn = novo_banco(dia_fechamento=None)
 categoria(conn, 'Mercado', 1000.0)
 transacao(conn, 'Mercado', 100.0, '2025-01-05 10:00:00')
 transacao(conn, 'Mercado', 50.0, '2026-10-05 10:00:00')
-mostrar("status sem fechamento", F['calcular_status_categoria'](conn, UID, 'Mercado'))
-mostrar("status sem fechamento, ano_mes 2026-10", F['calcular_status_categoria'](conn, UID, 'Mercado', '2026-10'))
+mostrar("gasto sem fechamento", F['calcular_gasto_categoria'](conn, UID, 'Mercado'))
+mostrar("gasto sem fechamento, ano_mes 2026-10", F['calcular_gasto_categoria'](conn, UID, 'Mercado', '2026-10'))
+# Sem fechamento não há fatura: todo o histórico e nenhuma Sobra.
+mostrar("resumo_fatura sem fechamento (renda, gasto, sobra)", resumo_fatura(conn, None, dia_fechamento=None))
+conn.close()
+
+# --- Sobra do Mês: casos de borda (fatura 2026-10, fechamento 28) ---
+saida.append("")
+saida.append("== Sobra do Mês (casos de borda) ==")
+conn = novo_banco()
+categoria(conn, 'Mercado', 1000.0)
+transacao(conn, 'Removida', -40.0, '2026-10-03 10:00:00')  # reembolso em categoria excluída, sem gasto
+conferir("reembolso de 40 em categoria excluída, sem gasto", resumo_fatura(conn, '2026-10'), (5000.0, 0.0, 5000.0))
+mostrar("categorias_fatura com reembolso", F['montar_categorias_fatura'](conn, UID, '2026-10', 28))
+conn.close()
+conn = novo_banco(renda=300.0)
+categoria(conn, 'Mercado', 1000.0)
+transacao(conn, 'Mercado', 450.0, '2026-10-05 10:00:00')
+conferir("renda 300, gasto 450", resumo_fatura(conn, '2026-10'), (300.0, 450.0, -150.0))
+conn.close()
+conn = novo_banco(renda=None)
+categoria(conn, 'Mercado', 1000.0)
+transacao(conn, 'Mercado', 100.0, '2026-10-05 10:00:00')
+conferir("renda nula, gasto 100", resumo_fatura(conn, '2026-10'), (0.0, 100.0, -100.0))
+conferir("renda nula, resumo_mensal (agora 28/10 00:05)", resumo_mensal(conn, 28, FIM_DA_FATURA),
+         ('Outubro', [('Mercado', 100.0)], 0.0, 100.0, -100.0))
+conferir("renda nula, totais_mes", F['calcular_totais_mes'](None, [('Mercado', 100.0)]), (100.0, -100.0))
+conn.close()
+
+# --- Data de corte da Sobra (a fatura vigente na data de corte e as seguintes) ---
+saida.append("")
+saida.append("== Data de corte da Sobra ==")
+tem_sobra = F['fatura_tem_sobra']
+CASOS_CORTE = [
+    # (data de corte, dia de fechamento, última fatura sem Sobra, primeira com Sobra)
+    (date(2026, 11, 10), 28, '2026-10', '2026-11'),
+    (date(2026, 11, 10), 5, '2026-11', '2026-12'),
+    (date(2026, 10, 28), 28, '2026-10', '2026-11'),
+    (date(2026, 10, 27), 28, '2026-09', '2026-10'),
+    (date(2026, 4, 30), 31, '2026-04', '2026-05'),
+]
+for corte, dia, sem, com in CASOS_CORTE:
+    rotulo = f"corte {corte:%d/%m/%Y}, fechamento {dia}"
+    conferir(f"{rotulo}: {sem} tem Sobra", tem_sobra(sem, dia, corte), False)
+    conferir(f"{rotulo}: {com} tem Sobra", tem_sobra(com, dia, corte), True)
+    conferir(f"{rotulo}: fatura seguinte tem Sobra", tem_sobra(F['_somar_meses'](com, 1), dia, corte), True)
+conferir("sem data_corte usa a constante (fixada em 28/09/2026): 2026-09", tem_sobra('2026-09', 28), False)
+conferir("sem data_corte usa a constante (fixada em 28/09/2026): 2026-10", tem_sobra('2026-10', 28), True)
+conn = base_mercado()
+c1(conn)
+cats = F['montar_categorias_fatura'](conn, UID, CICLO, 28)
+conferir("fatura antes do corte: totais_mes", F['calcular_totais_mes'](5000.0, cats, tem_sobra=False), (200.0, None))
+conferir("fatura antes do corte: resumo_fatura (corte 10/11/2026)",
+         resumo_fatura(conn, CICLO, data_corte=date(2026, 11, 10)), (5000.0, 200.0, None))
+conferir("fatura do corte: resumo_fatura (corte 10/11/2026), 2026-11",
+         resumo_fatura(conn, '2026-11', data_corte=date(2026, 11, 10)), (5000.0, 100.0, 4900.0))
+conferir("fatura antes do corte: resumo_mensal (corte 10/11/2026)",
+         resumo_mensal(conn, 28, FIM_DA_FATURA, data_corte=date(2026, 11, 10)),
+         ('Outubro', [('Mercado', 200.0)], 5000.0, 200.0, None))
 conn.close()
 
 print(f"Origem das funções: {ORIGEM}")

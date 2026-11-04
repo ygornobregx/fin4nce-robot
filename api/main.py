@@ -1,8 +1,9 @@
 """API local do Mini App: autentica pelo initData do Telegram (PRO-72) e expõe
-as rotas de leitura /me, /resumo e /historico (PRO-76) e /gastos/recentes
-(PRO-79, com o estabelecimento do gasto desde a PRO-81) e /gastos/{id} (PRO-80,
-detalhe de um gasto, com as parcelas pagas). Os números e a consulta vêm todos
-do calculos.py; as rotas só buscam os dados e montam o JSON.
+as rotas de leitura /me, /resumo e /historico (PRO-76; /resumo sem orçamento
+por categoria desde a PRO-83) e /gastos/recentes (PRO-79, com o
+estabelecimento do gasto desde a PRO-81) e /gastos/{id} (PRO-80, detalhe de um
+gasto, com as parcelas pagas). Os números e a consulta vêm todos do
+calculos.py; as rotas só buscam os dados e montam o JSON.
 
 Também serve, na mesma origem, a home do Mini App em /app (mini-apps/home, PRO-77)
 e a página de diagnóstico das rotas em /teste (mini-apps/teste-initdata).
@@ -26,9 +27,8 @@ from calculos import (
     buscar_gasto,
     buscar_gastos_recentes,
     calcular_parcelas_pagas,
+    calcular_resumo_fatura,
     calcular_serie_gastos_mensais,
-    calcular_totais_mes,
-    montar_categorias_fatura,
     obter_ciclo_atual,
 )
 
@@ -130,26 +130,20 @@ def carregar_cadastro(conn, user_id: int) -> tuple:
 def resumo(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db),
            agora: datetime = Depends(obter_agora)):
     user_id = usuario["id"]
-    _, renda, dia_fechamento = carregar_cadastro(conn, user_id)
-    renda = renda or 0.0
+    _, _, dia_fechamento = carregar_cadastro(conn, user_id)
     ano_mes = obter_ciclo_atual(dia_fechamento, agora)
-    categorias = montar_categorias_fatura(conn, user_id, ano_mes, dia_fechamento)
-    comprometido, total_gasto, sobra_mes = calcular_totais_mes(renda, categorias)
+    # Mesma função do "Ver Resumo" do bot. sobra_mes é None (null no JSON)
+    # quando a fatura vigente é anterior à data de corte da Sobra.
+    resumo_fatura = calcular_resumo_fatura(conn, user_id, ano_mes, dia_fechamento)
     return {
         "ano_mes": ano_mes,
         "dia_fechamento": dia_fechamento,
-        "renda": em_reais(renda),
-        "comprometido": em_reais(comprometido),
-        "total_gasto": em_reais(total_gasto),
-        "sobra_mes": em_reais(sobra_mes),
+        "renda": em_reais(resumo_fatura.renda),
+        "total_gasto": em_reais(resumo_fatura.total_gasto),
+        "sobra_mes": None if resumo_fatura.sobra_mes is None else em_reais(resumo_fatura.sobra_mes),
         "categorias": [
-            {
-                "nome": nome,
-                "orcamento": None if orcamento is None else em_reais(orcamento),
-                "gasto": em_reais(gasto),
-                "sobra": None if sobra is None else em_reais(sobra),
-            }
-            for nome, orcamento, sobra, gasto in categorias
+            {"nome": nome, "gasto": em_reais(gasto)}
+            for nome, gasto in resumo_fatura.categorias
         ],
     }
 

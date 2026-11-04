@@ -5,23 +5,28 @@ GET /gastos/{id} com o cálculo das parcelas pagas (PRO-80).
 Roda com `python testes_rotas_leitura.py`. Não usa .env nem rede: o token é
 falso, o banco é um SQLite em memória e o "agora" da API é fixo (17/10/2026
 12:00 BRT), por isso a fatura vigente é 2026-10 (28/09 a 27/10, fechamento
-dia 28). Os valores esperados estão escritos à mão, com a conta ao lado.
+dia 28). A data de corte da Sobra (PRO-83) é fixada em 28/09/2026, para a
+fatura 2026-10 ter Sobra, salvo nos testes que dizem outra data. Os valores
+esperados estão escritos à mão, com a conta ao lado.
 """
 import sqlite3
 import time
 import unittest
-from datetime import datetime
+from datetime import date, datetime
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
+import calculos
 from api.main import Config, app, obter_agora, obter_config, obter_conexao_db
-from calculos import (FUSO_BRASILIA, _meses_entre, calcular_parcelas_pagas, calcular_totais_mes,
-                      montar_categorias_fatura)
+from calculos import FUSO_BRASILIA, _meses_entre, calcular_parcelas_pagas, calcular_resumo_fatura
 from testes_initdata import TOKEN_FALSO, USER_ID, montar_init_data
 
 AGORA_FIXO = datetime(2026, 10, 17, 12, 0, tzinfo=FUSO_BRASILIA)
 DIA_FECHAMENTO = 28
 RENDA = 5000.0
+# Início da fatura 2026-10 (fechamento 28): a fatura vigente tem Sobra.
+DATA_CORTE_TESTE = date(2026, 9, 28)
 
 ESQUEMA = '''
     CREATE TABLE usuarios (user_id INTEGER PRIMARY KEY, nome TEXT, renda_mensal REAL,
@@ -113,16 +118,25 @@ def banco_completo():
 
 class TesteRotasBase(unittest.TestCase):
     conn = None
+    corte = None
 
-    def iniciar(self, conn):
+    def iniciar(self, conn, data_corte=DATA_CORTE_TESTE):
         self.conn = conn
         app.dependency_overrides[obter_config] = lambda: Config(TOKEN_FALSO, "libsql://falso", "falso")
         app.dependency_overrides[obter_conexao_db] = lambda: self.conn
         app.dependency_overrides[obter_agora] = lambda: AGORA_FIXO
+        # A data de corte é uma constante do calculos.py: fixada aqui, como o "agora".
+        if self.corte is not None:
+            self.corte.stop()
+        self.corte = mock.patch.object(calculos, "DATA_CORTE_SOBRA", data_corte)
+        self.corte.start()
         self.client = TestClient(app)
 
     def tearDown(self):
         app.dependency_overrides.clear()
+        if self.corte is not None:
+            self.corte.stop()
+            self.corte = None
         if self.conn is not None:
             self.conn.close()
 
@@ -174,29 +188,26 @@ class TestResumo(TesteRotasBase):
         self.iniciar(banco_completo())
         resposta = self.obter("/resumo")
         self.assertEqual(resposta.status_code, 200)
-        # Mercado: orçamento 1.000 + 200 recebidos = 1.200; gasto 100 + 250 avulsos
-        #   + 100 da parcela 1 (a transação dela não conta de novo) = 450;
-        #   sobra 1.200 - 450 + 30 de receita = 780.
-        # Lazer: orçamento 500 - 200 enviados = 300; gasto 80 + 20 (28/09) = 100;
-        #   sobra 300 - 100 = 200. O gasto de 70 em 27/09 é da fatura 2026-09.
-        # Antiga (excluída, com gasto 60): só o gasto, orçamento e sobra nulos.
-        # Total gasto 450 + 100 + 60 = 610; comprometido 1.200 + 300 = 1.500;
-        # sem estouro, sobra do mês = 5.000 - 1.500 = 3.500.
+        # Mercado: gasto 100 + 250 avulsos + 100 da parcela 1 (a transação dela
+        #   não conta de novo) = 450. A receita de -30 não entra.
+        # Lazer: gasto 80 + 20 (28/09) = 100. O gasto de 70 em 27/09 é da fatura 2026-09.
+        # Antiga (excluída, com gasto 60): entra com o gasto.
+        # A transferência antiga de 200 não muda nada.
+        # Total gasto 450 + 100 + 60 = 610; sobra do mês = 5.000 - 610 = 4.390.
         self.assertEqual(resposta.json(), {
             "ano_mes": "2026-10",
             "dia_fechamento": 28,
             "renda": 5000.0,
-            "comprometido": 1500.0,
             "total_gasto": 610.0,
-            "sobra_mes": 3500.0,
+            "sobra_mes": 4390.0,
             "categorias": [
-                {"nome": "Mercado", "orcamento": 1200.0, "gasto": 450.0, "sobra": 780.0},
-                {"nome": "Lazer", "orcamento": 300.0, "gasto": 100.0, "sobra": 200.0},
-                {"nome": "Antiga", "orcamento": None, "gasto": 60.0, "sobra": None},
+                {"nome": "Mercado", "gasto": 450.0},
+                {"nome": "Lazer", "gasto": 100.0},
+                {"nome": "Antiga", "gasto": 60.0},
             ],
         })
 
-    def test_resumo_com_estouro_abate_a_sobra_do_mes(self):
+    def test_resumo_sobra_desconta_o_gasto_real(self):
         conn = novo_banco(renda=3000.0)
         categoria(conn, "Mercado", 500.0)
         categoria(conn, "Lazer", 200.0)
@@ -206,20 +217,71 @@ class TestResumo(TesteRotasBase):
         self.iniciar(conn)
         resposta = self.obter("/resumo")
         self.assertEqual(resposta.status_code, 200)
-        # Lazer estourou: 350 - 200 = 150 de excedente. Comprometido 500 + 200 = 700;
-        # total gasto 100 + 350 = 450; sobra do mês = (3.000 - 700) - 150 = 2.150.
+        # Os limites antigos gravados (500 e 200) não contam: total gasto
+        # 100 + 350 = 450; sobra do mês = 3.000 - 450 = 2.550.
         self.assertEqual(resposta.json(), {
             "ano_mes": "2026-10",
             "dia_fechamento": 28,
             "renda": 3000.0,
-            "comprometido": 700.0,
             "total_gasto": 450.0,
-            "sobra_mes": 2150.0,
+            "sobra_mes": 2550.0,
             "categorias": [
-                {"nome": "Mercado", "orcamento": 500.0, "gasto": 100.0, "sobra": 400.0},
-                {"nome": "Lazer", "orcamento": 200.0, "gasto": 350.0, "sobra": -150.0},
+                {"nome": "Mercado", "gasto": 100.0},
+                {"nome": "Lazer", "gasto": 350.0},
             ],
         })
+
+    def test_resumo_gasto_maior_que_a_renda_da_sobra_negativa(self):
+        conn = novo_banco(renda=300.0)
+        categoria(conn, "Mercado", 0.0)
+        transacao(conn, "Mercado", 450.0, "2026-10-05 10:00:00")
+        conn.commit()
+        self.iniciar(conn)
+        corpo = self.obter("/resumo").json()
+        # 300 - 450 = -150.
+        self.assertEqual(corpo["total_gasto"], 450.0)
+        self.assertEqual(corpo["sobra_mes"], -150.0)
+        self.assertIsInstance(corpo["sobra_mes"], float)
+
+    def test_reembolso_antigo_nao_muda_a_sobra(self):
+        conn = novo_banco()
+        categoria(conn, "Mercado", 1000.0)
+        transacao(conn, "Mercado", 200.0, "2026-10-05 10:00:00")
+        transacao(conn, "Mercado", -80.0, "2026-10-06 10:00:00")
+        transacao(conn, "Removida", -40.0, "2026-10-07 10:00:00")
+        conn.commit()
+        self.iniciar(conn)
+        corpo = self.obter("/resumo").json()
+        # As transações negativas antigas (reembolsos) não entram em nada:
+        # gasto 200, sobra 5.000 - 200 = 4.800, e "Removida" (só reembolso)
+        # não aparece nas categorias.
+        self.assertEqual(corpo["total_gasto"], 200.0)
+        self.assertEqual(corpo["sobra_mes"], 4800.0)
+        self.assertEqual(corpo["categorias"], [{"nome": "Mercado", "gasto": 200.0}])
+
+    def test_resumo_antes_do_corte_sobra_nula(self):
+        # Corte em 10/11/2026: com fechamento 28, a primeira fatura com Sobra é
+        # 2026-11; a vigente (2026-10) é anterior, então sobra_mes vem null.
+        self.iniciar(banco_completo(), data_corte=date(2026, 11, 10))
+        resposta = self.obter("/resumo")
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.json(), {
+            "ano_mes": "2026-10",
+            "dia_fechamento": 28,
+            "renda": 5000.0,
+            "total_gasto": 610.0,
+            "sobra_mes": None,
+            "categorias": [
+                {"nome": "Mercado", "gasto": 450.0},
+                {"nome": "Lazer", "gasto": 100.0},
+                {"nome": "Antiga", "gasto": 60.0},
+            ],
+        })
+
+    def test_resumo_no_dia_do_corte_tem_sobra(self):
+        # Corte no próprio dia 17/10/2026 ("agora" do teste): a fatura vigente tem Sobra.
+        self.iniciar(banco_completo(), data_corte=date(2026, 10, 17))
+        self.assertEqual(self.obter("/resumo").json()["sobra_mes"], 4390.0)
 
     def test_resumo_sem_gastos_tem_categorias_zeradas(self):
         conn = novo_banco()
@@ -229,22 +291,23 @@ class TestResumo(TesteRotasBase):
         self.iniciar(conn)
         resposta = self.obter("/resumo")
         self.assertEqual(resposta.status_code, 200)
-        # Sem gasto: gasto 0, sobra = orçamento; sobra do mês = 5.000 - 1.500.
+        # Sem gasto: gasto 0 em cada categoria; sobra do mês = 5.000 - 0.
         corpo = resposta.json()
         self.assertEqual(corpo, {
             "ano_mes": "2026-10",
             "dia_fechamento": 28,
             "renda": 5000.0,
-            "comprometido": 1500.0,
             "total_gasto": 0.0,
-            "sobra_mes": 3500.0,
+            "sobra_mes": 5000.0,
             "categorias": [
-                {"nome": "Mercado", "orcamento": 1000.0, "gasto": 0.0, "sobra": 1000.0},
-                {"nome": "Lazer", "orcamento": 500.0, "gasto": 0.0, "sobra": 500.0},
+                {"nome": "Mercado", "gasto": 0.0},
+                {"nome": "Lazer", "gasto": 0.0},
             ],
         })
-        for campo in ("renda", "comprometido", "total_gasto", "sobra_mes"):
+        for campo in ("renda", "total_gasto", "sobra_mes"):
             self.assertIsInstance(corpo[campo], float, campo)
+        for cat in corpo["categorias"]:
+            self.assertIsInstance(cat["gasto"], float, cat["nome"])
 
     def test_resumo_renda_nula_vira_zero_e_sem_categorias(self):
         self.iniciar(novo_banco(renda=None))
@@ -255,12 +318,11 @@ class TestResumo(TesteRotasBase):
             "ano_mes": "2026-10",
             "dia_fechamento": 28,
             "renda": 0.0,
-            "comprometido": 0.0,
             "total_gasto": 0.0,
             "sobra_mes": 0.0,
             "categorias": [],
         })
-        for campo in ("renda", "comprometido", "total_gasto", "sobra_mes"):
+        for campo in ("renda", "total_gasto", "sobra_mes"):
             self.assertIsInstance(corpo[campo], float, campo)
 
     def test_resumo_arredonda_a_duas_casas(self):
@@ -270,10 +332,11 @@ class TestResumo(TesteRotasBase):
         transacao(conn, "Mercado", 0.114, "2026-10-06 10:00:00")
         conn.commit()
         self.iniciar(conn)
-        categoria_mercado = self.obter("/resumo").json()["categorias"][0]
-        # Gasto bruto 10,119 -> 10,12; sobra bruta 89,881 -> 89,88.
-        self.assertEqual(categoria_mercado["gasto"], 10.12)
-        self.assertEqual(categoria_mercado["sobra"], 89.88)
+        corpo = self.obter("/resumo").json()
+        # Gasto bruto 10,119 -> 10,12; sobra do mês bruta 5.000 - 10,119 = 4.989,881 -> 4.989,88.
+        self.assertEqual(corpo["categorias"][0]["gasto"], 10.12)
+        self.assertEqual(corpo["total_gasto"], 10.12)
+        self.assertEqual(corpo["sobra_mes"], 4989.88)
 
 
 class TestHistorico(TesteRotasBase):
@@ -310,16 +373,27 @@ class TestHistorico(TesteRotasBase):
         self.assertIsInstance(corpo["meses"][0]["total_gasto"], float)
 
     def test_total_de_cada_mes_igual_ao_do_painel(self):
-        """O total por mês (uma consulta por mês) bate com o de
-        calcular_totais_mes(renda, montar_categorias_fatura(...))[1]."""
+        """O total por mês (uma consulta por mês) bate com o total_gasto da
+        função única de resumo (calcular_resumo_fatura), usada pelo painel."""
         conn = banco_completo()
         self.iniciar(conn)
         meses = self.obter("/historico").json()["meses"]
         self.assertEqual(len(meses), 5)
         for mes in meses:
-            categorias = montar_categorias_fatura(conn, USER_ID, mes["ano_mes"], DIA_FECHAMENTO)
-            total_painel = calcular_totais_mes(RENDA, categorias)[1]
+            total_painel = calcular_resumo_fatura(conn, USER_ID, mes["ano_mes"], DIA_FECHAMENTO).total_gasto
             self.assertEqual(mes["total_gasto"], round(total_painel, 2), mes["ano_mes"])
+
+    def test_sobra_de_cada_mes_pela_data_de_corte(self):
+        """banco_completo com o corte do teste (28/09/2026): as faturas antes de
+        2026-10 ficam sem Sobra (só o gasto); 2026-10 e as previstas têm Sobra."""
+        conn = banco_completo()
+        self.iniciar(conn)
+        esperado = {"2026-06": (25.5, None), "2026-09": (110.0, None), "2026-10": (610.0, 4390.0),
+                    "2026-11": (100.0, 4900.0), "2026-12": (100.0, 4900.0)}
+        for ano_mes, (gasto, sobra) in esperado.items():
+            resumo = calcular_resumo_fatura(conn, USER_ID, ano_mes, DIA_FECHAMENTO)
+            self.assertEqual(round(resumo.total_gasto, 2), gasto, ano_mes)
+            self.assertEqual(None if resumo.sobra_mes is None else round(resumo.sobra_mes, 2), sobra, ano_mes)
 
     def test_total_do_mes_atual_igual_ao_do_resumo(self):
         self.iniciar(banco_completo())
