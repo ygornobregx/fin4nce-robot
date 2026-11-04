@@ -1,7 +1,7 @@
 # Como rodar a API local do Mini App (PRO-72)
 
 Antes de tudo: o `.env` local deve apontar para o **bot de teste** (`TOKEN`) e para o
-banco **`fin4nce-teste`** (`TURSO_DATABASE_URL` e `TURSO_AUTH_TOKEN`). Nunca use os
+banco **`fin4ncetest`** (`TURSO_DATABASE_URL` e `TURSO_AUTH_TOKEN`). Nunca use os
 valores de produção. Não copie esses valores para lugar nenhum.
 
 ## 1. Instalar as dependências

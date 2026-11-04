@@ -8,7 +8,7 @@
 
 3. Sinais: despesas = valores POSITIVOS no banco. Receitas = valores NEGATIVOS.
 
-4. Cálculos centralizados: orçamento, gasto, sobra e ciclo de fatura ficam em `calculos.py`. O bot e a API usam essas funções; nunca duplicar essa lógica em outro lugar.
+4. Cálculos centralizados: gasto, receitas, Sobra do Mês e ciclo de fatura ficam em `calculos.py`. O bot e a API usam essas funções; nunca duplicar essa lógica em outro lugar.
 
 ## DIRETRIZES POR ÁREA
 
@@ -157,7 +157,7 @@ Conceitos Academicos/ (Novos Conhecimentos/, Estudos Feitos/)
 
 ## PASSO 4: FECHAMENTO E HISTÓRICO VISUAL (ALINHADO COM O HOOK)
 
-* Divisão dos testes: os testes de código (unitários, de regressão e afins) são sempre rodados por você ou pelo Sonnet, e você registra só o resultado. O Ygor faz apenas os testes manuais e visuais (bot, Telegram, BotFather, ngrok, páginas e telas).
+* Divisão dos testes: os testes de código (unitários, de regressão e afins) são sempre rodados por você ou pelo Sonnet, e você registra só o resultado. O Ygor faz apenas os testes manuais e visuais (bot, Telegram, BotFather, ngrok, páginas e telas). As conferências no banco de teste (o que foi gravado, antes e depois) ficam com o Opus, pela ferramenta `ferramentas/banco_teste.py` (ver SEGURANÇA E TESTES).
 
 * Após a execução bem-sucedida dos testes do executor (e, no EXECUTOR OPUS, da sua revisão do diff e dos testes que você rodou), siga o NÍVEL DE TESTE HUMANO da tarefa e crie um card amarelo "Aguardando Commit" na `Linha do Tempo Geral.canvas`, com o código e o título da issue, posicionado em sequência horizontal logo à direita do último card. O texto "Aguardando Commit" aparece, no Canvas, somente nesse card amarelo (o hook procura esse texto).
 
@@ -210,7 +210,7 @@ Conceitos Academicos/ (Novos Conhecimentos/, Estudos Feitos/)
 
 * Se uma tarefa de tela depende de uma rota ou dado novo, a tarefa de back-end vem primeiro, e o formato da resposta (campos e tipos) fica escrito na nota antes do front começar.
 
-* Mudanças de banco (nova coluna ou tabela): sempre uma etapa própria, antes do back-end e do front que dependem dela. Só alterações aditivas, com valor padrão; renomear ou apagar coluna só em tarefa dedicada, aprovada pelo Ygor. A nota registra tabela, coluna, tipo e valor padrão, e qual parte do código cria a coluna (rotina de migração do `bot.py`). Aplicar apenas no banco de teste (`fin4nce-teste`); a produção recebe a mudança no deploy, pela migração automática. Se afetar cálculos, atualizar o esquema do `testes_calculos.py` e manter a saída idêntica. A tarefa também atualiza o `BancoDeDados.md`.
+* Mudanças de banco (nova coluna ou tabela): sempre uma etapa própria, antes do back-end e do front que dependem dela. Só alterações aditivas, com valor padrão; renomear ou apagar coluna só em tarefa dedicada, aprovada pelo Ygor. A nota registra tabela, coluna, tipo e valor padrão, e qual parte do código cria a coluna (rotina de migração do `bot.py`). Aplicar apenas no banco de teste (`fin4ncetest`); a produção recebe a mudança no deploy, pela migração automática. Se afetar cálculos, atualizar o esquema do `testes_calculos.py` e manter a saída idêntica. A tarefa também atualiza o `BancoDeDados.md`.
 
 * Se perceber sobreposição ou dependência, avise o Ygor e proponha a ordem, em vez de iniciar tudo junto.
 
@@ -234,9 +234,16 @@ Conceitos Academicos/ (Novos Conhecimentos/, Estudos Feitos/)
 
 ## SEGURANÇA E TESTES
 
-* Agentes só usam o banco de teste (`fin4nce-teste`) e o token do bot de teste. Nunca o `.env` de produção.
+* Agentes só usam o banco de teste (`fin4ncetest`) e o token do bot de teste. Nunca o `.env` de produção.
 
 * Nunca ler o conteúdo de arquivos `.env`, nem o de teste. Quando uma tarefa precisar dele em um worktree, peça ao Ygor para copiá-lo à mão, mantendo só as variáveis necessárias. Pode listar apenas os nomes das variáveis, sempre com os valores mascarados.
+
+* FERRAMENTA DO BANCO DE TESTE (`ferramentas/banco_teste.py`, PRO-90): o Opus e os subagentes podem usá-la para consultar e popular o banco de TESTE durante a triagem, a execução e os guias de teste, em vez de pedir ao Ygor que abra o painel do Turso. Ela lê sozinha o `.env.teste` (ou o `.env`, se não houver `.env.teste`) e aborta se a URL não apontar para o `fin4ncetest`. Regras de uso:
+  * NUNCA usar no banco de produção, nem tentar contornar a trava (outro arquivo de ambiente, outra URL, outra ferramenta).
+  * Rodar a ferramenta não é "ler o `.env`": o agente nunca abre, imprime nem copia o conteúdo do arquivo; só vê o resultado da consulta.
+  * Leitura (padrão): só SELECT ou WITH ... SELECT. Escrita: só com `--escrita`, só INSERT ou UPDATE com WHERE, e só para preparar ou conferir dados de teste (ex.: criar um gasto antigo para um cenário). Toda escrita feita é registrada na nota da tarefa (comando e motivo).
+  * Os guias de teste podem trazer consultas para o Opus rodar com a ferramenta (ex.: conferir que um gasto foi gravado), no lugar de pedir que o Ygor abra o Turso. O teste no Telegram, nas telas e no Mini App continua sendo do Ygor.
+  * Exemplo: `python ferramentas/banco_teste.py "SELECT id, valor, descricao FROM transacoes WHERE user_id = ? ORDER BY id DESC LIMIT 5" -p <user_id>`
 
 * Nunca copiar valores de tokens ou segredos para notas do Obsidian, Linear ou código.
 

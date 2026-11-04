@@ -9,3 +9,6 @@ testes_initdata.py
 .githooks/
 atualizar_fluxo.py
 testes_atualizar_fluxo.py
+ferramentas/
+testes_banco_teste.py
+.env.teste
