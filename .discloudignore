@@ -12,3 +12,4 @@ testes_atualizar_fluxo.py
 ferramentas/
 testes_banco_teste.py
 .env.teste
+testes_sem_transferencia.py

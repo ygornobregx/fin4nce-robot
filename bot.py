@@ -63,7 +63,6 @@ CONFIRMAR_PARCELA, ESCOLHER_PARCELAS, DIGITAR_PARCELAS = range(31, 34)
 EDITAR_ULTIMO_GASTO = 34
 METODO_PAGAMENTO = 35
 EDITAR_GASTO_ESCOLHA, EDITAR_CATEGORIA_GASTO = range(36, 38)
-TRANSFERIR_VALOR = 40
 ALERTA_ESCOLHA, ALERTA_CUSTOM, ALERTA_VISUALIZACAO = range(50, 53)
 EDITAR_NOME_CAT, EDITAR_VALOR_CAT = range(60, 62)
 EDITAR_DIA_VENCIMENTO = 70
@@ -399,7 +398,7 @@ async def limpar_historico_mensagens(context, chat_id, manter_id=None):
 
 async def mostrar_resumo_temporario(context, chat_id, texto, segundos=10, parse_mode='HTML'):
     """
-    Usado ao final de uma ação (registrar gasto, transferir, editar categoria
+    Usado ao final de uma ação (registrar gasto, editar categoria
     etc.): edita a última mensagem de fluxo (ex: 'Processando...') para virar
     o resumo, em vez de apagá-la e mandar uma nova — evita que ela fique presa
     no histórico se o delete falhar (ex: mensagem antiga, rede lenta). Outras
@@ -2380,114 +2379,6 @@ async def excluir_recorrente_botao(update: Update, context: ContextTypes.DEFAULT
     await atualizar_callback(query, context, texto_lista, reply_markup=teclado_lista)
     return ConversationHandler.END
 
-# --- FLUXO DE TRANSFERÊNCIA INTELIGENTE COM IA ---
-async def iniciar_transferencia(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await responder_callback(query)
-    # Teclado isolado para a tela de transferência: sem botões do Menu Principal.
-    await atualizar_callback(
-        query, context,
-        "Transferência Inteligente entre Categorias\n\n"
-        "Digite livremente como deseja transferir o saldo entre suas categorias.\n\n"
-        "<i>Exemplo: \"Quero transferir 50,00 de Lazer para Alimentação\"</i>",
-        reply_markup=TECLADO_VOLTAR
-    )
-    return TRANSFERIR_VALOR
-
-async def salvar_transferencia_livre(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto_usuario = update.message.text
-    user_id = update.effective_user.id
-    try:
-        await update.message.delete()
-    except Exception:
-        pass
-
-    if not texto_usuario:
-        return ConversationHandler.END
-
-    await enviar_fluxo(context, user_id, "Processando sua transferência...")
-
-    try:
-        prompt = f"""
-        Analise a mensagem de um usuário sobre transferência de valores entre categorias financeiras e extraia os dados em formato JSON puro.
-        As chaves devem ser obrigatoriamente: 
-        - "categoria_origem": string com o nome da categoria de onde sai o dinheiro
-        - "categoria_destino": string com o nome da categoria para onde vai o dinheiro
-        - "valor": número float (ex: 50.00)
-
-        Mensagem do usuário: "{texto_usuario}"
-        
-        Retorne APENAS o JSON puro.
-        """
-
-        response = await gerar_conteudo_com_retry(prompt)
-
-        dados = limpar_json_ia(response.text)
-        origem = dados['categoria_origem'].capitalize()
-        destino = dados['categoria_destino'].capitalize()
-        valor = float(dados['valor'])
-
-        conn = obter_conexao_db()
-        cursor = conn.cursor()
-
-        # Sobra calculada na hora (mesma fonte do "Ver Resumo"), não o saldo guardado.
-        status_origem = calcular_status_categoria(conn, user_id, origem)
-        status_destino = calcular_status_categoria(conn, user_id, destino)
-
-        if not status_origem or not status_destino:
-            await enviar_fluxo(context, user_id, "Uma das categorias informadas não foi encontrada.", reply_markup=obter_teclado_menu())
-            conn.close()
-            return ConversationHandler.END
-
-        if origem == destino or valor <= 0:
-            await enviar_fluxo(context, user_id, "Transferência inválida: informe duas categorias diferentes e um valor positivo.", reply_markup=obter_teclado_menu())
-            conn.close()
-            return ConversationHandler.END
-
-        saldo_origem = status_origem[2]
-
-        # Valida se há saldo suficiente na categoria de origem
-        if saldo_origem < valor:
-            await enviar_fluxo(
-                context, user_id,
-                f"Saldo insuficiente!\n\n"
-                f"Categoria de origem ({origem}) tem saldo de apenas {formatar_real(saldo_origem)}, "
-                f"mas você tentou transferir {formatar_real(valor)}.",
-                reply_markup=obter_teclado_menu()
-            )
-            conn.close()
-            return ConversationHandler.END
-
-        # Um único registro move o orçamento dos dois lados (soma zero): a
-        # origem perde e o destino ganha exatamente 'valor' no ciclo. Tudo no
-        # mesmo commit, junto do 'saldo_atual' legado, pra nunca ficar um lado
-        # atualizado e o outro não.
-        momento = datetime.now(FUSO_BRASILIA).strftime('%Y-%m-%d %H:%M:%S')
-        cursor.execute(
-            'INSERT INTO transferencias (user_id, categoria_origem, categoria_destino, valor, data_transferencia) VALUES (?, ?, ?, ?, ?)',
-            (user_id, origem, destino, valor, momento)
-        )
-        cursor.execute('UPDATE categorias SET saldo_atual = saldo_atual - ? WHERE user_id = ? AND nome = ?', (valor, user_id, origem))
-        cursor.execute('UPDATE categorias SET saldo_atual = saldo_atual + ? WHERE user_id = ? AND nome = ?', (valor, user_id, destino))
-        conn.commit()
-
-        orcamento_origem = calcular_status_categoria(conn, user_id, origem)[0]
-        orcamento_destino = calcular_status_categoria(conn, user_id, destino)[0]
-        conn.close()
-
-        await mostrar_resumo_temporario(
-            context, user_id,
-            f"Transferência Realizada com Sucesso!\n\n"
-            f"Valor: <b>{formatar_real(valor)}</b>\n"
-            f"De: {origem} (Orçamento: {formatar_real(orcamento_origem)})\n"
-            f"Para: {destino} (Orçamento: {formatar_real(orcamento_destino)})"
-        )
-
-    except Exception as e:
-        await enviar_fluxo(context, user_id, mensagem_erro_ia(e), reply_markup=obter_teclado_menu())
-
-    return ConversationHandler.END
-
 # --- FLUXO DE ALERTA DIÁRIO ---
 def _buscar_horario_alerta(user_id):
     conn = obter_conexao_db()
@@ -3289,7 +3180,7 @@ async def botao_clicado(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         teclado = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Categorias", callback_data='menu_editar_cat'), InlineKeyboardButton("Transferir", callback_data='menu_transferir')],
+            [InlineKeyboardButton("Categorias", callback_data='menu_editar_cat')],
             [InlineKeyboardButton("Ver Meses Anteriores e Futuros", callback_data='history_years')],
             [InlineKeyboardButton("← Voltar", callback_data='voltar_menu', style="danger")]
         ])
@@ -3536,16 +3427,6 @@ if __name__ == '__main__':
         allow_reentry=True,
     )
 
-    conv_transferir = ConversationHandler(
-        entry_points=[CallbackQueryHandler(iniciar_transferencia, pattern='^menu_transferir$')],
-        states={
-            TRANSFERIR_VALOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, salvar_transferencia_livre)],
-        },
-        # Manipulador para cancelar o fluxo e voltar ao menu, disponível em qualquer estado.
-        fallbacks=[CallbackQueryHandler(voltar_para_menu, pattern='^voltar_menu$'), CommandHandler('cancelar', cancelar)],
-        allow_reentry=True,
-    )
-
     conv_alerta = ConversationHandler(
         entry_points=[CallbackQueryHandler(iniciar_alerta, pattern='^menu_alerta$')],
         states={
@@ -3658,7 +3539,6 @@ if __name__ == '__main__':
     app.add_handler(conv_handler)
     app.add_handler(conv_gasto)
     app.add_handler(conv_add_cat)
-    app.add_handler(conv_transferir)
     app.add_handler(conv_alerta)
     app.add_handler(conv_editar_cat)
     app.add_handler(conv_recorrente)
