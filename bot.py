@@ -1,6 +1,5 @@
 import os
 import re
-import json
 import libsql
 import asyncio
 import calendar
@@ -9,18 +8,32 @@ from datetime import time, datetime
 from html import escape
 from types import SimpleNamespace
 from dotenv import load_dotenv
-from google import genai
 from calculos import (
     FUSO_BRASILIA,
     _SQL_PARCELAS_EXPANDIDAS,
     _somar_meses,
     buscar_meses_com_movimento,
     buscar_meses_com_parcelas,
-    calcular_ciclo_fatura,
     calcular_dados_resumo_mensal,
     calcular_gasto_categoria,
     calcular_resumo_fatura,
     obter_ciclo_atual,
+)
+# Interpretação do gasto pela IA e gravação do gasto (PRO-85): ficam no
+# registro.py, que a API também usa. O bot cuida das mensagens e dos estados.
+from registro import (
+    alterar_valor_lancamento,
+    buscar_lancamento,
+    debitar_categoria,
+    formatar_lista_categorias,
+    gerar_conteudo_com_retry,
+    interpretar_gasto,
+    limpar_json_ia,
+    listar_categorias,
+    mover_lancamento_de_categoria,
+    obter_cliente_ia,
+    registrar_gasto_avulso,
+    registrar_gasto_parcelado,
 )
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest, NetworkError
@@ -37,7 +50,6 @@ from telegram.ext import (
 load_dotenv()
 
 TOKEN = os.getenv('TOKEN')
-ai_client = genai.Client()
 
 TURSO_DATABASE_URL = os.getenv('TURSO_DATABASE_URL')
 TURSO_AUTH_TOKEN = os.getenv('TURSO_AUTH_TOKEN')
@@ -176,48 +188,12 @@ def dia_valido(dia):
     """Valida se o dia informado é um dia possível dentro de um mês (1 a 31)."""
     return 1 <= dia <= 31
 
-def normalizar_estabelecimento(valor):
-    """Limpa o estabelecimento devolvido pela IA: texto sem espaços nas pontas,
-    ou None quando não for texto ou vier vazio/só com espaços. Não muda
-    maiúsculas nem minúsculas, para não estragar grafias como "iFood"."""
-    if not isinstance(valor, str):
-        return None
-    valor = valor.strip()
-    return valor or None
-
 def formatar_estabelecimento(estabelecimento):
     """Texto da linha 'Estabelecimento:' das confirmações (a mensagem usa HTML,
     então o nome é escapado). Sem estabelecimento, mostra 'Sem Informação'."""
     if estabelecimento is None:
         return "Sem Informação"
     return escape(estabelecimento)
-
-def debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento, metodo_pagamento=None, descricao=None, parcelamento_id=None, estabelecimento=None):
-    """Lançamento único usado por todo gasto de uma categoria (comum, parcelado
-    ou recorrente): confere que a categoria existe e grava a transação. Desde a
-    PRO-83 não mexe mais em 'saldo_atual' (coluna sem uso: o gasto é calculado
-    na hora pelo calculos.py). 'metodo_pagamento'
-    só é informado pelo fluxo manual de registro (Crédito/Débito/Pix); recorrentes
-    gravam NULL. 'descricao' é o nome do gasto extraído pela IA (ou o
-    da recorrência); se não for texto ou vier vazia, grava NULL. 'parcelamento_id'
-    só é informado na parcela 1 de uma compra parcelada e aponta para a linha
-    correspondente em 'parcelamentos'; os demais lançamentos gravam NULL.
-    'estabelecimento' é o local/app citado na mensagem (extraído pela IA) e só
-    vem preenchido em gasto avulso e na parcela 1 de compra parcelada; é limpo
-    por normalizar_estabelecimento (recorrentes gravam NULL). Retorna
-    (cat_id, transacao_id), ou None se a categoria não existir."""
-    cat = cursor.execute('SELECT id FROM categorias WHERE user_id = ? AND nome = ?', (user_id, categoria)).fetchone()
-    if not cat:
-        return None
-    descricao = descricao.strip() if isinstance(descricao, str) else None
-    if not descricao:
-        descricao = None
-    estabelecimento = normalizar_estabelecimento(estabelecimento)
-    cursor.execute(
-        'INSERT INTO transacoes (user_id, categoria_nome, valor, data_transacao, metodo_pagamento, descricao, parcelamento_id, estabelecimento) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        (user_id, categoria, valor_armazenado, momento, metodo_pagamento, descricao, parcelamento_id, estabelecimento)
-    )
-    return cat[0], cursor.lastrowid
 
 # --- FATURAS, PARCELAS E HISTÓRICO MENSAL ---
 NOMES_MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
@@ -264,36 +240,6 @@ def montar_texto_painel(titulo, resumo, dia_fechamento, rotulo_gastos="Gastos At
         blocos.append("Nenhuma categoria neste mês.")
 
     return texto + "\n\n" + f"\n\n{DIVISOR}\n\n".join(blocos)
-
-def limpar_json_ia(texto_resposta):
-    texto_limpo = texto_resposta.strip().replace("```json", "").replace("```", "")
-    match = re.search(r'(\{.*\}|\[.*\])', texto_limpo, re.DOTALL)
-    if match:
-        return json.loads(match.group(1))
-    return json.loads(texto_limpo)
-
-async def gerar_conteudo_com_retry(prompt, tentativas=3, espera_inicial=2):
-    """
-    Chama a API do Gemini com retry automático (backoff exponencial) quando o
-    modelo está sobrecarregado (erro 503/UNAVAILABLE) ou há limite de taxa (429).
-    Para outros erros, propaga imediatamente sem tentar de novo.
-    """
-    ultimo_erro = None
-    for tentativa in range(tentativas):
-        try:
-            return ai_client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=prompt,
-            )
-        except Exception as e:
-            ultimo_erro = e
-            erro_str = str(e)
-            eh_erro_temporario = '503' in erro_str or 'UNAVAILABLE' in erro_str or '429' in erro_str
-            ultima_tentativa = tentativa == tentativas - 1
-            if eh_erro_temporario and not ultima_tentativa:
-                await asyncio.sleep(espera_inicial * (2 ** tentativa))
-                continue
-            raise ultimo_erro
 
 def mensagem_erro_ia(e):
     """Traduz erros comuns da API de IA em mensagens amigáveis para o usuário."""
@@ -751,13 +697,14 @@ async def voltar_escolher_parcelas(update: Update, context: ContextTypes.DEFAULT
     return ESCOLHER_PARCELAS
 
 def obter_categorias_usuario(user_id):
-    # Busca as categorias cadastradas no SQLite para o usuário atual.
-    # Essa lista alimenta tanto o prompt da IA quanto a validação
-    # posterior, sem precisar de uma segunda consulta ao banco.
+    # Busca as categorias cadastradas para o usuário atual (a consulta fica
+    # no registro.py; aqui só abre e fecha a conexão). Essa lista alimenta
+    # tanto o prompt da IA quanto a validação posterior, sem precisar de uma
+    # segunda consulta ao banco.
     conn = obter_conexao_db()
-    categorias = conn.execute('SELECT nome FROM categorias WHERE user_id = ?', (user_id,)).fetchall()
+    categorias = listar_categorias(conn, user_id)
     conn.close()
-    return [c[0] for c in categorias]
+    return categorias
 
 async def salvar_gasto_livre(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto_usuario = update.message.text
@@ -778,68 +725,21 @@ async def salvar_gasto_livre(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await enviar_fluxo(context, user_id, "Registrando seu gasto...")
 
     try:
-        # Busca as categorias cadastradas no SQLite e formata em lista textual
-        # para injetar dinamicamente no prompt da IA.
+        # Busca as categorias cadastradas e formata em lista textual: a mesma
+        # lista vai para o prompt da IA (regra crítica 2, montado no
+        # registro.py) e para a mensagem de categoria não encontrada.
         categorias_existentes = obter_categorias_usuario(user_id)
-        lista_categorias = ", ".join(categorias_existentes) if categorias_existentes else "nenhuma categoria cadastrada"
+        lista_categorias = formatar_lista_categorias(categorias_existentes)
 
-        # Monta o prompt com a lista real de categorias do usuário e regras
-        # obrigatórias de mapeamento, para a IA nunca inventar uma categoria
-        # que não exista no banco.
-        prompt = f"""
-        Analise a mensagem de gasto/receita do usuário e extraia as informações em formato JSON puro.
-
-        LISTA DE CATEGORIAS DISPONÍVEIS DO USUÁRIO:
-        [{lista_categorias}]
-
-        REGRAS OBRIGATÓRIAS DE CATEGORIZAÇÃO:
-        1. Você deve escolher OBRIGATORIAMENTE uma categoria que esteja presente EXATAMENTE na lista acima.
-        2. Faça mapeamento inteligente de sinônimos e contexto:
-           - Exemplo: "iFood", "almoço", "burger" -> Mapear para "Alimentação".
-           - Exemplo: "Uber", "gasolina", "estacionamento" -> Mapear para "Transporte".
-           - Exemplo: "camisa", "tênis" -> Mapear para "Roupas e Estilo" (ou equivalente presente na lista).
-        3. NUNCA crie uma nova categoria com nome diferente do que está na lista.
-        4. Caso o gasto não tenha relação óbvia com nenhuma, selecione a categoria mais próxima ou "Outros" (se existir na lista).
-
-        REGRAS DO ESTABELECIMENTO:
-        1. Só preencha "estabelecimento" se o usuário mencionou o local na mensagem. NUNCA invente nem deduza: sem local citado, devolva null.
-        2. Em apps e serviços (Uber, iFood, Netflix), o estabelecimento é o nome do app.
-        3. Escreva o nome com a primeira letra maiúscula (ex: "Nike", "Casas Bahia"). Marcas com grafia própria mantêm a grafia oficial (ex: "iFood").
-        4. O campo "estabelecimento" não muda o conteúdo da "descricao": ela traz as mesmas palavras de antes, inclusive o local, quando citado.
-
-        REGRAS DA DESCRIÇÃO:
-        1. Escreva a descrição em formato de título: inicial maiúscula em cada palavra.
-        2. As palavras de ligação ficam em minúsculas: a, o, as, os, de, do, da, dos, das, em, no, na, nos, nas, e, com, para, por, ao.
-        3. A primeira palavra sempre começa com maiúscula, mesmo sendo palavra de ligação.
-        4. Marcas com grafia própria mantêm a grafia oficial (ex: "iFood").
-        5. Exemplo: mensagem "pão na padaria cisne branco 12" -> "descricao": "Pão na Padaria Cisne Branco" e "estabelecimento": "Cisne Branco".
-
-        FORMATO DE SAÍDA (JSON PURO):
-        {{
-          "tipo": "despesa" ou "receita",
-          "valor": float (ex: 45.50),
-          "categoria": "NOME_EXATO_DA_CATEGORIA_DA_LISTA",
-          "descricao": "resumo curto, em formato de título (ver REGRAS DA DESCRIÇÃO)",
-          "estabelecimento": "nome do local ou app, ou null"
-        }}
-
-        Mensagem do usuário: "{texto_usuario}"
-
-        Retorne APENAS o JSON puro.
-        """
-
-        # Envia o prompt para o Gemini (com retry/backoff) e limpa o JSON retornado.
-        response = await gerar_conteudo_com_retry(prompt)
-        dados = limpar_json_ia(response.text)
-
-        tipo = dados['tipo'].strip().lower()
+        # Prompt + Gemini (com retry/backoff) + leitura do JSON: registro.py.
+        gasto = await interpretar_gasto(texto_usuario, categorias_existentes)
 
         # Receita (PRO-83): recusada sem gravar nada, até a PRO-86 trazer o
         # registro de receita. A IA continua separando "despesa" e "receita"
         # justamente para um "recebi 5.000 de salário" nunca virar gasto.
         # Vem antes da checagem de categoria: para a receita, a categoria não
         # importa, e o aviso combinado aparece mesmo com categoria fora da lista.
-        if tipo != 'despesa':
+        if gasto.tipo != 'despesa':
             await enviar_fluxo(
                 context, user_id,
                 "Registro de receita chega em breve. Por enquanto, registre só gastos.",
@@ -847,31 +747,26 @@ async def salvar_gasto_livre(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             return ConversationHandler.END
 
-        valor = float(dados['valor'])
-        categoria = dados['categoria'].capitalize()
-        descricao = dados.get('descricao', '')
-        estabelecimento = normalizar_estabelecimento(dados.get('estabelecimento'))
-
         # Validação do retorno: mesmo com o prompt restringindo as opções,
         # confirmamos em Python se a categoria escolhida pela IA está de fato
-        # na lista do usuário antes de mexer em saldo ou gravar a transação.
-        if categoria not in categorias_existentes:
+        # na lista do usuário antes de gravar a transação.
+        if not gasto.categoria_valida:
             await enviar_fluxo(
                 context, user_id,
-                f"Categoria '{categoria}' não encontrada.\n\n"
+                f"Categoria '{gasto.categoria}' não encontrada.\n\n"
                 f"Suas categorias atuais são: {lista_categorias}.\n\n"
                 f"Crie a categoria antes de registrar um gasto nela, ou informe o nome corretamente.",
                 reply_markup=obter_teclado_menu()
             )
             return ConversationHandler.END
 
-        # Despesa: ainda não debitamos nada. Guardamos o gasto em memória até
-        # sabermos se é parcelado, pois o valor debitado muda em cada caso.
+        # Despesa: ainda não gravamos nada. Guardamos o gasto em memória até
+        # sabermos se é parcelado, pois o valor gravado muda em cada caso.
         context.user_data['gasto_pendente'] = {
-            'categoria': categoria,
-            'valor': valor,
-            'descricao': descricao,
-            'estabelecimento': estabelecimento,
+            'categoria': gasto.categoria,
+            'valor': gasto.valor,
+            'descricao': gasto.descricao,
+            'estabelecimento': gasto.estabelecimento,
             'momento_envio': momento_envio,
         }
 
@@ -921,13 +816,19 @@ async def _finalizar_gasto_simples(context, user_id, categoria, valor, tipo, des
     tipo 'despesa' (a receita é recusada em salvar_gasto_livre).
     'metodo_pagamento' só vem preenchido para despesas do fluxo manual.
     'estabelecimento' só é informado em despesa; a confirmação da despesa ganha
-    a linha 'Estabelecimento:'."""
+    a linha 'Estabelecimento:'. A gravação fica no registro.py."""
     conn = obter_conexao_db()
-    cursor = conn.cursor()
     valor_armazenado = valor if tipo == 'despesa' else -valor
-    cat_id, transacao_id = debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento_envio, metodo_pagamento, descricao=descricao, estabelecimento=estabelecimento)
-    conn.commit()
+    lancamento = registrar_gasto_avulso(conn, user_id, categoria, valor_armazenado, momento_envio, metodo_pagamento, descricao=descricao, estabelecimento=estabelecimento)
     conn.close()
+
+    # Categoria apagada no meio do fluxo: nada foi gravado. Mesma mensagem do
+    # parcelado (antes da PRO-85, este caso levantava TypeError e prendia a
+    # conversa no "Registrando...").
+    if lancamento is None:
+        await enviar_fluxo(context, user_id, "Categoria não encontrada. Registre o gasto novamente.", reply_markup=obter_teclado_menu())
+        return
+    cat_id, transacao_id = lancamento
 
     # Guarda a referência do gasto recém-criado para permitir a correção
     # imediata do valor pelo botão "Editar Gasto" na tela de confirmação.
@@ -1010,10 +911,7 @@ async def iniciar_editar_categoria_ultimo_gasto(update: Update, context: Context
 
     ultimo_gasto = context.user_data.get('ultimo_gasto')
     conn = obter_conexao_db()
-    linha = conn.execute(
-        'SELECT valor FROM transacoes WHERE id = ? AND user_id = ?',
-        (ultimo_gasto['transacao_id'], user_id)
-    ).fetchone() if ultimo_gasto else None
+    linha = buscar_lancamento(conn, user_id, ultimo_gasto['transacao_id']) if ultimo_gasto else None
     conn.close()
 
     if not linha:
@@ -1039,11 +937,7 @@ async def salvar_categoria_editada_gasto(update: Update, context: ContextTypes.D
 
     conn = obter_conexao_db()
     try:
-        cursor = conn.cursor()
-        transacao = cursor.execute(
-            'SELECT valor, categoria_nome FROM transacoes WHERE id = ? AND user_id = ?',
-            (ultimo_gasto['transacao_id'], user_id)
-        ).fetchone()
+        transacao = buscar_lancamento(conn, user_id, ultimo_gasto['transacao_id'])
         if not transacao:
             await enviar_fluxo(context, user_id, "Gasto não encontrado. Registre novamente.", reply_markup=obter_teclado_menu())
             return ConversationHandler.END
@@ -1072,11 +966,7 @@ async def salvar_categoria_editada_gasto(update: Update, context: ContextTypes.D
         # O gasto de cada categoria é calculado a partir de
         # 'transacoes.categoria_nome' (calculos.py), então mover a transação já
         # corrige as duas categorias.
-        cursor.execute(
-            'UPDATE transacoes SET categoria_nome = ? WHERE id = ? AND user_id = ?',
-            (categoria_destino, ultimo_gasto['transacao_id'], user_id)
-        )
-        conn.commit()
+        mover_lancamento_de_categoria(conn, user_id, ultimo_gasto['transacao_id'], categoria_destino)
     finally:
         conn.close()
 
@@ -1117,16 +1007,11 @@ async def salvar_valor_editado_gasto(update: Update, context: ContextTypes.DEFAU
     # Atualiza só o valor do gasto: o gasto da categoria é calculado na hora
     # a partir de 'transacoes' (calculos.py).
     conn = obter_conexao_db()
-    cursor = conn.cursor()
-    linha = cursor.execute('SELECT valor FROM transacoes WHERE id = ? AND user_id = ?', (transacao_id, user_id)).fetchone()
-    if not linha:
-        conn.close()
+    alterado = alterar_valor_lancamento(conn, user_id, transacao_id, novo_valor_armazenado)
+    conn.close()
+    if not alterado:
         await enviar_fluxo(context, user_id, "Gasto não encontrado. Registre novamente.", reply_markup=obter_teclado_menu())
         return ConversationHandler.END
-
-    cursor.execute('UPDATE transacoes SET valor = ? WHERE id = ? AND user_id = ?', (novo_valor_armazenado, transacao_id, user_id))
-    conn.commit()
-    conn.close()
 
     context.user_data.pop('ultimo_gasto', None)
 
@@ -1139,10 +1024,11 @@ async def salvar_valor_editado_gasto(update: Update, context: ContextTypes.DEFAU
     return ConversationHandler.END
 
 async def _finalizar_gasto_parcelado(context, user_id, total_parcelas):
-    """Fecha o fluxo de parcelamento: divide o valor total pelo número de
-    parcelas, debita a 1ª parcela agora e grava o parcelamento — incluindo
+    """Fecha o fluxo de parcelamento: o registro.py divide o valor total pelo
+    número de parcelas, grava a 1ª parcela agora e o parcelamento — incluindo
     a fatura ('ciclo_referencia') calculada a partir do dia de fechamento
-    do usuário, que serve de base para todas as parcelas seguintes."""
+    do usuário, que serve de base para todas as parcelas seguintes. Aqui fica
+    só a sessão da conversa e a confirmação."""
     pendente = context.user_data.get('gasto_pendente')
     if not pendente:
         await enviar_fluxo(context, user_id, "Sessão expirada. Registre o gasto novamente.", reply_markup=obter_teclado_menu())
@@ -1154,43 +1040,19 @@ async def _finalizar_gasto_parcelado(context, user_id, total_parcelas):
     estabelecimento = pendente.get('estabelecimento')
     momento_envio = pendente['momento_envio']
     metodo_pagamento = pendente.get('metodo_pagamento')
-    valor_parcela = round(valor_total / total_parcelas, 2)
 
     conn = obter_conexao_db()
     try:
-        cursor = conn.cursor()
-        dia_fechamento = cursor.execute('SELECT dia_fechamento FROM usuarios WHERE user_id = ?', (user_id,)).fetchone()[0]
-
-        data_compra = datetime.strptime(momento_envio, '%Y-%m-%d %H:%M:%S')
-        ciclo_referencia = calcular_ciclo_fatura(data_compra, dia_fechamento)
-
-        # Compra e parcela 1 são gravadas numa única transação: o parcelamento
-        # vem primeiro para a transação já nascer apontando para ele, e o commit
-        # só acontece depois das duas gravações (nunca sobra compra órfã).
-        cursor.execute(
-            '''INSERT INTO parcelamentos
-               (user_id, categoria_nome, descricao, valor_total, valor_parcela, total_parcelas, parcelas_pagas, data_criacao, ciclo_referencia, ativo)
-               VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 1)''',
-            (user_id, categoria, descricao, valor_total, valor_parcela, total_parcelas, momento_envio, ciclo_referencia)
+        lancamento = registrar_gasto_parcelado(
+            conn, user_id, categoria, valor_total, total_parcelas, momento_envio, metodo_pagamento,
+            descricao=descricao, estabelecimento=estabelecimento
         )
-        parcelamento_id = cursor.lastrowid
-        lancamento = debitar_categoria(
-            cursor, user_id, categoria, valor_parcela, momento_envio, metodo_pagamento,
-            descricao=descricao, parcelamento_id=parcelamento_id, estabelecimento=estabelecimento
-        )
-        if lancamento is None:
-            conn.rollback()
-        else:
-            conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
     finally:
         conn.close()
 
     context.user_data.pop('gasto_pendente', None)
 
-    # Categoria apagada no meio do fluxo: nada foi gravado (rollback acima).
+    # Categoria apagada no meio do fluxo: nada foi gravado (rollback no registro.py).
     if lancamento is None:
         await enviar_fluxo(context, user_id, "Categoria não encontrada. Registre o gasto novamente.", reply_markup=obter_teclado_menu())
         return
@@ -1200,8 +1062,8 @@ async def _finalizar_gasto_parcelado(context, user_id, total_parcelas):
         f"Compra Parcelada Registrada!\n\n"
         f"Categoria: <b>{categoria}</b>\n"
         f"Estabelecimento: {formatar_estabelecimento(estabelecimento)}\n"
-        f"Total: <b>{formatar_real(valor_total)}</b> em <b>{total_parcelas}x</b> de <b>{formatar_real(valor_parcela)}</b>\n"
-        f"Fatura de referência: <b>{ciclo_referencia}</b>\n\n"
+        f"Total: <b>{formatar_real(valor_total)}</b> em <b>{total_parcelas}x</b> de <b>{formatar_real(lancamento.valor_parcela)}</b>\n"
+        f"Fatura de referência: <b>{lancamento.ciclo_referencia}</b>\n\n"
         f"Parcela 1/{total_parcelas} debitada agora. Se o banco jogar essa compra pra fatura seguinte, "
         f"corrija em Categorias → {categoria} → Conferir Parcelas."
     )
@@ -3182,6 +3044,9 @@ async def tratar_erro(update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- EXECUÇÃO DO BOT ---
 if __name__ == '__main__':
+    # Cria o cliente da IA já na subida (o registro.py só o criaria no primeiro
+    # gasto): sem a chave do Gemini, o bot continua não subindo, como antes.
+    obter_cliente_ia()
     print("Iniciando Bot Corrigido...")
     app = (
         ApplicationBuilder()

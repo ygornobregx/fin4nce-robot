@@ -4,14 +4,17 @@ também o lançamento de um gasto recorrente (_lancar_item_recorrente), que só
 dispara às 05:00 e por isso é coberto aqui, e não no teste manual, e a etapa
 dos nomes do cadastro (receber_nomes_categorias), sem nomes repetidos.
 
-Roda com `python testes_estabelecimento.py`. Não usa .env nem rede: as funções
-são lidas do bot.py com `ast` (sem importá-lo, para não abrir conexão com o
-Turso nem criar o cliente da IA) e o banco é um SQLite em memória.
+Roda com `python testes_estabelecimento.py`. Não usa .env nem rede: desde a
+PRO-85, normalizar_estabelecimento e debitar_categoria vêm do registro.py
+(importável sem .env, sem chave e sem rede); as funções que ficaram no bot.py
+são lidas com `ast` (sem importá-lo, para não abrir conexão com o Turso) e o
+banco é um SQLite em memória.
 """
 import ast
 import asyncio
 import contextlib
 import io
+import json
 import os
 import sqlite3
 import sys
@@ -22,17 +25,23 @@ from html import escape
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
-NOMES_DO_BOT = {'normalizar_estabelecimento', 'formatar_estabelecimento', 'debitar_categoria',
-                'formatar_real', '_lancar_item_recorrente'}
+RAIZ = os.path.dirname(os.path.abspath(__file__))
+if RAIZ not in sys.path:
+    sys.path.insert(0, RAIZ)
+
+import registro  # noqa: E402
+
+NOMES_DO_BOT = {'formatar_estabelecimento', 'formatar_real', '_lancar_item_recorrente'}
 
 
 def carregar_funcoes():
-    """Executa só as funções de NOMES_DO_BOT, extraídas do bot.py."""
-    raiz = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(raiz, 'bot.py'), encoding='utf-8') as f:
+    """Executa só as funções de NOMES_DO_BOT, extraídas do bot.py, com a
+    debitar_categoria do registro.py no lugar do import do bot."""
+    with open(os.path.join(RAIZ, 'bot.py'), encoding='utf-8') as f:
         arvore = ast.parse(f.read())
     selecionados = [no for no in arvore.body if isinstance(no, ast.FunctionDef) and no.name in NOMES_DO_BOT]
-    ns = {'escape': escape, 'datetime': datetime, 'FUSO_BRASILIA': ZoneInfo("America/Sao_Paulo")}
+    ns = {'escape': escape, 'datetime': datetime, 'FUSO_BRASILIA': ZoneInfo("America/Sao_Paulo"),
+          'debitar_categoria': registro.debitar_categoria}
     exec(compile(ast.Module(body=selecionados, type_ignores=[]), 'bot.py', 'exec'), ns)
     faltando = NOMES_DO_BOT - set(ns)
     if faltando:
@@ -41,9 +50,9 @@ def carregar_funcoes():
 
 
 F = carregar_funcoes()
-normalizar_estabelecimento = F['normalizar_estabelecimento']
+normalizar_estabelecimento = registro.normalizar_estabelecimento
 formatar_estabelecimento = F['formatar_estabelecimento']
-debitar_categoria = F['debitar_categoria']
+debitar_categoria = registro.debitar_categoria
 lancar_item_recorrente = F['_lancar_item_recorrente']
 
 UID = 1
@@ -289,19 +298,28 @@ class TestCadastroSemNomesRepetidos(unittest.TestCase):
 
 class TestRecusaDaReceita(unittest.TestCase):
     def test_recusa_da_receita_vem_antes_da_checagem_de_categoria(self):
-        """Em salvar_gasto_livre, a receita é recusada antes da checagem de
-        categoria: o aviso aparece mesmo com categoria fora da lista (PRO-83)."""
-        raiz = os.path.dirname(os.path.abspath(__file__))
-        with open(os.path.join(raiz, 'bot.py'), encoding='utf-8') as f:
-            fonte = f.read()
-        funcao = next(no for no in ast.parse(fonte).body
-                      if isinstance(no, ast.AsyncFunctionDef) and no.name == 'salvar_gasto_livre')
-        trecho = ast.get_source_segment(fonte, funcao)
-        recusa = trecho.find("Registro de receita chega em breve")
-        checagem = trecho.find("categoria not in categorias_existentes")
-        self.assertNotEqual(recusa, -1, "recusa da receita não encontrada em salvar_gasto_livre")
-        self.assertNotEqual(checagem, -1, "checagem de categoria não encontrada em salvar_gasto_livre")
-        self.assertLess(recusa, checagem)
+        """A receita é identificada antes de ler o valor e de checar a
+        categoria (PRO-83): com categoria fora da lista e valor inválido,
+        interpretar_gasto (PRO-85) devolve o tipo 'receita' sem levantar, e o
+        bot mostra o aviso da receita. O fluxo inteiro está no G07 do
+        testes_registro_caracterizacao.py."""
+        class IAFalsa:
+            def __init__(self):
+                self.models = self
+
+            def generate_content(self, model, contents):
+                return SimpleNamespace(text=json.dumps(
+                    {"tipo": "Receita ", "valor": "abc", "categoria": "Salário"}))
+
+        cliente_anterior = registro._cliente_ia
+        registro.definir_cliente_ia(IAFalsa())
+        try:
+            gasto = asyncio.run(registro.interpretar_gasto("recebi 5000 de salário", ['Roupas']))
+        finally:
+            registro.definir_cliente_ia(cliente_anterior)
+        self.assertEqual(gasto.tipo, 'receita')
+        self.assertIsNone(gasto.valor)
+        self.assertFalse(gasto.categoria_valida)
 
 
 if __name__ == "__main__":

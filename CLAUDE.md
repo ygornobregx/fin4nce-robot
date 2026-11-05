@@ -8,7 +8,7 @@
 
 3. Sinais: despesas = valores POSITIVOS no banco. Receitas = valores NEGATIVOS.
 
-4. Cálculos centralizados: gasto, receitas, Sobra do Mês e ciclo de fatura ficam em `calculos.py`. O bot e a API usam essas funções; nunca duplicar essa lógica em outro lugar.
+4. Cálculos centralizados: gasto, receitas, Sobra do Mês e ciclo de fatura ficam em `calculos.py`. O bot e a API usam essas funções; nunca duplicar essa lógica em outro lugar. Da mesma forma, a interpretação do gasto pela IA e a gravação de gasto ficam em `registro.py` (PRO-85); o bot e a API usam essas funções.
 
 ## DIRETRIZES POR ÁREA
 
