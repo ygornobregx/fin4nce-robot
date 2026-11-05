@@ -43,6 +43,9 @@ ESQUEMA = '''
         descricao TEXT, valor REAL, dia_cobranca INTEGER, criado_em TEXT, ultimo_ciclo_cobrado TEXT);
     CREATE TABLE transferencias (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, categoria_origem TEXT,
         categoria_destino TEXT, valor REAL, data_transferencia TEXT);
+    CREATE TABLE receitas (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+        valor REAL NOT NULL CHECK (valor > 0), descricao TEXT, data_receita TEXT NOT NULL,
+        origem TEXT NOT NULL DEFAULT 'avulsa', receita_recorrente_id INTEGER);
 '''
 
 
@@ -79,6 +82,12 @@ def parcelamento(conn, cat, total, n, momento, ciclo_referencia, descricao=None,
                           "VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
                           (user_id, cat, descricao or "compra", total, parcela, n, momento, ciclo_referencia, ativo))
     transacao(conn, cat, parcela, momento, descricao, user_id, compra.lastrowid, estabelecimento)
+
+
+def receita(conn, valor, momento, descricao=None, user_id=USER_ID):
+    """Receita avulsa (PRO-86): tabela 'receitas', valor sempre positivo."""
+    conn.execute("INSERT INTO receitas (user_id, valor, descricao, data_receita, origem) "
+                 "VALUES (?, ?, ?, ?, 'avulsa')", (user_id, valor, descricao, momento))
 
 
 def transferencia(conn, origem, destino, valor, momento):
@@ -200,6 +209,7 @@ class TestResumo(TesteRotasBase):
             "renda": 5000.0,
             "total_gasto": 610.0,
             "sobra_mes": 4390.0,
+            "total_receitas": 0.0,
             "categorias": [
                 {"nome": "Mercado", "gasto": 450.0},
                 {"nome": "Lazer", "gasto": 100.0},
@@ -225,6 +235,7 @@ class TestResumo(TesteRotasBase):
             "renda": 3000.0,
             "total_gasto": 450.0,
             "sobra_mes": 2550.0,
+            "total_receitas": 0.0,
             "categorias": [
                 {"nome": "Mercado", "gasto": 100.0},
                 {"nome": "Lazer", "gasto": 350.0},
@@ -271,6 +282,7 @@ class TestResumo(TesteRotasBase):
             "renda": 5000.0,
             "total_gasto": 610.0,
             "sobra_mes": None,
+            "total_receitas": 0.0,
             "categorias": [
                 {"nome": "Mercado", "gasto": 450.0},
                 {"nome": "Lazer", "gasto": 100.0},
@@ -299,6 +311,7 @@ class TestResumo(TesteRotasBase):
             "renda": 5000.0,
             "total_gasto": 0.0,
             "sobra_mes": 5000.0,
+            "total_receitas": 0.0,
             "categorias": [
                 {"nome": "Mercado", "gasto": 0.0},
                 {"nome": "Lazer", "gasto": 0.0},
@@ -320,6 +333,7 @@ class TestResumo(TesteRotasBase):
             "renda": 0.0,
             "total_gasto": 0.0,
             "sobra_mes": 0.0,
+            "total_receitas": 0.0,
             "categorias": [],
         })
         for campo in ("renda", "total_gasto", "sobra_mes"):
@@ -337,6 +351,102 @@ class TestResumo(TesteRotasBase):
         self.assertEqual(corpo["categorias"][0]["gasto"], 10.12)
         self.assertEqual(corpo["total_gasto"], 10.12)
         self.assertEqual(corpo["sobra_mes"], 4989.88)
+
+
+class TestResumoComReceitas(TesteRotasBase):
+    """PRO-86: a Sobra soma as receitas da fatura (mesmo intervalo do gasto) e
+    o /resumo traz total_receitas."""
+
+    def test_resumo_com_receita_soma_na_sobra(self):
+        conn = banco_completo()
+        receita(conn, 500.0, "2026-10-11 10:00:00", "Venda da Bicicleta")
+        conn.commit()
+        self.iniciar(conn)
+        resposta = self.obter("/resumo")
+        self.assertEqual(resposta.status_code, 200)
+        # Sobra = 5.000 + 500 - 610 = 4.890. A receita não muda gasto nem categorias.
+        self.assertEqual(resposta.json(), {
+            "ano_mes": "2026-10",
+            "dia_fechamento": 28,
+            "renda": 5000.0,
+            "total_gasto": 610.0,
+            "sobra_mes": 4890.0,
+            "total_receitas": 500.0,
+            "categorias": [
+                {"nome": "Mercado", "gasto": 450.0},
+                {"nome": "Lazer", "gasto": 100.0},
+                {"nome": "Antiga", "gasto": 60.0},
+            ],
+        })
+
+    def test_so_as_receitas_da_fatura_e_do_usuario(self):
+        conn = banco_completo()
+        receita(conn, 70.0, "2026-09-27 23:59:00")            # fatura 2026-09: fora
+        receita(conn, 20.0, "2026-09-28 00:00:00")            # primeiro dia da 2026-10: entra
+        receita(conn, 30.0, "2026-10-27 23:59:00")            # último dia da 2026-10: entra
+        receita(conn, 90.0, "2026-10-28 00:00:00")            # fatura 2026-11: fora
+        receita(conn, 999.0, "2026-10-11 10:00:00", user_id=USER_ID + 1)  # outro usuário: fora
+        conn.commit()
+        self.iniciar(conn)
+        corpo = self.obter("/resumo").json()
+        self.assertEqual(corpo["total_receitas"], 50.0)
+        self.assertEqual(corpo["sobra_mes"], 4440.0)  # 5.000 + 50 - 610
+
+    def test_antes_do_corte_sobra_nula_e_receitas_preenchidas(self):
+        conn = banco_completo()
+        receita(conn, 500.0, "2026-10-11 10:00:00")
+        conn.commit()
+        self.iniciar(conn, data_corte=date(2026, 11, 10))
+        corpo = self.obter("/resumo").json()
+        self.assertIsNone(corpo["sobra_mes"])
+        self.assertEqual(corpo["total_receitas"], 500.0)
+        self.assertEqual(corpo["total_gasto"], 610.0)
+
+    def test_total_receitas_float_arredondado_a_duas_casas(self):
+        conn = banco_completo()
+        receita(conn, 10.005, "2026-10-05 10:00:00")
+        receita(conn, 0.114, "2026-10-06 10:00:00")
+        conn.commit()
+        self.iniciar(conn)
+        corpo = self.obter("/resumo").json()
+        # Bruto: receitas 10,119 -> 10,12; Sobra 5.000 + 10,119 - 610 = 4.400,119 -> 4.400,12.
+        self.assertEqual(corpo["total_receitas"], 10.12)
+        self.assertIsInstance(corpo["total_receitas"], float)
+        self.assertEqual(corpo["sobra_mes"], 4400.12)
+
+    def test_reembolso_antigo_continua_fora_com_receita(self):
+        conn = novo_banco()
+        categoria(conn, "Mercado", 1000.0)
+        transacao(conn, "Mercado", 200.0, "2026-10-05 10:00:00")
+        transacao(conn, "Mercado", -80.0, "2026-10-06 10:00:00")
+        receita(conn, 100.0, "2026-10-07 10:00:00")
+        conn.commit()
+        self.iniciar(conn)
+        corpo = self.obter("/resumo").json()
+        # 5.000 + 100 - 200 = 4.900 (o -80 em transacoes não entra).
+        self.assertEqual(corpo["total_receitas"], 100.0)
+        self.assertEqual(corpo["sobra_mes"], 4900.0)
+
+    def test_outras_rotas_iguais_com_receita_no_banco(self):
+        """/historico, /gastos/recentes e /gastos/{id} não mudam com uma receita
+        no banco (D13: a receita fica fora do extrato nesta tarefa)."""
+        def montar(com_receita):
+            conn = banco_completo()
+            transacao(conn, "Alimentação", 18.5, "2026-10-14 14:30:00", descricao="Padaria")
+            if com_receita:
+                receita(conn, 500.0, "2026-10-14 15:00:00", "Venda da Bicicleta")
+            conn.commit()
+            return conn
+
+        respostas = {}
+        for com_receita in (False, True):
+            self.iniciar(montar(com_receita))
+            respostas[com_receita] = [self.obter(rota).json()
+                                      for rota in ("/historico", "/gastos/recentes", "/gastos/11", "/gastos/1")]
+            self.tearDown()
+        self.assertEqual(respostas[True], respostas[False])
+        self.assertEqual(len(respostas[True][1]["gastos"]), 1)
+        self.assertEqual(respostas[True][2]["descricao"], "Padaria")
 
 
 class TestHistorico(TesteRotasBase):

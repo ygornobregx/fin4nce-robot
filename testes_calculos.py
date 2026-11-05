@@ -98,6 +98,9 @@ def novo_banco(dia_fechamento=28, renda=5000.0):
             descricao TEXT, valor REAL, dia_cobranca INTEGER, criado_em TEXT, ultimo_ciclo_cobrado TEXT);
         CREATE TABLE transferencias (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, categoria_origem TEXT,
             categoria_destino TEXT, valor REAL, data_transferencia TEXT);
+        CREATE TABLE receitas (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            valor REAL NOT NULL CHECK (valor > 0), descricao TEXT, data_receita TEXT NOT NULL,
+            origem TEXT NOT NULL DEFAULT 'avulsa', receita_recorrente_id INTEGER);
     ''')
     conn.execute('INSERT INTO usuarios VALUES (?, ?, ?, ?, NULL, NULL)', (UID, 'Teste', renda, dia_fechamento))
     return conn
@@ -121,6 +124,12 @@ def parcelamento(conn, cat, total, n, momento, ciclo_referencia, ativo=1):
                     total_parcelas, parcelas_pagas, data_criacao, ciclo_referencia, ativo)
                     VALUES (?, ?, 'compra', ?, ?, ?, 1, ?, ?, ?)''',
                  (UID, cat, total, parcela, n, momento, ciclo_referencia, ativo))
+
+
+def receita(conn, valor, momento, user_id=UID):
+    """Receita avulsa (PRO-86): tabela 'receitas', valor sempre positivo."""
+    conn.execute("INSERT INTO receitas (user_id, valor, descricao, data_receita, origem) VALUES (?, ?, 'entrada', ?, 'avulsa')",
+                 (user_id, valor, momento))
 
 
 def transferencia(conn, origem, destino, valor, momento):
@@ -226,7 +235,7 @@ for rotulo, montar, gasto_esperado, sobra_esperada in CENARIOS:
     mostrar("   meses_com_parcelas", F['buscar_meses_com_parcelas'](conn, UID))
     mostrar("   meses_com_movimento", F['buscar_meses_com_movimento'](conn, UID, 28))
     conferir("   resumo_mensal (agora 28/10 00:05)", resumo_mensal(conn, 28, FIM_DA_FATURA),
-             ('Outubro', [('Mercado', gasto_esperado)], 5000.0, gasto_esperado, sobra_esperada))
+             ('Outubro', [('Mercado', gasto_esperado)], 5000.0, gasto_esperado, sobra_esperada, 0.0))
     conn.close()
 
 # --- Fechamento dia 31 em mês curto ---
@@ -331,7 +340,7 @@ categoria(conn, 'Mercado', 1000.0)
 transacao(conn, 'Mercado', 100.0, '2026-10-05 10:00:00')
 conferir("renda nula, gasto 100", resumo_fatura(conn, '2026-10'), (0.0, 100.0, -100.0))
 conferir("renda nula, resumo_mensal (agora 28/10 00:05)", resumo_mensal(conn, 28, FIM_DA_FATURA),
-         ('Outubro', [('Mercado', 100.0)], 0.0, 100.0, -100.0))
+         ('Outubro', [('Mercado', 100.0)], 0.0, 100.0, -100.0, 0.0))
 conferir("renda nula, totais_mes", F['calcular_totais_mes'](None, [('Mercado', 100.0)]), (100.0, -100.0))
 conn.close()
 
@@ -364,7 +373,96 @@ conferir("fatura do corte: resumo_fatura (corte 10/11/2026), 2026-11",
          resumo_fatura(conn, '2026-11', data_corte=date(2026, 11, 10)), (5000.0, 100.0, 4900.0))
 conferir("fatura antes do corte: resumo_mensal (corte 10/11/2026)",
          resumo_mensal(conn, 28, FIM_DA_FATURA, data_corte=date(2026, 11, 10)),
-         ('Outubro', [('Mercado', 200.0)], 5000.0, 200.0, None))
+         ('Outubro', [('Mercado', 200.0)], 5000.0, 200.0, None, 0.0))
+conn.close()
+
+# --- Receitas (PRO-86): tabela 'receitas', somadas na Sobra pelo mesmo intervalo do gasto ---
+# Valores esperados escritos na nota da PRO-86 antes do código.
+saida.append("")
+saida.append("== Receitas (PRO-86) ==")
+receitas_fatura = F['calcular_receitas_fatura']
+
+
+def montar_r1(conn):
+    """R1: BASE_MERCADO + c1 (gasto 200 na fatura 2026-10) + receita 500 em 10/10/2026."""
+    c1(conn)
+    receita(conn, 500.0, '2026-10-10 15:00:00')
+
+
+# Referência do cenário 1 (sem receita), para conferir que a receita não muda
+# categorias nem meses com movimento.
+conn = base_mercado()
+c1(conn)
+cats_cenario1 = F['montar_categorias_fatura'](conn, UID, CICLO, 28)
+meses_cenario1 = F['buscar_meses_com_movimento'](conn, UID, 28)
+conn.close()
+
+conn = base_mercado()
+montar_r1(conn)
+conferir("R1. receitas 2026-10", receitas_fatura(conn, UID, CICLO, 28), 500.0)
+conferir("R1. resumo_fatura 2026-10 (renda, gasto, sobra)", resumo_fatura(conn, CICLO), (5000.0, 200.0, 5300.0))
+conferir("R1. resumo_fatura 2026-10: total_receitas",
+         F['calcular_resumo_fatura'](conn, UID, CICLO, 28).total_receitas, 500.0)
+cats = F['montar_categorias_fatura'](conn, UID, CICLO, 28)
+conferir("R1. totais_mes (renda 5000, receitas 500)",
+         F['calcular_totais_mes'](5000.0, cats, total_receitas=500.0), (200.0, 5300.0))
+conferir("R1. categorias_fatura igual à do cenário 1", cats, cats_cenario1)
+conferir("R1. meses_com_movimento igual ao do cenário 1", F['buscar_meses_com_movimento'](conn, UID, 28), meses_cenario1)
+conn.close()
+
+conn = novo_banco()
+receita(conn, 60.0, '2026-10-27 23:59:00')
+receita(conn, 25.0, '2026-10-28 00:01:00')
+conferir("R2. virada de ciclo: receitas 2026-10", receitas_fatura(conn, UID, '2026-10', 28), 60.0)
+conferir("R2. virada de ciclo: receitas 2026-11", receitas_fatura(conn, UID, '2026-11', 28), 25.0)
+conn.close()
+
+conn = novo_banco(dia_fechamento=31)
+receita(conn, 70.0, '2026-04-29 10:00:00')
+receita(conn, 40.0, '2026-04-30 10:00:00')
+conferir("R3. fechamento 31: receitas 2026-04", receitas_fatura(conn, UID, '2026-04', 31), 70.0)
+conferir("R3. fechamento 31: receitas 2026-05", receitas_fatura(conn, UID, '2026-05', 31), 40.0)
+conn.close()
+
+conn = base_mercado()
+montar_r1(conn)
+receita(conn, 999.0, '2026-10-10 15:00:00', user_id=2)
+conferir("R4. outro usuário: receitas do usuário 1", receitas_fatura(conn, UID, CICLO, 28), 500.0)
+conn.close()
+
+conn = base_mercado()
+conferir("R5. reembolso antigo sem receita: receitas", receitas_fatura(conn, UID, CICLO, 28), 0.0)
+conferir("R5. reembolso antigo sem receita: resumo_fatura (o -30 continua fora)",
+         resumo_fatura(conn, CICLO), (5000.0, 100.0, 4900.0))
+conn.close()
+
+conn = novo_banco(renda=None)
+categoria(conn, 'Mercado', 1000.0)
+transacao(conn, 'Mercado', 100.0, '2026-10-05 10:00:00')
+receita(conn, 300.0, '2026-10-06 10:00:00')
+conferir("R6. renda nula, gasto 100, receita 300", resumo_fatura(conn, CICLO), (0.0, 100.0, 200.0))
+conn.close()
+
+conn = base_mercado()
+montar_r1(conn)
+r7 = F['calcular_resumo_fatura'](conn, UID, CICLO, 28, data_corte=date(2026, 11, 10))
+conferir("R7. antes do corte (10/11/2026): sobra", r7.sobra_mes, None)
+conferir("R7. antes do corte (10/11/2026): total_receitas", r7.total_receitas, 500.0)
+conn.close()
+
+conn = novo_banco(dia_fechamento=None)
+receita(conn, 100.0, '2025-01-05 10:00:00')
+receita(conn, 50.0, '2026-10-05 10:00:00')
+r8 = F['calcular_resumo_fatura'](conn, UID, None, None)
+conferir("R8. sem dia de fechamento: receitas (todo o histórico)", receitas_fatura(conn, UID, None, None), 150.0)
+conferir("R8. sem dia de fechamento: total_receitas do resumo", r8.total_receitas, 150.0)
+conferir("R8. sem dia de fechamento: sobra", r8.sobra_mes, None)
+conn.close()
+
+conn = base_mercado()
+montar_r1(conn)
+conferir("R9. resumo_mensal com receita (agora 28/10 00:05)", resumo_mensal(conn, 28, FIM_DA_FATURA),
+         ('Outubro', [('Mercado', 200.0)], 5000.0, 200.0, 5300.0, 500.0))
 conn.close()
 
 print(f"Origem das funções: {ORIGEM}")

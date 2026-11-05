@@ -209,7 +209,8 @@ def resposta_json(**campos):
 
 # --- COSTURA 6: Update e Context falsos, e o roteiro de cada cenário ---
 class Cenario:
-    def __init__(self, codigo, titulo, respostas_ia=(), com_categorias=True, imprimir_prompt=False):
+    def __init__(self, codigo, titulo, respostas_ia=(), com_categorias=True, imprimir_prompt=False,
+                 com_receitas=False):
         print()
         print("=" * 78)
         print(f"{codigo} - {titulo}")
@@ -218,6 +219,9 @@ class Cenario:
         ESPERAS.clear()
         CONEXOES_ABERTAS.clear()
         self.imprimir_prompt = imprimir_prompt
+        # A tabela 'receitas' (PRO-86) só é impressa nos cenários de receita,
+        # para os cenários antigos continuarem byte a byte iguais.
+        self.com_receitas = com_receitas
         self.real = sqlite3.connect(':memory:')
         bot.obter_conexao_db = lambda: ConexaoFalsa(self.real)
         with contextlib.redirect_stdout(io.StringIO()):
@@ -316,7 +320,7 @@ class Cenario:
 
     def fim(self):
         print("-" * 78)
-        for tabela, colunas in (
+        tabelas = [
             ('categorias', 'id, user_id, nome, orcamento_mensal, saldo_atual, data_criacao'),
             ('transacoes', 'id, user_id, categoria_nome, valor, data_transacao, metodo_pagamento, '
                            'descricao, parcelamento_id, estabelecimento'),
@@ -324,7 +328,11 @@ class Cenario:
                               'total_parcelas, parcelas_pagas, data_criacao, ativo, ciclo_referencia'),
             ('gastos_recorrentes', 'id, user_id, categoria_nome, descricao, valor, dia_cobranca, '
                                    'criado_em, ultimo_ciclo_cobrado'),
-        ):
+        ]
+        if self.com_receitas:
+            tabelas.append(('receitas', 'id, user_id, valor, descricao, data_receita, origem, '
+                                        'receita_recorrente_id'))
+        for tabela, colunas in tabelas:
             linhas = self.real.execute(f"SELECT {colunas} FROM {tabela} ORDER BY id").fetchall()
             print(f"tabela {tabela} ({colunas}):")
             if not linhas:
@@ -616,6 +624,271 @@ def g19_prompt_da_recorrente():
     c.fim()
 
 
+# --- G28 A G30 (PRO-86): TEXTOS DO PAINEL E DOS RESUMOS, AINDA SEM RECEITA ---
+# Gravados contra o bot.py da main ANTES da PRO-86 mexer no código: sem
+# receita no banco, estas linhas têm de sair idênticas depois dela.
+class BotFalso:
+    """Faz o papel de context.bot nos resumos diário e mensal: grava cada
+    envio e cada exclusão e devolve ids previsíveis (900, 901...)."""
+
+    def __init__(self):
+        self.proximo_id = 900
+
+    async def send_message(self, chat_id, text, reply_markup=None, parse_mode=None):
+        msg_id = self.proximo_id
+        self.proximo_id += 1
+        EVENTOS.append(f"  bot.send_message(chat={chat_id}, parse_mode={parse_mode!r}) -> msg {msg_id}\n"
+                       f"    texto: {_txt(text)}\n"
+                       f"    teclado: {_teclado(reply_markup)}")
+        return SimpleNamespace(message_id=msg_id)
+
+    async def delete_message(self, chat_id, message_id):
+        EVENTOS.append(f"  bot.delete_message(chat={chat_id}, msg={message_id})")
+
+
+def _preparar_gastos_dos_resumos(c):
+    """Massa comum ao G28, ao G29a e ao G30 (fechamento 29, renda 5.000,
+    relógio em 05/11/2026 12:00 de Brasília: fatura vigente 2026-11, de 29/10
+    a 28/11, já com Sobra; a 2026-10 é anterior à data de corte, sem Sobra)."""
+    for categoria, valor, data, descricao in (
+        ('Alimentação', 120.0, '2026-10-10 12:00:00', 'Restaurante'),       # fatura 2026-10
+        ('Lazer', 60.0, '2026-10-20 21:00:00', 'Show'),                     # fatura 2026-10
+        ('Lazer', 80.0, '2026-10-30 20:00:00', 'Cinema'),                   # fatura 2026-11
+        ('Mercado', 150.0, '2026-11-02 10:00:00', 'Compras do Mês'),        # fatura 2026-11
+        ('Mercado', -200.0, '2026-11-05 08:00:00', 'Reembolso'),            # reembolso antigo: fora
+        ('Alimentação', 45.5, '2026-11-05 09:15:00', 'Café'),               # hoje
+        ('Lazer', 25.0, '2026-11-05 11:00:00', 'Livro'),                    # hoje
+    ):
+        c.preparar("INSERT INTO transacoes (user_id, categoria_nome, valor, data_transacao, "
+                   "metodo_pagamento, descricao) VALUES (?, ?, ?, ?, 'debito_pix', ?)",
+                   (UID, categoria, valor, data, descricao))
+    # Parcelado 3x de 100 (parcela 1 também é transação, que sai das avulsas).
+    c.preparar("INSERT INTO parcelamentos (user_id, categoria_nome, descricao, valor_total, valor_parcela, "
+               "total_parcelas, parcelas_pagas, data_criacao, ativo, ciclo_referencia) "
+               "VALUES (?, 'Roupas', 'Tênis', 300.0, 100.0, 3, 1, '2026-10-15 10:00:00', 1, '2026-10')", (UID,))
+    c.preparar("INSERT INTO transacoes (user_id, categoria_nome, valor, data_transacao, metodo_pagamento, "
+               "descricao, parcelamento_id) VALUES (?, 'Roupas', 100.0, '2026-10-15 10:00:00', 'credito', "
+               "'Tênis (1/3)', 1)", (UID,))
+    # Outro usuário: não entra em nada.
+    c.preparar("INSERT INTO transacoes (user_id, categoria_nome, valor, data_transacao) "
+               "VALUES (?, 'Mercado', 999.0, '2026-11-05 10:00:00')", (OUTRO_UID,))
+
+
+def g28_painel_sem_receita():
+    c = Cenario("G28", "Painel ('Ver Resumo' e histórico) sem receita: vigente com Sobra, "
+                       "fechada antes do corte sem Sobra, futura só com parcela")
+    _preparar_gastos_dos_resumos(c)
+    c.botao('botao_clicado', 'menu_resumo')
+    c.botao('ver_mes_historico', 'select_month_history_2026-11')
+    c.botao('ver_mes_historico', 'select_month_history_2026-10')
+    c.botao('ver_mes_historico', 'select_month_history_2026-12')
+    c.fim()
+
+
+def _rodar_resumo_diario(c):
+    c.context.bot = BotFalso()
+    c.context.job = SimpleNamespace(chat_id=UID)
+    c.user_data['msgs_fluxo'] = [700, 701]
+    c._rodar("enviar_resumo_diario(job.chat_id=1)", lambda: bot.enviar_resumo_diario(c.context))
+
+
+def g29_resumo_diario_sem_receita():
+    c = Cenario("G29a", "Resumo diário sem receita, dia com gasto (bloco do mês com Sobra)")
+    _preparar_gastos_dos_resumos(c)
+    _rodar_resumo_diario(c)
+    c.fim()
+
+    c = Cenario("G29b", "Resumo diário sem receita, dia sem gasto (o reembolso de hoje não conta)")
+    c.preparar("INSERT INTO transacoes (user_id, categoria_nome, valor, data_transacao) "
+               "VALUES (?, 'Mercado', 150.0, '2026-11-02 10:00:00')", (UID,))
+    c.preparar("INSERT INTO transacoes (user_id, categoria_nome, valor, data_transacao) "
+               "VALUES (?, 'Mercado', -200.0, '2026-11-05 08:00:00')", (UID,))
+    _rodar_resumo_diario(c)
+    c.fim()
+
+    c = Cenario("G29c", "Resumo diário sem receita, usuário sem dia de fechamento (sem bloco do mês)")
+    c.preparar("UPDATE usuarios SET dia_fechamento = NULL WHERE user_id = ?", (UID,))
+    c.preparar("INSERT INTO transacoes (user_id, categoria_nome, valor, data_transacao) "
+               "VALUES (?, 'Lazer', 25.0, '2026-11-05 11:00:00')", (UID,))
+    _rodar_resumo_diario(c)
+    c.fim()
+
+
+def g30_resumo_mensal_sem_receita():
+    c = Cenario("G30", "Resumo Mensal sem receita, no dia de fechamento: fatura com Sobra, "
+                       "anterior ao corte, só parcela e sem gasto nenhum")
+    _preparar_gastos_dos_resumos(c)
+    bot_falso = BotFalso()
+    for agora in (
+        datetime(2026, 11, 29, 0, 5, 0, tzinfo=calculos.FUSO_BRASILIA),   # fecha 2026-11 (com Sobra)
+        datetime(2026, 10, 29, 0, 5, 0, tzinfo=calculos.FUSO_BRASILIA),   # fecha 2026-10 (antes do corte)
+        datetime(2026, 12, 29, 0, 5, 0, tzinfo=calculos.FUSO_BRASILIA),   # fecha 2026-12 (só a parcela 3/3)
+        datetime(2027, 2, 28, 0, 5, 0, tzinfo=calculos.FUSO_BRASILIA),    # fecha 2027-02 (nenhum gasto)
+    ):
+        c.user_data['msgs_fluxo'] = [700]
+        c._rodar(f"enviar_resumo_mensal(user_id=1, nome='Ygor', dia_fechamento=29, agora={agora.isoformat()})",
+                 lambda agora=agora: bot.enviar_resumo_mensal(bot_falso, c.user_data, UID, 'Ygor', 29, agora))
+    c.fim()
+
+
+# --- G20 A G27 (PRO-86): RECEITA AVULSA PELO "REGISTRAR GASTO" ---
+IA_BICICLETA = resposta_json(tipo="receita", valor=500, categoria="Mercado",
+                             descricao="Venda da Bicicleta", estabelecimento=None)
+
+
+def g20_receita_confirmada():
+    c = Cenario("G20", "Receita 'vendi a bicicleta por 500' -> prévia -> Confirmar", [IA_BICICLETA],
+                com_receitas=True)
+    c.botao('iniciar_gasto', 'menu_gastar')
+    c.texto('salvar_gasto_livre', "vendi a bicicleta por 500")
+    c.botao('confirmar_receita', 'receita_confirmar')
+    c.fim()
+
+
+def g21_receita_cancelada():
+    c = Cenario("G21", "Receita -> prévia -> Cancelar (nada gravado)", [IA_BICICLETA], com_receitas=True)
+    c.texto('salvar_gasto_livre', "vendi a bicicleta por 500")
+    c.botao('cancelar_receita', 'receita_cancelar')
+    c.fim()
+
+
+def g22_g23_valor_zero_e_negativo():
+    for codigo, valor in (("G22", 0), ("G23", -200)):
+        resposta = resposta_json(tipo="receita", valor=valor, categoria=None, descricao="Reembolso",
+                                 estabelecimento=None)
+        c = Cenario(codigo, f"Receita com valor {valor}: mensagem de valor inválido, nada gravado", [resposta],
+                    com_receitas=True)
+        c.texto('salvar_gasto_livre', f"recebi {valor} de reembolso")
+        c.fim()
+
+
+def g24_toque_duplo_no_confirmar():
+    c = Cenario("G24", "Toque duplo no Confirmar: grava uma vez só; o segundo toque é 'Sessão expirada'",
+                [IA_BICICLETA], com_receitas=True)
+    c.texto('salvar_gasto_livre', "vendi a bicicleta por 500")
+    c.botao('confirmar_receita', 'receita_confirmar')
+    c.botao('confirmar_receita', 'receita_confirmar')
+    c.fim()
+
+
+def g25_voltar_no_meio_da_previa():
+    c = Cenario("G25", "Receita -> '← Voltar' (voltar_menu) no meio da prévia: limpa, nada gravado",
+                [IA_BICICLETA], com_receitas=True)
+    c.texto('salvar_gasto_livre', "vendi a bicicleta por 500")
+    c.botao('voltar_para_menu', 'voltar_menu')
+    c.botao('confirmar_receita', 'receita_confirmar')
+    c.fim()
+
+
+def g26_descricao_vazia_e_com_html():
+    resposta = resposta_json(tipo="receita", valor="150.5", categoria=None, descricao="   ",
+                             estabelecimento=None)
+    c = Cenario("G26a", "Receita com descrição vazia: 'Sem Informação' e NULL no banco", [resposta],
+                com_receitas=True)
+    c.texto('salvar_gasto_livre', "recebi 150,50")
+    c.botao('confirmar_receita', 'receita_confirmar')
+    c.fim()
+
+    resposta = resposta_json(tipo="Receita", valor=80.257, categoria=None,
+                             descricao="  Venda <b>Bike</b> & Cia ", estabelecimento=None)
+    c = Cenario("G26b", "Receita com HTML na descrição: escapada na mensagem, gravada aparada; valor arredondado",
+                [resposta], com_receitas=True)
+    c.texto('salvar_gasto_livre', "vendi <b>bike</b> & cia por 80,257")
+    c.botao('confirmar_receita', 'receita_confirmar')
+    c.fim()
+
+
+def g27_receita_com_categoria_fora_da_lista():
+    resposta = resposta_json(tipo="receita", valor=5000, categoria="Salário", descricao="Salário",
+                             estabelecimento="Empresa")
+    c = Cenario("G27", "Receita com categoria fora da lista: a categoria é ignorada e registra normalmente",
+                [resposta], com_receitas=True)
+    c.texto('salvar_gasto_livre', "recebi 5000 de salário")
+    c.botao('confirmar_receita', 'receita_confirmar')
+    c.fim()
+
+    resposta = resposta_json(tipo="transferência", valor=50, categoria="Mercado", descricao="Pix para a Ana",
+                             estabelecimento=None)
+    c = Cenario("G27b", "IA devolve um 'tipo' que não é despesa nem receita: nada gravado", [resposta],
+                com_receitas=True)
+    c.texto('salvar_gasto_livre', "mandei 50 para a ana")
+    c.fim()
+
+
+# --- G28 A G30 COM RECEITA (PRO-86): A LINHA NOVA, NO LUGAR COMBINADO ---
+def _preparar_receitas_dos_resumos(c):
+    """Receitas por cima da massa dos resumos: fatura 2026-11 = 500 + 60 = 560
+    (o 60 cai no primeiro minuto do dia de fechamento 29/10); fatura 2026-10 =
+    300 + 40 = 340 (o 40 às 23:59 do dia 28/10); a 2026-12 fica sem receita;
+    a de outro usuário não entra."""
+    for user_id, valor, data, descricao in (
+        (UID, 300.0, '2026-10-15 09:00:00', 'Venda do Celular'),        # fatura 2026-10
+        (UID, 40.0, '2026-10-28 23:59:00', 'Reembolso do Amigo'),       # fatura 2026-10
+        (UID, 60.0, '2026-10-29 00:01:00', 'Cashback'),                 # fatura 2026-11
+        (UID, 500.0, '2026-11-03 10:00:00', 'Venda da Bicicleta'),      # fatura 2026-11
+        (OUTRO_UID, 999.0, '2026-11-04 10:00:00', 'De outro usuário'),  # não entra
+    ):
+        c.preparar("INSERT INTO receitas (user_id, valor, descricao, data_receita, origem) "
+                   "VALUES (?, ?, ?, ?, 'avulsa')", (user_id, valor, descricao, data))
+
+
+def g28_painel_com_receita():
+    c = Cenario("G28r", "Painel com receita: 'Receitas' abaixo de 'Renda' (também sem Sobra); "
+                        "fatura sem receita igual a antes", com_receitas=True)
+    _preparar_gastos_dos_resumos(c)
+    _preparar_receitas_dos_resumos(c)
+    c.botao('botao_clicado', 'menu_resumo')
+    c.botao('ver_mes_historico', 'select_month_history_2026-11')
+    c.botao('ver_mes_historico', 'select_month_history_2026-10')
+    c.botao('ver_mes_historico', 'select_month_history_2026-12')
+    c.fim()
+
+
+def g29_resumo_diario_com_receita():
+    c = Cenario("G29ar", "Resumo diário com receita, dia com gasto: 'Receitas no Mês' entre o gasto e a Sobra",
+                com_receitas=True)
+    _preparar_gastos_dos_resumos(c)
+    _preparar_receitas_dos_resumos(c)
+    _rodar_resumo_diario(c)
+    c.fim()
+
+    c = Cenario("G29br", "Resumo diário com receita hoje e nenhum gasto hoje: mensagem curta de sempre",
+                com_receitas=True)
+    c.preparar("INSERT INTO transacoes (user_id, categoria_nome, valor, data_transacao) "
+               "VALUES (?, 'Mercado', 150.0, '2026-11-02 10:00:00')", (UID,))
+    c.preparar("INSERT INTO receitas (user_id, valor, descricao, data_receita, origem) "
+               "VALUES (?, 200.0, 'Reembolso', '2026-11-05 08:00:00', 'avulsa')", (UID,))
+    _rodar_resumo_diario(c)
+    c.fim()
+
+    c = Cenario("G29cr", "Resumo diário com receita, usuário sem dia de fechamento (sem bloco do mês)",
+                com_receitas=True)
+    c.preparar("UPDATE usuarios SET dia_fechamento = NULL WHERE user_id = ?", (UID,))
+    c.preparar("INSERT INTO transacoes (user_id, categoria_nome, valor, data_transacao) "
+               "VALUES (?, 'Lazer', 25.0, '2026-11-05 11:00:00')", (UID,))
+    c.preparar("INSERT INTO receitas (user_id, valor, descricao, data_receita, origem) "
+               "VALUES (?, 200.0, 'Reembolso', '2026-11-05 08:00:00', 'avulsa')", (UID,))
+    _rodar_resumo_diario(c)
+    c.fim()
+
+
+def g30_resumo_mensal_com_receita():
+    c = Cenario("G30r", "Resumo Mensal com receita: 'Receitas' entre 'Renda' e o total gasto; "
+                        "fatura sem receita igual a antes", com_receitas=True)
+    _preparar_gastos_dos_resumos(c)
+    _preparar_receitas_dos_resumos(c)
+    bot_falso = BotFalso()
+    for agora in (
+        datetime(2026, 11, 29, 0, 5, 0, tzinfo=calculos.FUSO_BRASILIA),   # fecha 2026-11 (receitas 560, com Sobra)
+        datetime(2026, 10, 29, 0, 5, 0, tzinfo=calculos.FUSO_BRASILIA),   # fecha 2026-10 (receitas 340, sem Sobra)
+        datetime(2026, 12, 29, 0, 5, 0, tzinfo=calculos.FUSO_BRASILIA),   # fecha 2026-12 (sem receita)
+    ):
+        c.user_data['msgs_fluxo'] = [700]
+        c._rodar(f"enviar_resumo_mensal(user_id=1, nome='Ygor', dia_fechamento=29, agora={agora.isoformat()})",
+                 lambda agora=agora: bot.enviar_resumo_mensal(bot_falso, c.user_data, UID, 'Ygor', 29, agora))
+    c.fim()
+
+
 def main():
     print("TESTE DE CARACTERIZAÇÃO DO REGISTRO DE GASTO (PRO-85)")
     g01_debito_pix_com_estabelecimento()
@@ -636,6 +909,19 @@ def main():
     g16_botoes_voltar()
     g17_lancar_item_recorrente()
     g19_prompt_da_recorrente()
+    g28_painel_sem_receita()
+    g29_resumo_diario_sem_receita()
+    g30_resumo_mensal_sem_receita()
+    g20_receita_confirmada()
+    g21_receita_cancelada()
+    g22_g23_valor_zero_e_negativo()
+    g24_toque_duplo_no_confirmar()
+    g25_voltar_no_meio_da_previa()
+    g26_descricao_vazia_e_com_html()
+    g27_receita_com_categoria_fora_da_lista()
+    g28_painel_com_receita()
+    g29_resumo_diario_com_receita()
+    g30_resumo_mensal_com_receita()
     print()
     print("FIM")
 

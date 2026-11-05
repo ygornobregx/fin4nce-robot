@@ -1,6 +1,7 @@
 """API local do Mini App: autentica pelo initData do Telegram (PRO-72) e expõe
 as rotas de leitura /me, /resumo e /historico (PRO-76; /resumo sem orçamento
-por categoria desde a PRO-83) e /gastos/recentes (PRO-79, com o
+por categoria desde a PRO-83; com o total de receitas da fatura desde a
+PRO-86) e /gastos/recentes (PRO-79, com o
 estabelecimento do gasto desde a PRO-81) e /gastos/{id} (PRO-80, detalhe de um
 gasto, com as parcelas pagas). Os números e a consulta vêm todos do
 calculos.py; as rotas só buscam os dados e montam o JSON.
@@ -133,7 +134,9 @@ def resumo(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_cone
     _, _, dia_fechamento = carregar_cadastro(conn, user_id)
     ano_mes = obter_ciclo_atual(dia_fechamento, agora)
     # Mesma função do "Ver Resumo" do bot. sobra_mes é None (null no JSON)
-    # quando a fatura vigente é anterior à data de corte da Sobra.
+    # quando a fatura vigente é anterior à data de corte da Sobra, e já vem com
+    # as receitas da fatura somadas (PRO-86). total_receitas vem sempre, 0.0
+    # sem receita (contrato estável para a PRO-88 e a PRO-89).
     resumo_fatura = calcular_resumo_fatura(conn, user_id, ano_mes, dia_fechamento)
     return {
         "ano_mes": ano_mes,
@@ -141,6 +144,7 @@ def resumo(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_cone
         "renda": em_reais(resumo_fatura.renda),
         "total_gasto": em_reais(resumo_fatura.total_gasto),
         "sobra_mes": None if resumo_fatura.sobra_mes is None else em_reais(resumo_fatura.sobra_mes),
+        "total_receitas": em_reais(resumo_fatura.total_receitas),
         "categorias": [
             {"nome": nome, "gasto": em_reais(gasto)}
             for nome, gasto in resumo_fatura.categorias

@@ -5,8 +5,9 @@ do Mini App — a mesma ideia do calculos.py.
 O bot cuida só do Telegram: mensagens, botões, estados da conversa e o
 user_data. Tudo o que decide o que vai para o banco (o prompt com as
 categorias do usuário, a leitura da resposta da IA, o INSERT do gasto avulso
-e do parcelado e as edições do último gasto) fica aqui, para o bot e a API
-gravarem exatamente as mesmas linhas.
+e do parcelado, as edições do último gasto e, desde a PRO-86, a validação e o
+INSERT da receita avulsa) fica aqui, para o bot e a API gravarem exatamente
+as mesmas linhas.
 
 Só depende da biblioteca padrão e do calculos.py: não importa telegram, bot,
 dotenv nem libsql, não lê o .env e não abre conexão ao ser importado. A
@@ -164,34 +165,65 @@ def montar_prompt_gasto(categorias, texto_usuario):
 
 
 class GastoInterpretado(NamedTuple):
-    """O que a IA entendeu do texto. Na receita, só 'tipo' vem preenchido: o
-    valor e a categoria nem são lidos (quem chama decide o que fazer com a
-    receita; hoje o bot a recusa)."""
+    """O que a IA entendeu do texto. Na despesa, todos os campos. Na receita
+    (PRO-86), 'valor' (ou None, se não for número) e 'descricao' (aparada, ou
+    None se vazia); a categoria e o estabelecimento nem são lidos. Em outro
+    'tipo' qualquer, só 'tipo' vem preenchido."""
     tipo: str                         # dados['tipo'].strip().lower()
-    valor: Optional[float]            # float(dados['valor']); None quando não é despesa
-    categoria: Optional[str]          # dados['categoria'].capitalize()
-    descricao: Optional[str]          # dados.get('descricao', ''), como veio da IA
-    estabelecimento: Optional[str]    # já limpo por normalizar_estabelecimento
-    categoria_valida: bool            # a categoria está na lista do usuário
+    valor: Optional[float]            # despesa: float(dados['valor']); receita: _ler_valor_receita
+    categoria: Optional[str]          # dados['categoria'].capitalize(); None fora da despesa
+    descricao: Optional[str]          # despesa: dados.get('descricao', ''), como veio; receita: aparada
+    estabelecimento: Optional[str]    # já limpo por normalizar_estabelecimento; None fora da despesa
+    categoria_valida: bool            # a categoria está na lista do usuário; False fora da despesa
+
+
+def _ler_valor_receita(valor):
+    """Valor da receita como veio da IA, sem levantar erro: número (int ou
+    float, não bool) ou texto numérico viram float; qualquer outra coisa
+    (texto não numérico, nulo, lista...) vira None. Não confere se é positivo
+    nem finito: isso é com validar_valor_receita."""
+    if isinstance(valor, bool) or not isinstance(valor, (int, float, str)):
+        return None
+    try:
+        return float(valor)
+    except (ValueError, OverflowError):  # texto não numérico; inteiro grande demais
+        return None
+
+
+def _aparar_descricao(descricao):
+    """Descrição sem espaços nas pontas, ou None quando não é texto ou fica vazia."""
+    if not isinstance(descricao, str):
+        return None
+    return descricao.strip() or None
 
 
 async def interpretar_gasto(texto_usuario, categorias):
     """Monta o prompt com as categorias do usuário, chama a IA (com novas
     tentativas) e lê o JSON. A ordem das leituras é a de sempre: 'tipo'
-    primeiro (na receita, devolve cedo, sem ler valor nem categoria, para um
-    "recebi 5.000 de salário" nunca virar gasto nem dar erro de categoria);
-    depois 'valor', 'categoria', 'descricao' e 'estabelecimento'.
+    primeiro; depois, na despesa, 'valor', 'categoria', 'descricao' e
+    'estabelecimento'.
 
-    Não valida o valor (zero ou negativo passam, como antes) e não embrulha
-    exceções: KeyError, ValueError, JSONDecodeError e os erros da IA sobem
-    iguais, porque a mensagem de erro do bot mostra str(e). A checagem "a
-    categoria está na lista" vira o campo 'categoria_valida'; a mensagem de
-    categoria não encontrada fica com quem chama."""
+    Receita (PRO-86): lê só 'valor' e 'descricao', SEM levantar erro (valor
+    que não é número vira None, para o bot mostrar a mensagem de valor
+    inválido); categoria e estabelecimento são ignorados, para um "recebi
+    5.000 de salário" nunca dar erro de categoria. Outro 'tipo' qualquer
+    devolve cedo, sem ler nada além do tipo.
+
+    Na despesa, não valida o valor (zero ou negativo passam, como antes) e
+    não embrulha exceções: KeyError, ValueError, JSONDecodeError e os erros
+    da IA sobem iguais, porque a mensagem de erro do bot mostra str(e). A
+    checagem "a categoria está na lista" vira o campo 'categoria_valida'; a
+    mensagem de categoria não encontrada fica com quem chama."""
     prompt = montar_prompt_gasto(categorias, texto_usuario)
     response = await gerar_conteudo_com_retry(prompt)
     dados = limpar_json_ia(response.text)
 
     tipo = dados['tipo'].strip().lower()
+    if tipo == 'receita':
+        return GastoInterpretado(
+            tipo, _ler_valor_receita(dados.get('valor')), None,
+            _aparar_descricao(dados.get('descricao')), None, False
+        )
     if tipo != 'despesa':
         return GastoInterpretado(tipo, None, None, None, None, False)
 
@@ -296,6 +328,54 @@ def registrar_gasto_parcelado(conn, user_id, categoria, valor_total, total_parce
         raise
 
     return ParceladoRegistrado(parcelamento_id, lancamento[1], valor_parcela, ciclo_referencia)
+
+
+# --- RECEITA AVULSA (PRO-86) ---
+def validar_valor_receita(valor):
+    """Valor de receita aceito: número (int ou float; bool e texto NÃO valem),
+    finito e maior que zero depois de arredondado a 2 casas (round do Python).
+    Devolve o float arredondado, ou None se não servir. Sem teto: a prévia do
+    bot mostra o valor antes de gravar (D6)."""
+    if isinstance(valor, bool) or not isinstance(valor, (int, float)):
+        return None
+    try:
+        valor = float(valor)
+    except OverflowError:  # inteiro grande demais para float
+        return None
+    # Fora do intervalo aberto: NaN (nunca compara) e ±infinito. Sem importar
+    # math, para o registro.py continuar só com os imports de antes no topo.
+    if not float('-inf') < valor < float('inf'):
+        return None
+    valor = round(valor, 2)
+    return valor if valor > 0 else None
+
+
+def registrar_receita(conn, user_id, valor, momento, descricao=None, origem='avulsa'):
+    """Grava uma receita na tabela 'receitas' (valor sempre positivo) e faz o
+    commit; devolve o id da linha nova. Valida o valor de novo
+    (validar_valor_receita) e levanta ValueError ANTES do INSERT se ele não
+    for número maior que zero (o CHECK do banco não barra texto). 'momento' é
+    o texto 'AAAA-MM-DD HH:MM:SS' em Brasília (no bot, a hora da mensagem; na
+    API, momento_agora). A descrição é aparada; vazia vira NULL. A receita não
+    tem categoria nem forma de pagamento e não cria linha em 'transacoes'. A
+    conexão não é fechada aqui: quem abriu fecha. Se o banco recusar a linha
+    (ex.: user_id ou momento nulos, pelas restrições NOT NULL), desfaz e a
+    exceção sobe. Base da rota POST /receitas da PRO-88."""
+    valor_valido = validar_valor_receita(valor)
+    if valor_valido is None:
+        raise ValueError(f"Valor de receita inválido: {valor!r}")
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'INSERT INTO receitas (user_id, valor, descricao, data_receita, origem) VALUES (?, ?, ?, ?, ?)',
+            (user_id, valor_valido, _aparar_descricao(descricao), momento, origem)
+        )
+        receita_id = cursor.lastrowid
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return receita_id
 
 
 # --- EDIÇÃO DO ÚLTIMO GASTO ---

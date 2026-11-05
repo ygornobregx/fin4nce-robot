@@ -6,7 +6,7 @@
 
 2. Injeção de categorias no prompt: ANTES de enviar a mensagem do usuário para a IA categorizar um gasto, consulte o banco, busque as categorias ativas do usuário e injete essa lista no prompt. Ordene no prompt que a IA classifique o gasto obrigatoriamente em uma das opções da lista, fazendo o mapeamento de sinônimos.
 
-3. Sinais: despesas = valores POSITIVOS no banco. Receitas = valores NEGATIVOS.
+3. Sinais: despesas = valores POSITIVOS em transacoes. Receitas = valores POSITIVOS na tabela receitas (desde a PRO-86). As transações negativas antigas em transacoes (reembolsos anteriores à PRO-86) ficam no banco e não entram em nenhum cálculo.
 
 4. Cálculos centralizados: gasto, receitas, Sobra do Mês e ciclo de fatura ficam em `calculos.py`. O bot e a API usam essas funções; nunca duplicar essa lógica em outro lugar. Da mesma forma, a interpretação do gasto pela IA e a gravação de gasto ficam em `registro.py` (PRO-85); o bot e a API usam essas funções.
 

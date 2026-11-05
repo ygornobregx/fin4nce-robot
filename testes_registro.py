@@ -1,5 +1,6 @@
 """Testes de unidade do registro.py (PRO-85): a interpretação do gasto pela IA
-e a gravação do gasto, fora do bot.
+e a gravação do gasto, fora do bot. Desde a PRO-86, também a leitura, a
+validação e a gravação da receita avulsa.
 
 Roda com `python testes_registro.py`. Não usa .env, rede nem banco real: a IA
 é falsa (registro.definir_cliente_ia), o asyncio.sleep não dorme e o banco é
@@ -93,6 +94,9 @@ def criar_banco(caminho, com_transacoes=True):
         CREATE TABLE parcelamentos (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, categoria_nome TEXT,
             descricao TEXT, valor_total REAL, valor_parcela REAL, total_parcelas INTEGER,
             parcelas_pagas INTEGER DEFAULT 1, data_criacao TEXT, ativo INTEGER DEFAULT 1, ciclo_referencia TEXT);
+        CREATE TABLE receitas (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            valor REAL NOT NULL CHECK (valor > 0), descricao TEXT, data_receita TEXT NOT NULL,
+            origem TEXT NOT NULL DEFAULT 'avulsa', receita_recorrente_id INTEGER);
     ''')
     if com_transacoes:
         conn.execute('''CREATE TABLE transacoes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
@@ -301,9 +305,47 @@ class TestInterpretarGasto(ComIAFalsa):
         self.assertEqual(gasto, registro.GastoInterpretado('despesa', 12.5, 'Roupas', "  Camisa ", 'Renner', True))
         self.assertEqual(ia.chamadas[0][1], registro.montar_prompt_gasto(self.CATEGORIAS, "texto do usuário"))
 
-    def test_receita_nao_le_valor_nem_categoria(self):
+    def test_receita_valor_invalido_vira_none_sem_erro(self):
+        # Mudou de propósito na PRO-86: a receita passa a ler valor e descrição,
+        # mas um valor que não é número vira None, sem levantar erro.
         gasto, _ = self.interpretar(json.dumps({"tipo": "Receita ", "valor": "abc"}))
         self.assertEqual(gasto, registro.GastoInterpretado('receita', None, None, None, None, False))
+
+    def test_receita_le_valor_e_descricao_e_ignora_categoria(self):
+        gasto, ia = self.interpretar(json.dumps({
+            "tipo": "Receita", "valor": 500, "categoria": "Salário",
+            "descricao": "  Venda da Bicicleta ", "estabelecimento": "OLX"}))
+        self.assertEqual(gasto, registro.GastoInterpretado('receita', 500.0, None, 'Venda da Bicicleta', None, False))
+        # O prompt é o mesmo do gasto (não muda com a PRO-86).
+        self.assertEqual(ia.chamadas[0][1], registro.montar_prompt_gasto(self.CATEGORIAS, "texto do usuário"))
+
+    def test_receita_sem_categoria_nem_descricao_nao_levanta(self):
+        gasto, _ = self.interpretar(json.dumps({"tipo": "receita", "valor": "200.5"}))
+        self.assertEqual(gasto, registro.GastoInterpretado('receita', 200.5, None, None, None, False))
+
+    def test_receita_valores_lidos_sem_validar(self):
+        # interpretar_gasto só lê: zero e negativo passam (quem valida é
+        # validar_valor_receita); o que não é número vira None.
+        casos = [(0, 0.0), (-200, -200.0), ("-200", -200.0), (None, None), (True, None),
+                 ([500], None), ({"v": 1}, None), ("doze", None), (10 ** 400, None)]
+        for valor, esperado in casos:
+            with self.subTest(valor=valor):
+                gasto, _ = self.interpretar(json.dumps({"tipo": "receita", "valor": valor}))
+                self.assertEqual(gasto.valor, esperado)
+
+    def test_receita_sem_valor_vira_none(self):
+        gasto, _ = self.interpretar(json.dumps({"tipo": "receita", "descricao": "Reembolso"}))
+        self.assertEqual(gasto, registro.GastoInterpretado('receita', None, None, 'Reembolso', None, False))
+
+    def test_receita_descricao_vazia_ou_nao_texto_vira_none(self):
+        for descricao in ("   ", "", 123, None):
+            with self.subTest(descricao=descricao):
+                gasto, _ = self.interpretar(json.dumps({"tipo": "receita", "valor": 10, "descricao": descricao}))
+                self.assertIsNone(gasto.descricao)
+
+    def test_outro_tipo_devolve_cedo_sem_ler_nada(self):
+        gasto, _ = self.interpretar(json.dumps({"tipo": "Transferência", "valor": "abc"}))
+        self.assertEqual(gasto, registro.GastoInterpretado('transferência', None, None, None, None, False))
 
     def test_categoria_minuscula_e_capitalizada(self):
         gasto, _ = self.interpretar(json.dumps({"tipo": "despesa", "valor": 10, "categoria": "alimentação"}))
@@ -384,6 +426,72 @@ class TestRegistrarGastoParceladoComErro(ComBanco):
             registro.registrar_gasto_parcelado(self.conn, UID, 'Roupas', 300.0, 3, MOMENTO)
         self.assertFalse(self.conn.in_transaction)
         self.assertEqual(self.ler("SELECT COUNT(*) FROM parcelamentos"), [(0,)])
+
+
+# --- RECEITA AVULSA (PRO-86) ---
+class TestValidarValorReceita(unittest.TestCase):
+    def test_aceitos_arredondados_a_duas_casas(self):
+        # round() do Python sobre o valor binário do float: 10.005 é guardado
+        # como 10.00500000000000078... e vira 10.01; 2.675 é guardado como
+        # 2.67499999999999982... e vira 2.67.
+        casos = [(500, 500.0), (500.0, 500.0), (0.01, 0.01), (1234.567, 1234.57),
+                 (10.005, 10.01), (2.675, 2.67), (10.006, 10.01), (1e12, 1e12)]
+        for valor, esperado in casos:
+            with self.subTest(valor=valor):
+                self.assertEqual(registro.validar_valor_receita(valor), esperado)
+                self.assertIsInstance(registro.validar_valor_receita(valor), float)
+
+    def test_recusados(self):
+        casos = [0, 0.0, -0.0, -5, -200.0, 0.004, "500", "abc", None, True, False,
+                 float('nan'), float('inf'), float('-inf'), 10 ** 400, [500]]
+        for valor in casos:
+            with self.subTest(valor=valor):
+                self.assertIsNone(registro.validar_valor_receita(valor))
+
+
+class TestRegistrarReceita(ComBanco):
+    COLUNAS = 'user_id, valor, descricao, data_receita, origem, receita_recorrente_id'
+
+    def receitas(self):
+        return self.ler(f"SELECT {self.COLUNAS} FROM receitas ORDER BY id")
+
+    def test_grava_faz_commit_e_nao_toca_em_transacoes(self):
+        receita_id = registro.registrar_receita(self.conn, UID, 500, MOMENTO, "  Venda da Bicicleta ")
+        self.assertEqual(receita_id, 1)
+        self.assertEqual(self.receitas(), [(UID, 500.0, 'Venda da Bicicleta', MOMENTO, 'avulsa', None)])
+        self.assertEqual(self.ler("SELECT COUNT(*) FROM transacoes"), [(0,)])
+        self.assertFalse(self.conn.in_transaction)
+
+    def test_descricao_vazia_ou_ausente_vira_null(self):
+        registro.registrar_receita(self.conn, UID, 10.0, MOMENTO, "   ")
+        registro.registrar_receita(self.conn, UID, 20.0, MOMENTO)
+        self.assertEqual([linha[2] for linha in self.receitas()], [None, None])
+
+    def test_valor_arredondado_e_origem(self):
+        receita_id = registro.registrar_receita(self.conn, OUTRO_UID, 10.006, MOMENTO, "Salário", origem='recorrente')
+        self.assertEqual(receita_id, 1)
+        self.assertEqual(self.receitas(), [(OUTRO_UID, 10.01, 'Salário', MOMENTO, 'recorrente', None)])
+
+    def test_valor_invalido_levanta_value_error_sem_gravar(self):
+        for valor in (0, -200, "500", "abc", None, True, float('nan'), float('inf')):
+            with self.subTest(valor=valor):
+                with self.assertRaises(ValueError):
+                    registro.registrar_receita(self.conn, UID, valor, MOMENTO, "X")
+                self.assertFalse(self.conn.in_transaction)
+        self.assertEqual(self.ler("SELECT COUNT(*) FROM receitas"), [(0,)])
+
+    def test_banco_recusa_sem_dono_ou_sem_data_desfaz_e_a_excecao_sobe(self):
+        for user_id, momento in ((None, MOMENTO), (UID, None)):
+            with self.subTest(user_id=user_id, momento=momento):
+                with self.assertRaises(sqlite3.IntegrityError):
+                    registro.registrar_receita(self.conn, user_id, 10.0, momento)
+                self.assertFalse(self.conn.in_transaction)
+        self.assertEqual(self.ler("SELECT COUNT(*) FROM receitas"), [(0,)])
+
+    def test_nao_fecha_a_conexao(self):
+        registro.registrar_receita(self.conn, UID, 1.0, MOMENTO)
+        registro.registrar_receita(self.conn, UID, 2.0, MOMENTO)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM receitas").fetchone(), (2,))
 
 
 # --- EDIÇÃO DO ÚLTIMO GASTO ---

@@ -19,8 +19,9 @@ from calculos import (
     calcular_resumo_fatura,
     obter_ciclo_atual,
 )
-# Interpretação do gasto pela IA e gravação do gasto (PRO-85): ficam no
-# registro.py, que a API também usa. O bot cuida das mensagens e dos estados.
+# Interpretação do gasto pela IA e gravação do gasto (PRO-85) e da receita
+# (PRO-86): ficam no registro.py, que a API também usa. O bot cuida das
+# mensagens e dos estados.
 from registro import (
     alterar_valor_lancamento,
     buscar_lancamento,
@@ -34,6 +35,8 @@ from registro import (
     obter_cliente_ia,
     registrar_gasto_avulso,
     registrar_gasto_parcelado,
+    registrar_receita,
+    validar_valor_receita,
 )
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest, NetworkError
@@ -76,6 +79,7 @@ CONFIRMAR_PARCELA, ESCOLHER_PARCELAS, DIGITAR_PARCELAS = range(31, 34)
 EDITAR_ULTIMO_GASTO = 34
 METODO_PAGAMENTO = 35
 EDITAR_GASTO_ESCOLHA, EDITAR_CATEGORIA_GASTO = range(36, 38)
+CONFIRMAR_RECEITA = 38  # prévia da receita (PRO-86), no mesmo ConversationHandler do gasto
 ALERTA_ESCOLHA, ALERTA_CUSTOM, ALERTA_VISUALIZACAO = range(50, 53)
 EDITAR_NOME_CAT = 60
 EDITAR_DIA_VENCIMENTO = 70
@@ -165,6 +169,18 @@ def iniciar_banco():
         valor REAL,
         data_transferencia TEXT
     )''')
+    # Receitas avulsas (PRO-86): valor sempre positivo (o banco recusa zero ou
+    # negativo); data_receita em Brasília 'AAAA-MM-DD HH:MM:SS'; origem
+    # 'avulsa' agora e 'recorrente' na PRO-87 (com receita_recorrente_id).
+    cursor.execute('''CREATE TABLE IF NOT EXISTS receitas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        valor REAL NOT NULL CHECK (valor > 0),
+        descricao TEXT,
+        data_receita TEXT NOT NULL,
+        origem TEXT NOT NULL DEFAULT 'avulsa',
+        receita_recorrente_id INTEGER
+    )''')
 
     migrar_colunas_faltantes(cursor)
 
@@ -214,16 +230,23 @@ def montar_grade(botoes, colunas=3):
 def montar_texto_painel(titulo, resumo, dia_fechamento, rotulo_gastos="Gastos Atuais"):
     """Painel compartilhado pelo 'Ver Resumo' e pelo detalhe de cada mês do
     histórico (mesmo layout). 'resumo' é o ResumoFatura de
-    calcular_resumo_fatura (renda, categorias (nome, gasto), gasto total e
-    Sobra do Mês). A linha 'Sobra do Mês' só aparece quando a fatura tem Sobra
-    (sobra_mes não é None: fatura da data de corte em diante)."""
+    calcular_resumo_fatura (renda, categorias (nome, gasto), gasto total,
+    Sobra do Mês e receitas). A linha 'Sobra do Mês' só aparece quando a
+    fatura tem Sobra (sobra_mes não é None: fatura da data de corte em
+    diante). A linha 'Receitas' (PRO-86) fica logo abaixo de 'Renda' e só
+    aparece quando a fatura tem receita, com ou sem Sobra: sem receita, o
+    painel é o mesmo de antes."""
     linha_sobra = (
         f"Sobra do Mês: {formatar_real(resumo.sobra_mes)}\n" if resumo.sobra_mes is not None else ""
+    )
+    linha_receitas = (
+        f"Receitas: {formatar_real(resumo.total_receitas)}\n" if resumo.total_receitas > 0 else ""
     )
     texto = (
         f"{titulo}\n\n"
         f"{DIVISOR}\n\n"
         f"Renda: {formatar_real(resumo.renda)}\n"
+        f"{linha_receitas}"
         f"{rotulo_gastos}: {formatar_real(resumo.total_gasto)}\n"
         f"{linha_sobra}"
         f"Fechamento Fatura: Dia {dia_fechamento}\n\n"
@@ -444,6 +467,7 @@ def linha_voltar_com_menu(callback_voltar):
 CHAVES_ESTADO_TEMPORARIO = (
     'gasto_pendente', 'ultimo_gasto', 'cat_em_edicao',
     'nome_temp', 'renda_temp', 'categorias_temp',
+    'receita_pendente',
 )
 
 def resetar_conversas(application, chat_id, user_id):
@@ -603,11 +627,14 @@ async def receber_dia_fechamento(update: Update, context: ContextTypes.DEFAULT_T
 # --- FLUXO DE GASTO INTELIGENTE COM IA ---
 def _montar_tela_gasto_valor():
     """Tela inicial do fluxo de gasto. É a primeira etapa, então o '← Voltar'
-    não tem um passo anterior pra retornar: cancela e volta ao Menu Principal."""
+    não tem um passo anterior pra retornar: cancela e volta ao Menu Principal.
+    Desde a PRO-86, a mesma tela também registra receita (a IA separa
+    "despesa" de "receita"), e a última linha avisa isso."""
     texto = (
         "Registro Inteligente de Gastos\n\n"
         "Envie um áudio ou digite o quanto gastou e em qual categoria foi.\n\n"
-        "<i>Exemplo: \"Gastei 45,90 no mercado\"</i>"
+        "<i>Exemplo: \"Gastei 45,90 no mercado\"</i>\n\n"
+        "Também vale para dinheiro que entrou: <i>\"Recebi 200 de reembolso\"</i>"
     )
     return texto, TECLADO_VOLTAR
 
@@ -734,17 +761,30 @@ async def salvar_gasto_livre(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Prompt + Gemini (com retry/backoff) + leitura do JSON: registro.py.
         gasto = await interpretar_gasto(texto_usuario, categorias_existentes)
 
-        # Receita (PRO-83): recusada sem gravar nada, até a PRO-86 trazer o
-        # registro de receita. A IA continua separando "despesa" e "receita"
-        # justamente para um "recebi 5.000 de salário" nunca virar gasto.
-        # Vem antes da checagem de categoria: para a receita, a categoria não
-        # importa, e o aviso combinado aparece mesmo com categoria fora da lista.
+        # Receita (PRO-86): vem antes da checagem de categoria, porque a
+        # receita não tem categoria (a que a IA devolver é ignorada). Valor
+        # zero, negativo ou que não é número é recusado sem gravar (D6); o
+        # válido vai para a prévia, e só o "Confirmar" grava (D4).
+        if gasto.tipo == 'receita':
+            valor_receita = validar_valor_receita(gasto.valor)
+            if valor_receita is None:
+                await enviar_fluxo(context, user_id, MENSAGEM_VALOR_RECEITA_INVALIDO,
+                                   reply_markup=obter_teclado_menu())
+                return ConversationHandler.END
+            # Data da receita = hora da mensagem no Telegram, como no gasto (D7).
+            context.user_data['receita_pendente'] = {
+                'valor': valor_receita,
+                'descricao': gasto.descricao,
+                'momento_envio': momento_envio,
+            }
+            texto, teclado = _montar_tela_previa_receita(valor_receita, gasto.descricao)
+            await enviar_fluxo(context, user_id, texto, reply_markup=teclado)
+            return CONFIRMAR_RECEITA
+
+        # Nem despesa nem receita: a IA devolveu um 'tipo' desconhecido. Nada
+        # é gravado.
         if gasto.tipo != 'despesa':
-            await enviar_fluxo(
-                context, user_id,
-                "Registro de receita chega em breve. Por enquanto, registre só gastos.",
-                reply_markup=obter_teclado_menu()
-            )
+            await enviar_fluxo(context, user_id, MENSAGEM_TIPO_DESCONHECIDO, reply_markup=obter_teclado_menu())
             return ConversationHandler.END
 
         # Validação do retorno: mesmo com o prompt restringindo as opções,
@@ -778,6 +818,68 @@ async def salvar_gasto_livre(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         await enviar_fluxo(context, user_id, mensagem_erro_ia(e), reply_markup=obter_teclado_menu())
         return ConversationHandler.END
+
+# --- RECEITA AVULSA (PRO-86) ---
+MENSAGEM_VALOR_RECEITA_INVALIDO = (
+    "Não entendi o valor dessa receita. Envie de novo com o valor, por exemplo: "
+    "\"Recebi 200 de reembolso\"."
+)
+MENSAGEM_TIPO_DESCONHECIDO = (
+    "Não entendi se é um gasto ou uma receita. Envie de novo, por exemplo: "
+    "\"Gastei 45,90 no mercado\" ou \"Recebi 200 de reembolso\"."
+)
+
+def _texto_descricao_receita(descricao):
+    """Descrição da receita pronta para o HTML do Telegram: escapada (vem do
+    texto do usuário, pela IA), ou 'Sem Informação' quando vazia."""
+    return escape(descricao) if descricao else "Sem Informação"
+
+def _montar_tela_previa_receita(valor, descricao):
+    """Prévia 'Entendi Assim:' da receita (D4/D5): nada é gravado até o
+    'Confirmar'. A frase da renda lembra que o salário já entra na Sobra."""
+    texto = (
+        "Entendi Assim:\n\n"
+        f"Receita: <b>{formatar_real(valor)}</b>\n"
+        f"Descrição: {_texto_descricao_receita(descricao)}\n\n"
+        "A sua renda mensal já entra na Sobra. Registre aqui só o dinheiro extra."
+    )
+    teclado = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Confirmar", callback_data='receita_confirmar')],
+        [InlineKeyboardButton("Cancelar", callback_data='receita_cancelar', style="danger")],
+    ])
+    return texto, teclado
+
+async def confirmar_receita(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """'Confirmar' da prévia: tira a receita pendente da sessão ANTES de gravar
+    (um segundo toque já não acha nada e cai em 'Sessão expirada', sem gravar
+    duas vezes), grava pelo registro.py e mostra a confirmação."""
+    query = update.callback_query
+    await responder_callback(query)
+    user_id = query.from_user.id
+
+    pendente = context.user_data.pop('receita_pendente', None)
+    if not pendente:
+        await atualizar_callback(query, context, "Sessão expirada. Registre a receita novamente.", reply_markup=obter_teclado_menu())
+        return ConversationHandler.END
+
+    conn = obter_conexao_db()
+    try:
+        registrar_receita(conn, user_id, pendente['valor'], pendente['momento_envio'], pendente['descricao'])
+    finally:
+        conn.close()
+
+    texto = (
+        "Receita Registrada com Sucesso!\n\n"
+        f"Valor: <b>{formatar_real(pendente['valor'])}</b>\n"
+        f"Descrição: {_texto_descricao_receita(pendente['descricao'])}"
+    )
+    await atualizar_callback(query, context, texto, reply_markup=TECLADO_VOLTAR)
+    return ConversationHandler.END
+
+async def cancelar_receita(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """'Cancelar' da prévia: nada é gravado; volta ao Menu Principal sem
+    mensagem extra (voltar_para_menu limpa 'receita_pendente')."""
+    return await voltar_para_menu(update, context)
 
 async def responder_metodo_pagamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -813,7 +915,8 @@ async def responder_metodo_pagamento(update: Update, context: ContextTypes.DEFAU
 async def _finalizar_gasto_simples(context, user_id, categoria, valor, tipo, descricao, momento_envio, metodo_pagamento=None, estabelecimento=None):
     """Registra um gasto de uma vez só (sem parcelamento): grava uma única
     linha em 'transacoes' com o valor cheio. Desde a PRO-83 só é chamada com
-    tipo 'despesa' (a receita é recusada em salvar_gasto_livre).
+    tipo 'despesa' (a receita tem fluxo próprio desde a PRO-86, gravada na
+    tabela 'receitas' por confirmar_receita).
     'metodo_pagamento' só vem preenchido para despesas do fluxo manual.
     'estabelecimento' só é informado em despesa; a confirmação da despesa ganha
     a linha 'Estabelecimento:'. A gravação fica no registro.py."""
@@ -2300,7 +2403,10 @@ def _montar_mensagem_resumo_diario(nome, gastos_hoje, resumo_mes=None):
     atrasa por causa de instabilidade ou alta demanda do Google.
     'resumo_mes' é o ResumoFatura da fatura vigente (calcular_resumo_fatura);
     a linha da Sobra só aparece quando ela não é None, e sem 'resumo_mes'
-    (usuário sem dia de fechamento) o bloco do mês não aparece.
+    (usuário sem dia de fechamento) o bloco do mês não aparece. A linha
+    "Receitas no Mês" (PRO-86) fica entre o gasto e a Sobra do mês e só
+    aparece quando a fatura tem receita; o dia sem gasto continua com a
+    mensagem curta, mesmo com receita no dia.
     """
     if not gastos_hoje:
         return (
@@ -2326,6 +2432,8 @@ def _montar_mensagem_resumo_diario(nome, gastos_hoje, resumo_mes=None):
     )
     if resumo_mes is not None:
         texto += f"\n\n{DIVISOR}\n\nGasto no Mês: <b>{formatar_real(resumo_mes.total_gasto)}</b>"
+        if resumo_mes.total_receitas > 0:
+            texto += f"\nReceitas no Mês: <b>{formatar_real(resumo_mes.total_receitas)}</b>"
         if resumo_mes.sobra_mes is not None:
             texto += f"\nSobra do Mês: <b>{formatar_real(resumo_mes.sobra_mes)}</b>"
     return texto
@@ -2413,12 +2521,15 @@ async def resumo_diario_menu_callback(update: Update, context: ContextTypes.DEFA
     context.user_data['msgs_fluxo'] = [nova_msg.message_id]
 
 # --- RESUMO MENSAL (ENVIADO NO FECHAMENTO DA FATURA) ---
-def _montar_mensagem_resumo_mensal(nome, nome_mes, top3, renda, total_gasto, sobra_mes, nome_mes_seguinte):
+def _montar_mensagem_resumo_mensal(nome, nome_mes, top3, renda, total_gasto, sobra_mes, nome_mes_seguinte,
+                                   total_receitas=0.0):
     """Texto do Resumo Mensal, direto e sem IA, seguindo o template aprovado.
     Com menos de 3 categorias com gasto mostra só as existentes; sem nenhuma,
     omite os blocos numerados. A linha 'Sobra do Mês' só aparece quando
-    'sobra_mes' não é None (fatura da data de corte em diante).
-    'nome_mes_seguinte' é o mês da fatura que começa hoje."""
+    'sobra_mes' não é None (fatura da data de corte em diante). A linha
+    'Receitas' (PRO-86) fica entre 'Renda' e o total gasto e só aparece
+    quando a fatura tem receita. 'nome_mes_seguinte' é o mês da fatura que
+    começa hoje."""
     texto = f"Olá, {escape(nome)}! Tudo bem? Segue abaixo o seu Resumo Mensal de Gastos no Mês {nome_mes}!\n\n\n"
     for posicao, (cat, valor) in enumerate(top3, start=1):
         texto += (
@@ -2427,8 +2538,10 @@ def _montar_mensagem_resumo_mensal(nome, nome_mes, top3, renda, total_gasto, sob
             f"{DIVISOR}\n\n"
         )
     linha_sobra = f"\nSobra do Mês: {formatar_real(sobra_mes)}" if sobra_mes is not None else ""
+    linha_receitas = f"Receitas: {formatar_real(total_receitas)}\n" if total_receitas > 0 else ""
     texto += (
         f"Renda: {formatar_real(renda)}\n"
+        f"{linha_receitas}"
         f"Total Gasto do Mês Inteiro: {formatar_real(total_gasto)}"
         f"{linha_sobra}\n\n"
         f"{DIVISOR}\n\n"
@@ -2443,13 +2556,16 @@ async def enviar_resumo_mensal(bot, user_data, user_id, nome, dia_fechamento, ag
     Principal' (callback 'resumo_diario_menu') e registra o id dela."""
     conn = obter_conexao_db()
     try:
-        ano_mes, top3, renda, total_gasto, sobra_mes = calcular_dados_resumo_mensal(conn, user_id, dia_fechamento, agora)
+        ano_mes, top3, renda, total_gasto, sobra_mes, total_receitas = calcular_dados_resumo_mensal(
+            conn, user_id, dia_fechamento, agora
+        )
     finally:
         conn.close()
     nome_mes = rotulo_mes(ano_mes)
     # A fatura que começa hoje é a seguinte à que acabou de fechar.
     nome_mes_seguinte = rotulo_mes(_somar_meses(ano_mes, 1))
-    mensagem = _montar_mensagem_resumo_mensal(nome, nome_mes, top3, renda, total_gasto, sobra_mes, nome_mes_seguinte)
+    mensagem = _montar_mensagem_resumo_mensal(nome, nome_mes, top3, renda, total_gasto, sobra_mes, nome_mes_seguinte,
+                                              total_receitas)
 
     # limpar_historico_mensagens só usa .bot e .user_data do contexto.
     await limpar_historico_mensagens(SimpleNamespace(bot=bot, user_data=user_data), user_id)
@@ -3108,9 +3224,19 @@ if __name__ == '__main__':
             # (ConversationHandler.END), então o clique em "Editar Gasto" só é
             # capturado se também estiver registrado como entry_point.
             CallbackQueryHandler(iniciar_editar_ultimo_gasto, pattern='^editar_ultimo_gasto$'),
+            # Prévia da receita (PRO-86): também como entry_points, para um
+            # segundo toque no "Confirmar" (com a conversa já encerrada) cair em
+            # "Sessão expirada" em vez de ficar sem resposta.
+            CallbackQueryHandler(confirmar_receita, pattern='^receita_confirmar$'),
+            CallbackQueryHandler(cancelar_receita, pattern='^receita_cancelar$'),
         ],
         states={
             GASTO_VALOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, salvar_gasto_livre)],
+            # Prévia da receita: "Confirmar" grava, "Cancelar" volta ao menu.
+            CONFIRMAR_RECEITA: [
+                CallbackQueryHandler(confirmar_receita, pattern='^receita_confirmar$'),
+                CallbackQueryHandler(cancelar_receita, pattern='^receita_cancelar$'),
+            ],
             # Retorna do estado de método de pagamento para o estado de digitar o gasto.
             METODO_PAGAMENTO: [
                 CallbackQueryHandler(responder_metodo_pagamento, pattern='^metodo_(credito|debito_pix)$'),

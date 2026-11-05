@@ -2,8 +2,11 @@
 e parcelas. Fonte única usada pelo bot (bot.py) e pela API do Mini App.
 
 A categoria só classifica o gasto (PRO-83): não há limite, orçamento nem
-saldo por categoria. A Sobra do Mês é renda − gasto da fatura, e só existe a
-partir da fatura vigente na data de corte (DATA_CORTE_SOBRA).
+saldo por categoria. A Sobra do Mês é renda + receitas da fatura − gasto da
+fatura (receitas avulsas da tabela 'receitas', PRO-86), e só existe a partir
+da fatura vigente na data de corte (DATA_CORTE_SOBRA). As transações
+negativas antigas de 'transacoes' (reembolsos anteriores à PRO-86) não entram
+em nenhum cálculo.
 
 Só depende da biblioteca padrão: não importa telegram nem bot.py, não abre
 conexão com o banco e não executa nada ao ser importado. As funções recebem
@@ -269,16 +272,31 @@ def montar_categorias_fatura(conn, user_id, ano_mes, dia_fechamento):
         categorias.append((cat, gasto_mes[cat]))
     return categorias
 
-def calcular_totais_mes(renda, categorias, tem_sobra=True):
+def calcular_receitas_fatura(conn, user_id, ano_mes, dia_fechamento):
+    """Soma das receitas (tabela 'receitas', valor sempre positivo) da fatura
+    'ano_mes', pelo MESMO intervalo do gasto (_intervalo_fatura: início
+    inclusivo, fim exclusivo, sobre DATE(data_receita)). 'ano_mes' None =
+    todo o histórico (usuário sem dia de fechamento). Sem receita, 0.0."""
+    inicio, fim = _intervalo_fatura(ano_mes, dia_fechamento)
+    linha = conn.execute(
+        '''SELECT COALESCE(SUM(valor), 0) FROM receitas
+           WHERE user_id = ? AND DATE(data_receita) >= ? AND DATE(data_receita) < ?''',
+        (user_id, inicio, fim)
+    ).fetchone()
+    return float(linha[0]) if linha and linha[0] is not None else 0.0
+
+def calcular_totais_mes(renda, categorias, tem_sobra=True, total_receitas=0.0):
     """Definição única de Gasto total e Sobra do Mês. 'categorias' é a lista
-    (nome, gasto) de montar_categorias_fatura. Sobra do Mês = renda − gasto
-    total (renda nula vale 0; pode dar negativa). Receitas não entram (ficam
-    para a PRO-86). Retorna (total_gastos, sobra_mes), com sobra_mes None
-    quando 'tem_sobra' for falso (fatura anterior à data de corte)."""
+    (nome, gasto) de montar_categorias_fatura. Sobra do Mês = renda +
+    receitas da fatura − gasto total (renda nula vale 0; pode dar negativa).
+    'total_receitas' vem de calcular_receitas_fatura (PRO-86); sem ele, a
+    conta é a de antes (renda − gasto). Retorna (total_gastos, sobra_mes),
+    com sobra_mes None quando 'tem_sobra' for falso (fatura anterior à data
+    de corte)."""
     total_gastos = sum(gasto for _, gasto in categorias)
     if not tem_sobra:
         return total_gastos, None
-    return total_gastos, (renda or 0.0) - total_gastos
+    return total_gastos, (renda or 0.0) + total_receitas - total_gastos
 
 class ResumoFatura(NamedTuple):
     """Resumo de uma fatura, devolvido por calcular_resumo_fatura."""
@@ -287,27 +305,32 @@ class ResumoFatura(NamedTuple):
     categorias: list
     total_gasto: float
     sobra_mes: Optional[float]
+    total_receitas: float = 0.0  # receitas da fatura (PRO-86); campo novo no fim
 
 def calcular_resumo_fatura(conn, user_id, ano_mes, dia_fechamento, data_corte=None):
     """Função única de resumo da fatura 'ano_mes', usada pelo 'Ver Resumo',
     pelo histórico de meses, pelo /resumo da API, pelo Resumo Mensal e pelo
     resumo diário. Devolve ResumoFatura(ano_mes, renda, categorias,
-    total_gasto, sobra_mes):
+    total_gasto, sobra_mes, total_receitas):
       - renda: renda_mensal do usuário (nula vale 0);
       - categorias: lista (nome, gasto) de montar_categorias_fatura;
-      - total_gasto e sobra_mes: de calcular_totais_mes, com sobra_mes None
-        se a fatura for anterior à data de corte (fatura_tem_sobra).
-    Sem dia de fechamento não há fatura: o gasto é o de todo o histórico e a
-    Sobra é None. 'data_corte' substitui DATA_CORTE_SOBRA nos testes.
-    São três consultas, qualquer que seja o número de categorias."""
+      - total_receitas: calcular_receitas_fatura (PRO-86), preenchido mesmo
+        quando a fatura não tem Sobra;
+      - total_gasto e sobra_mes: de calcular_totais_mes (renda + receitas −
+        gasto), com sobra_mes None se a fatura for anterior à data de corte
+        (fatura_tem_sobra).
+    Sem dia de fechamento não há fatura: o gasto e as receitas são os de todo
+    o histórico e a Sobra é None. 'data_corte' substitui DATA_CORTE_SOBRA nos
+    testes. São quatro consultas, qualquer que seja o número de categorias."""
     if not dia_fechamento:
         ano_mes = None
     linha = conn.execute('SELECT renda_mensal FROM usuarios WHERE user_id = ?', (user_id,)).fetchone()
     renda = (linha[0] if linha else None) or 0.0
     categorias = montar_categorias_fatura(conn, user_id, ano_mes, dia_fechamento)
+    total_receitas = calcular_receitas_fatura(conn, user_id, ano_mes, dia_fechamento)
     tem_sobra = ano_mes is not None and fatura_tem_sobra(ano_mes, dia_fechamento, data_corte)
-    total_gasto, sobra_mes = calcular_totais_mes(renda, categorias, tem_sobra)
-    return ResumoFatura(ano_mes, renda, categorias, total_gasto, sobra_mes)
+    total_gasto, sobra_mes = calcular_totais_mes(renda, categorias, tem_sobra, total_receitas)
+    return ResumoFatura(ano_mes, renda, categorias, total_gasto, sobra_mes, total_receitas)
 
 def calcular_serie_gastos_mensais(conn, user_id, dia_fechamento, agora=None):
     """Gasto total de cada fatura com movimento, para o gráfico de barras do
@@ -347,7 +370,9 @@ def buscar_gastos_recentes(conn, user_id, limite):
     na lista.
 
     Regras:
-    - só despesas (valor > 0); receitas (valor negativo) ficam de fora;
+    - só despesas (valor > 0); as transações negativas antigas (reembolsos
+      anteriores à PRO-86) ficam de fora, e as receitas da tabela 'receitas'
+      não entram nesta lista;
     - só gastos com descrição preenchida (descrição vazia ou só com espaços
       não conta). Os gastos antigos, anteriores à PRO-78, não têm descrição e
       ficam fora de propósito: não se usa o nome da categoria no lugar. Eles
@@ -385,7 +410,7 @@ def buscar_gasto(conn, user_id, id_gasto):
 
     Mesmas regras de buscar_gastos_recentes (só despesas, só com descrição,
     LEFT JOIN com a condição de dono no ON, estabelecimento vazio vira None).
-    Retorna None se o gasto não existir, for de outro usuário, for receita ou
+    Retorna None se o gasto não existir, for de outro usuário, for negativo ou
     não tiver descrição, sem distinguir o motivo."""
     return conn.execute(
         "SELECT t.id, TRIM(t.descricao), t.categoria_nome, t.valor, "
@@ -403,14 +428,15 @@ def buscar_gasto(conn, user_id, id_gasto):
 def calcular_dados_resumo_mensal(conn, user_id, dia_fechamento, agora, data_corte=None):
     """Fatura que acabou de fechar (a de ontem, já que o resumo sai no dia de
     fechamento), pela mesma função do painel (calcular_resumo_fatura).
-    Retorna (ano_mes, top3, renda, total_gasto, sobra_mes), com top3 como
-    lista [(categoria, gasto)] só das categorias com gasto, do maior para o
-    menor, e sobra_mes None se a fatura for anterior à data de corte. O nome
-    do mês fica a cargo de quem monta o texto."""
+    Retorna (ano_mes, top3, renda, total_gasto, sobra_mes, total_receitas),
+    com top3 como lista [(categoria, gasto)] só das categorias com gasto, do
+    maior para o menor, sobra_mes None se a fatura for anterior à data de
+    corte e total_receitas as receitas da fatura (PRO-86; 0.0 sem receita).
+    O nome do mês fica a cargo de quem monta o texto."""
     ano_mes = calcular_ciclo_fatura(agora - timedelta(days=1), dia_fechamento)
     resumo = calcular_resumo_fatura(conn, user_id, ano_mes, dia_fechamento, data_corte)
     gastos = sorted(
         ((cat, gasto) for cat, gasto in resumo.categorias if gasto > 0),
         key=lambda item: item[1], reverse=True
     )
-    return ano_mes, gastos[:3], resumo.renda, resumo.total_gasto, resumo.sobra_mes
+    return ano_mes, gastos[:3], resumo.renda, resumo.total_gasto, resumo.sobra_mes, resumo.total_receitas
