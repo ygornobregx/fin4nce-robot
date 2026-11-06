@@ -166,7 +166,8 @@ class TestImportLimpo(unittest.TestCase):
             return encontrados
 
         topo = modulos(arvore.body)
-        self.assertEqual(set(topo), {'asyncio', 'json', 're', 'datetime', 'typing', 'calculos'})
+        # 'time' desde a PRO-88 (espera entre as tentativas de gravar com o banco ocupado).
+        self.assertEqual(set(topo), {'asyncio', 'json', 're', 'time', 'datetime', 'typing', 'calculos'})
 
         todos = modulos(ast.walk(arvore))
         proibidos = [m for m in todos if m.split('.')[0] in ('telegram', 'bot', 'dotenv', 'libsql')]
@@ -539,6 +540,391 @@ class TestMomentoAgora(unittest.TestCase):
         momento = datetime.strptime(registro.momento_agora(), '%Y-%m-%d %H:%M:%S')
         depois = datetime.now(FUSO_BRASILIA).replace(tzinfo=None)
         self.assertTrue(antes <= momento <= depois + timedelta(seconds=1), (antes, momento, depois))
+
+
+# --- PRO-88: IA EM THREAD (D4) ---
+class TestIAEmThread(unittest.TestCase):
+    """Sem o ComIAFalsa: aqui o asyncio.sleep precisa ser o de verdade."""
+
+    def setUp(self):
+        self.cliente_anterior = registro._cliente_ia
+
+    def tearDown(self):
+        registro.definir_cliente_ia(self.cliente_anterior)
+
+    def test_generate_content_roda_em_outra_thread_e_o_loop_fica_livre(self):
+        import threading
+        liberar = threading.Event()
+        threads_da_ia = []
+
+        class IALenta:
+            def __init__(self):
+                self.models = self
+
+            def generate_content(self, model, contents):
+                threads_da_ia.append(threading.get_ident())
+                # Se a chamada rodasse no loop, a corrotina abaixo nunca liberaria.
+                if not liberar.wait(5):
+                    raise RuntimeError("o loop ficou travado enquanto a IA respondia")
+                return SimpleNamespace(text="ok")
+
+        registro.definir_cliente_ia(IALenta())
+
+        async def principal():
+            thread_do_loop = threading.get_ident()
+            tarefa = asyncio.create_task(registro.gerar_conteudo_com_retry("prompt"))
+            while not threads_da_ia:
+                await asyncio.sleep(0.01)
+            liberar.set()  # o loop continuou rodando enquanto a IA "pensava"
+            return thread_do_loop, await tarefa
+
+        thread_do_loop, resposta = asyncio.run(principal())
+        self.assertEqual(resposta.text, "ok")
+        self.assertNotEqual(threads_da_ia, [thread_do_loop])
+
+
+# --- PRO-88: VALIDAÇÕES DA API ---
+class TestValidarValor(unittest.TestCase):
+    def test_aceitos_arredondados_a_duas_casas(self):
+        casos = [(600, 600.0), (0.01, 0.01), (1234.567, 1234.57), (10.006, 10.01),
+                 (1_000_000, 1_000_000.0), (1_000_000.004, 1_000_000.0)]
+        for valor, esperado in casos:
+            with self.subTest(valor=valor):
+                self.assertEqual(registro.validar_valor(valor), esperado)
+                self.assertIsInstance(registro.validar_valor(valor), float)
+
+    def test_recusados(self):
+        casos = [0, 0.0, -0.0, -5, 0.004, 1_000_000.01, 1e12, "600", "abc", None, True, False,
+                 float('nan'), float('inf'), float('-inf'), 10 ** 400, [600]]
+        for valor in casos:
+            with self.subTest(valor=valor):
+                self.assertIsNone(registro.validar_valor(valor))
+
+    def test_validar_valor_receita_do_bot_continua_sem_teto(self):
+        self.assertEqual(registro.validar_valor_receita(1e12), 1e12)
+
+
+class TestValidarChave(unittest.TestCase):
+    def test_uuid_v4_em_minusculas(self):
+        self.assertEqual(registro.validar_chave('3F2B8C1E-9D4A-4B7E-8F21-6A5C0D9E1B23'),
+                         '3f2b8c1e-9d4a-4b7e-8f21-6a5c0d9e1b23')
+
+    def test_recusadas(self):
+        for chave in (None, 123, '', 'abc', '3f2b8c1e-9d4a-1b7e-8f21-6a5c0d9e1b23',
+                      '3f2b8c1e-9d4a-4b7e-cf21-6a5c0d9e1b23', '3f2b8c1e9d4a4b7e8f216a5c0d9e1b23',
+                      ' 3f2b8c1e-9d4a-4b7e-8f21-6a5c0d9e1b23', '3f2b8c1e-9d4a-4b7e-8f21-6a5c0d9e1b23\n'):
+            with self.subTest(chave=chave):
+                with self.assertRaises(registro.ErroRegistro) as erro:
+                    registro.validar_chave(chave)
+                self.assertEqual(erro.exception.codigo, 'chave_invalida')
+
+
+class TestValidarPedidoInterpretacao(unittest.TestCase):
+    def codigo(self, tipo, texto):
+        with self.assertRaises(registro.ErroRegistro) as erro:
+            registro.validar_pedido_interpretacao(tipo, texto)
+        return erro.exception.codigo
+
+    def test_aceito_e_aparado(self):
+        self.assertEqual(registro.validar_pedido_interpretacao('gasto', '  pão 20 '), ('gasto', 'pão 20'))
+        self.assertEqual(registro.validar_pedido_interpretacao('receita', 'x' * 200), ('receita', 'x' * 200))
+
+    def test_recusados(self):
+        for tipo in ('despesa', 'Gasto', None, 1, ['gasto']):
+            self.assertEqual(self.codigo(tipo, 'pão 20'), 'tipo_invalido')
+        for texto in ('', '   ', 'x' * 201, None, 20):
+            self.assertEqual(self.codigo('gasto', texto), 'texto_invalido')
+
+
+class TestInterpretarPrevia(ComIAFalsa):
+    CATEGORIAS = ['Alimentação', 'Roupas']
+
+    def previa(self, tipo='gasto', texto='pão 20'):
+        return asyncio.run(registro.interpretar_previa(tipo, texto, self.CATEGORIAS))
+
+    def codigo(self, *respostas, tipo='gasto'):
+        self.instalar(*respostas)
+        with self.assertRaises(registro.ErroRegistro) as erro:
+            self.previa(tipo)
+        return erro.exception
+
+    def test_gasto_com_o_mesmo_prompt_do_bot(self):
+        ia = self.instalar('{"tipo": "despesa", "valor": "20", "categoria": "alimentação", '
+                           '"descricao": " Pão ", "estabelecimento": " "}')
+        self.assertEqual(self.previa(), registro.Previa('gasto', 20.0, 'Pão', None, 'Alimentação'))
+        self.assertEqual(ia.chamadas, [(registro.MODELO_IA, registro.montar_prompt_gasto(self.CATEGORIAS, 'pão 20'))])
+
+    def test_receita(self):
+        self.instalar('{"tipo": "receita", "valor": 500, "categoria": "Inexistente", "descricao": "Venda"}')
+        self.assertEqual(self.previa('receita'), registro.Previa('receita', 500.0, 'Venda', None, None))
+
+    def test_ia_indisponivel_sem_a_mensagem_da_ia(self):
+        erro = self.codigo(RuntimeError("detalhe interno da IA"))
+        self.assertEqual(erro.codigo, 'ia_indisponivel')
+        self.assertEqual(str(erro), 'ia_indisponivel')
+        self.assertIsNone(erro.__cause__)
+        self.assertTrue(erro.__suppress_context__)
+
+    def test_codigos(self):
+        casos = [
+            ('Não entendi.', 'resposta_ia_invalida'),
+            ('{"tipo": "despesa", "categoria": "Roupas"}', 'resposta_ia_invalida'),
+            ('{"tipo": "despesa", "valor": 10}', 'resposta_ia_invalida'),
+            ('{"tipo": "outro", "valor": 10}', 'resposta_ia_invalida'),
+            ('{"tipo": "receita", "valor": 10}', 'tipo_divergente'),
+            ('{"tipo": "despesa", "valor": 0, "categoria": "Roupas"}', 'valor_nao_entendido'),
+            ('{"tipo": "despesa", "valor": 1000000.01, "categoria": "Roupas"}', 'valor_nao_entendido'),
+            ('{"tipo": "despesa", "valor": 10, "categoria": "Viagem"}', 'categoria_nao_encontrada'),
+            ('{"tipo": "despesa", "valor": 10, "categoria": null}', 'categoria_nao_encontrada'),
+        ]
+        for resposta, codigo in casos:
+            with self.subTest(resposta=resposta):
+                self.assertEqual(self.codigo(resposta).codigo, codigo)
+
+
+# --- PRO-88: GRAVAÇÃO SEM COMMIT E COM CHAVE ---
+def comando_chaves_registro():
+    """O CREATE TABLE chaves_registro exatamente como está no bot.py."""
+    import re
+    with open(os.path.join(RAIZ, 'bot.py'), encoding='utf-8') as f:
+        fonte = f.read()
+    achado = re.search(r"'''(CREATE TABLE IF NOT EXISTS chaves_registro \(.*?\))'''", fonte, re.DOTALL)
+    assert achado, "CREATE TABLE chaves_registro não encontrado no bot.py"
+    return achado.group(1)
+
+
+class ConexaoComoLibsql:
+    """SQLite que imita o libsql: a chave repetida vira ValueError (Hrana). Com
+    'falha', o INSERT da chave levanta um ValueError que NÃO é chave repetida."""
+
+    def __init__(self, real, falha=False):
+        self.real = real
+        self.falha = falha
+
+    def execute(self, sql, params=()):
+        if self.falha and sql.lstrip().startswith('INSERT INTO chaves_registro'):
+            raise ValueError('Hrana: stream error: conexão encerrada')
+        try:
+            return self.real.execute(sql, params)
+        except sqlite3.IntegrityError as erro:
+            raise ValueError(f'Hrana: stream error: SQLite error: {erro}, code: "SQLITE_CONSTRAINT"') from None
+
+    def cursor(self):
+        return self.real.cursor()
+
+    def commit(self):
+        self.real.commit()
+
+    def rollback(self):
+        self.real.rollback()
+
+
+class ComBancoEChaves(ComBanco):
+    def setUp(self):
+        super().setUp()
+        self.conn.execute(comando_chaves_registro())
+        self.conn.commit()
+
+    def gravar_receita(self, conn, valor=10.0):
+        return lambda: registro.registrar_receita(conn, UID, valor, MOMENTO, "Venda", commit=False)
+
+    def chave_de(self, user_id, chave='c1', lancamento_id=99):
+        self.conn.execute("INSERT INTO chaves_registro VALUES (?, ?, 'receita', ?, ?)",
+                          (user_id, chave, lancamento_id, MOMENTO))
+        self.conn.commit()
+
+
+class TestSemCommit(ComBancoEChaves):
+    def test_avulso_parcelado_e_receita_so_aparecem_depois_do_commit(self):
+        registro.registrar_gasto_avulso(self.conn, UID, 'Roupas', 10.0, MOMENTO, 'Débito/Pix', commit=False)
+        registro.registrar_gasto_parcelado(self.conn, UID, 'Roupas', 90.0, 3, MOMENTO, 'Crédito', commit=False)
+        registro.registrar_receita(self.conn, UID, 5.0, MOMENTO, commit=False)
+        self.assertTrue(self.conn.in_transaction)
+        self.assertEqual(self.ler("SELECT (SELECT COUNT(*) FROM transacoes), (SELECT COUNT(*) FROM parcelamentos), "
+                                  "(SELECT COUNT(*) FROM receitas)"), [(0, 0, 0)])
+        self.conn.commit()
+        self.assertEqual(self.ler("SELECT (SELECT COUNT(*) FROM transacoes), (SELECT COUNT(*) FROM parcelamentos), "
+                                  "(SELECT COUNT(*) FROM receitas)"), [(2, 1, 1)])
+
+    def test_rollback_desfaz_tudo(self):
+        registro.registrar_gasto_parcelado(self.conn, UID, 'Roupas', 90.0, 3, MOMENTO, 'Crédito', commit=False)
+        self.conn.rollback()
+        self.assertEqual(self.ler("SELECT COUNT(*) FROM parcelamentos"), [(0,)])
+
+    def test_parcelado_sem_categoria_continua_desfazendo(self):
+        self.assertIsNone(registro.registrar_gasto_parcelado(self.conn, UID, 'Lazer', 90.0, 3, MOMENTO, commit=False))
+        self.assertFalse(self.conn.in_transaction)
+
+
+class TestGravarComChave(ComBancoEChaves):
+    def chaves(self):
+        return self.ler("SELECT user_id, chave, tipo, lancamento_id, criado_em FROM chaves_registro ORDER BY rowid")
+
+    def test_grava_lancamento_e_chave_num_commit_so(self):
+        resultado = registro.gravar_com_chave(self.conn, UID, 'c1', 'receita', MOMENTO, self.gravar_receita(self.conn))
+        self.assertEqual(resultado, (registro.ChaveRegistro('receita', 1), False))
+        self.assertFalse(self.conn.in_transaction)
+        self.assertEqual(self.chaves(), [(UID, 'c1', 'receita', 1, MOMENTO)])
+        self.assertEqual(self.ler("SELECT COUNT(*) FROM receitas"), [(1,)])
+
+    def test_gravar_devolve_none_nada_fica(self):
+        resultado = registro.gravar_com_chave(self.conn, UID, 'c1', 'gasto', MOMENTO, lambda: None)
+        self.assertEqual(resultado, (None, False))
+        self.assertEqual(self.chaves(), [])
+
+    def test_chave_repetida_sqlite_integrity_error(self):
+        self.chave_de(UID)
+        resultado = registro.gravar_com_chave(self.conn, UID, 'c1', 'receita', MOMENTO, self.gravar_receita(self.conn))
+        self.assertEqual(resultado, (registro.ChaveRegistro('receita', 99), True))
+        self.assertEqual(self.ler("SELECT COUNT(*) FROM receitas"), [(0,)])  # o próprio lançamento foi desfeito
+        self.assertFalse(self.conn.in_transaction)
+
+    def test_chave_repetida_libsql_value_error(self):
+        self.chave_de(UID)
+        conn = ConexaoComoLibsql(self.conn)
+        resultado = registro.gravar_com_chave(conn, UID, 'c1', 'receita', MOMENTO, self.gravar_receita(conn))
+        self.assertEqual(resultado, (registro.ChaveRegistro('receita', 99), True))
+        self.assertEqual(self.ler("SELECT COUNT(*) FROM receitas"), [(0,)])
+
+    def test_erro_que_nao_e_chave_repetida_sobe_e_desfaz(self):
+        conn = ConexaoComoLibsql(self.conn, falha=True)
+        with self.assertRaises(ValueError) as erro:
+            registro.gravar_com_chave(conn, UID, 'c1', 'receita', MOMENTO, self.gravar_receita(conn))
+        self.assertIn('conexão encerrada', str(erro.exception))
+        self.assertEqual(self.ler("SELECT COUNT(*) FROM receitas"), [(0,)])
+        self.assertEqual(self.chaves(), [])
+
+    def test_mesma_chave_de_outro_usuario_nao_conflita(self):
+        self.chave_de(OUTRO_UID)
+        resultado = registro.gravar_com_chave(self.conn, UID, 'c1', 'receita', MOMENTO, self.gravar_receita(self.conn))
+        self.assertEqual(resultado, (registro.ChaveRegistro('receita', 1), False))
+        self.assertIsNone(registro.buscar_chave(self.conn, 3, 'c1'))
+        self.assertEqual(registro.buscar_chave(self.conn, OUTRO_UID, 'c1'), registro.ChaveRegistro('receita', 99))
+
+
+ERRO_BUSY = ('Hrana: stream error: SQLite error: interactive transaction was rolled back because the stream '
+             'was idle for too long; retry the transaction, code: SQLITE_BUSY')
+
+
+class ConexaoComFalhas:
+    """SQLite com falhas roteirizadas: 'falhas_commit' (None = commit normal;
+    exceção = levantada depois de desfazer, como o Turso; função() = chamada e
+    o que ela devolve é levantado) e 'falhas_consulta' (consultas da chave).
+    Conta os commits e as consultas."""
+
+    def __init__(self, real, falhas_commit=(), falhas_consulta=()):
+        self.real = real
+        self.falhas_commit = list(falhas_commit)
+        self.falhas_consulta = list(falhas_consulta)
+        self.commits = 0
+        self.consultas = 0
+
+    def execute(self, sql, params=()):
+        if sql.lstrip().startswith('SELECT tipo, lancamento_id FROM chaves_registro'):
+            self.consultas += 1
+            falha = self.falhas_consulta.pop(0) if self.falhas_consulta else None
+            if falha is not None:
+                raise falha
+        return self.real.execute(sql, params)
+
+    def cursor(self):
+        return self.real.cursor()
+
+    def commit(self):
+        self.commits += 1
+        falha = self.falhas_commit.pop(0) if self.falhas_commit else None
+        if falha is not None:
+            self.real.rollback()
+            raise falha() if callable(falha) else falha
+        self.real.commit()
+
+    def rollback(self):
+        self.real.rollback()
+
+
+class TestGravarComChaveBancoOcupado(ComBancoEChaves):
+    """Defeito do teste humano (passo 5): o commit falhou com SQLITE_BUSY e a
+    chave do outro pedido ainda não aparecia; a gravação dava 500."""
+
+    def setUp(self):
+        super().setUp()
+        self.esperas_banco = []
+        patcher = mock.patch.object(registro, '_esperar', self.esperas_banco.append)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def gravar(self, conn):
+        return registro.gravar_com_chave(conn, UID, 'c1', 'receita', MOMENTO, self.gravar_receita(conn))
+
+    def contagens(self):
+        return self.ler("SELECT (SELECT COUNT(*) FROM receitas), (SELECT COUNT(*) FROM chaves_registro)")[0]
+
+    def test_erro_passageiro(self):
+        for mensagem in (ERRO_BUSY, 'database is locked', 'DATABASE IS LOCKED', 'code: sqlite_busy',
+                         'transaction was rolled back'):
+            self.assertTrue(registro.erro_passageiro(ValueError(mensagem)), mensagem)
+        unique = ('Hrana: stream error: SQLite error: UNIQUE constraint failed: chaves_registro.user_id, '
+                  'chaves_registro.chave, code: "SQLITE_CONSTRAINT"')
+        for mensagem in (unique, 'Hrana: stream error: conexão encerrada', 'boom', ''):
+            self.assertFalse(registro.erro_passageiro(ValueError(mensagem)), mensagem)
+
+    def test_busy_no_commit_uma_vez_tenta_de_novo_e_grava(self):
+        conn = ConexaoComFalhas(self.conn, [ValueError(ERRO_BUSY)])
+        chave_registro, repetido = self.gravar(conn)
+        self.assertFalse(repetido)
+        self.assertEqual(self.contagens(), (1, 1))
+        self.assertEqual(self.ler("SELECT lancamento_id FROM chaves_registro"), [(chave_registro.lancamento_id,)])
+        self.assertEqual(conn.commits, 2)
+        self.assertEqual(self.esperas_banco, [0.25])
+
+    def test_busy_e_a_chave_aparece_devolve_repetido(self):
+        def outro_pedido_gravou():
+            self.chave_de(UID, lancamento_id=77)
+            return ValueError(ERRO_BUSY)
+
+        conn = ConexaoComFalhas(self.conn, [outro_pedido_gravou])
+        self.assertEqual(self.gravar(conn), (registro.ChaveRegistro('receita', 77), True))
+        self.assertEqual(self.contagens(), (0, 1))  # a receita deste pedido foi desfeita
+        self.assertEqual(self.esperas_banco, [])
+
+    def test_busy_em_todas_as_tentativas_banco_ocupado(self):
+        conn = ConexaoComFalhas(self.conn, [ValueError(ERRO_BUSY)] * 4)
+        with self.assertRaises(registro.ErroRegistro) as erro:
+            self.gravar(conn)
+        self.assertEqual(erro.exception.codigo, 'banco_ocupado')
+        self.assertIsNone(erro.exception.__cause__)
+        self.assertEqual(self.contagens(), (0, 0))
+        self.assertEqual(conn.commits, 4)
+        self.assertEqual(self.esperas_banco, [0.25, 0.5, 1.0])
+        self.assertFalse(self.conn.in_transaction)
+
+    def test_consulta_da_chave_falha_uma_vez_e_passageira(self):
+        conn = ConexaoComFalhas(self.conn, [ValueError('Hrana: stream error: conexão encerrada')],
+                                [ValueError('stream quebrado')])
+        chave_registro, repetido = self.gravar(conn)
+        self.assertFalse(repetido)
+        self.assertEqual(self.contagens(), (1, 1))
+        self.assertEqual((conn.commits, conn.consultas), (2, 1))
+        self.assertEqual(self.esperas_banco, [0.25])
+
+    def test_erro_nao_passageiro_sobe_sem_nova_tentativa(self):
+        boom = ValueError('boom')
+        conn = ConexaoComFalhas(self.conn, [boom])
+        with self.assertRaises(ValueError) as erro:
+            self.gravar(conn)
+        self.assertIs(erro.exception, boom)
+        self.assertEqual(self.contagens(), (0, 0))
+        self.assertEqual((conn.commits, conn.consultas), (1, 1))
+        self.assertEqual(self.esperas_banco, [])
+
+
+
+class TestEsperaEntreTentativas(unittest.TestCase):
+    def test_esperas_e_time_sleep(self):
+        self.assertEqual(registro.ESPERAS_BANCO_OCUPADO, (0.25, 0.5, 1.0))
+        with mock.patch.object(registro.time, 'sleep') as dormir:
+            registro._esperar(0.25)
+        dormir.assert_called_once_with(0.25)
 
 
 if __name__ == "__main__":

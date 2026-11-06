@@ -181,6 +181,18 @@ def iniciar_banco():
         origem TEXT NOT NULL DEFAULT 'avulsa',
         receita_recorrente_id INTEGER
     )''')
+    # Chave de idempotência das gravações pela API (PRO-88): uma linha por
+    # chave e por usuário, gravada na mesma transação do lançamento. tipo é
+    # 'gasto' ou 'receita'; lancamento_id = transacoes.id (parcela 1 no
+    # parcelado) ou receitas.id; criado_em em Brasília.
+    cursor.execute('''CREATE TABLE IF NOT EXISTS chaves_registro (
+        user_id INTEGER NOT NULL,
+        chave TEXT NOT NULL,
+        tipo TEXT NOT NULL,
+        lancamento_id INTEGER NOT NULL,
+        criado_em TEXT NOT NULL,
+        PRIMARY KEY (user_id, chave)
+    )''')
 
     migrar_colunas_faltantes(cursor)
 

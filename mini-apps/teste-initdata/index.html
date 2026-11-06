@@ -9,12 +9,43 @@
     body { font-family: sans-serif; margin: 16px; background: var(--tg-theme-bg-color, #fff); color: var(--tg-theme-text-color, #000); }
     h2 { font-size: 1rem; margin: 20px 0 4px; }
     pre { background: rgba(127,127,127,.15); padding: 12px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
+    #registro { margin-top: 28px; padding-top: 8px; border-top: 1px solid rgba(127,127,127,.4); }
+    #registro label { display: block; margin: 8px 0 2px; font-size: .9rem; }
+    #registro input, #registro select, #registro textarea { width: 100%; box-sizing: border-box; padding: 6px; font-size: 1rem; }
+    #registro button { margin: 10px 8px 0 0; padding: 8px 14px; font-size: 1rem; }
   </style>
 </head>
 <body>
   <h1>Teste do initData</h1>
   <p id="status">Verificando...</p>
   <div id="respostas"></div>
+  <div id="registro">
+    <h1>Registro (diagnóstico)</h1>
+    <p>PRO-88. "Interpretar" chama a IA e só mostra a prévia (não grava). "Gravar" manda o MESMO pedido duas vezes ao mesmo tempo, com a mesma chave, para provar o toque duplo: uma resposta deve vir 201 e a outra 200 com "repetido": true, com o mesmo id.</p>
+    <label for="reg-tipo">Tipo</label>
+    <select id="reg-tipo"><option value="gasto">gasto</option><option value="receita">receita</option></select>
+    <label for="reg-texto">Texto (até 200 caracteres)</label>
+    <textarea id="reg-texto" rows="2" maxlength="200"></textarea>
+    <button id="reg-interpretar" type="button">Interpretar</button>
+    <h2 id="reg-previa-titulo">Prévia: ainda não pedida</h2>
+    <pre id="reg-previa"></pre>
+    <label for="reg-valor">Valor total</label>
+    <input id="reg-valor" type="number" step="0.01" inputmode="decimal">
+    <label for="reg-descricao">Descrição</label>
+    <input id="reg-descricao" type="text">
+    <label for="reg-estabelecimento">Estabelecimento (só gasto)</label>
+    <input id="reg-estabelecimento" type="text">
+    <label for="reg-categoria">Categoria (só gasto)</label>
+    <input id="reg-categoria" type="text">
+    <label for="reg-metodo">Forma de pagamento (só gasto)</label>
+    <select id="reg-metodo"><option value="">escolha</option><option value="Débito/Pix">Débito/Pix</option><option value="Crédito">Crédito</option></select>
+    <label for="reg-parcelas">Parcelas (1 a 12; Débito/Pix grava 1)</label>
+    <input id="reg-parcelas" type="number" min="1" max="12" step="1" value="1">
+    <p>Chave desta prévia: <code id="reg-chave">(nenhuma)</code></p>
+    <button id="reg-gravar" type="button">Gravar (2 pedidos juntos)</button>
+    <h2 id="reg-gravar-titulo">Gravação: ainda não pedida</h2>
+    <pre id="reg-gravar-respostas"></pre>
+  </div>
   <script>
     const status = document.getElementById("status");
     const respostas = document.getElementById("respostas");
@@ -54,6 +85,89 @@
         status.textContent = "Respostas da API:";
       })();
     }
+
+    // --- Registro (diagnóstico, PRO-88) ---
+    const $ = (id) => document.getElementById(id);
+    let chaveAtual = null;
+
+    async function chamarApi(rota, corpo) {
+      const r = await fetch(rota, {
+        method: "POST",
+        headers: {
+          "Authorization": "tma " + (tg ? tg.initData : ""),
+          "ngrok-skip-browser-warning": "1",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(corpo)
+      });
+      const texto = await r.text();
+      let json = null;
+      try { json = JSON.parse(texto); } catch (e) { /* resposta sem JSON (ex.: 500) */ }
+      return { status: r.status, json, texto };
+    }
+
+    function mostrar(resposta) {
+      return "Status HTTP: " + resposta.status + "\n" +
+        (resposta.json !== null ? JSON.stringify(resposta.json, null, 2) : resposta.texto);
+    }
+
+    // Uma chave nova (UUID v4) a cada prévia; a mesma vai nos dois pedidos do Gravar.
+    function novaChave() {
+      chaveAtual = crypto.randomUUID();
+      $("reg-chave").textContent = chaveAtual;
+    }
+
+    $("reg-interpretar").addEventListener("click", async () => {
+      $("reg-previa-titulo").textContent = "Prévia: aguardando...";
+      $("reg-previa").textContent = "";
+      try {
+        const resposta = await chamarApi("/registro/interpretar", { tipo: $("reg-tipo").value, texto: $("reg-texto").value });
+        $("reg-previa-titulo").textContent = "Prévia (POST /registro/interpretar)";
+        $("reg-previa").textContent = mostrar(resposta);
+        if (resposta.status === 200 && resposta.json) {
+          const p = resposta.json;
+          $("reg-valor").value = p.valor;
+          $("reg-descricao").value = p.descricao || "";
+          $("reg-estabelecimento").value = p.estabelecimento || "";
+          $("reg-categoria").value = p.categoria || "";
+          novaChave();
+        }
+      } catch (e) {
+        $("reg-previa-titulo").textContent = "Prévia: falha ao chamar a API";
+      }
+    });
+
+    $("reg-gravar").addEventListener("click", async () => {
+      if (!chaveAtual) { novaChave(); }
+      const tipo = $("reg-tipo").value;
+      const valor = $("reg-valor").value === "" ? null : Number($("reg-valor").value);
+      const descricao = $("reg-descricao").value || null;
+      let rota, corpo;
+      if (tipo === "receita") {
+        rota = "/receitas";
+        corpo = { chave: chaveAtual, valor, descricao };
+      } else {
+        rota = "/gastos";
+        corpo = {
+          chave: chaveAtual, valor, descricao,
+          estabelecimento: $("reg-estabelecimento").value || null,
+          categoria: $("reg-categoria").value,
+          metodo_pagamento: $("reg-metodo").value || null,
+          parcelas: Number($("reg-parcelas").value)
+        };
+      }
+      $("reg-gravar-titulo").textContent = "Gravação: aguardando os dois pedidos...";
+      $("reg-gravar-respostas").textContent = "";
+      try {
+        // De propósito: o mesmo pedido, com a mesma chave, duas vezes ao mesmo tempo.
+        const [primeira, segunda] = await Promise.all([chamarApi(rota, corpo), chamarApi(rota, corpo)]);
+        $("reg-gravar-titulo").textContent = "Gravação (POST " + rota + ", chave " + chaveAtual + ")";
+        $("reg-gravar-respostas").textContent =
+          "Pedido 1 - " + mostrar(primeira) + "\n\nPedido 2 - " + mostrar(segunda);
+      } catch (e) {
+        $("reg-gravar-titulo").textContent = "Gravação: falha ao chamar a API";
+      }
+    });
   </script>
 </body>
 </html>

@@ -13,3 +13,4 @@ ferramentas/
 testes_banco_teste.py
 .env.teste
 testes_sem_transferencia.py
+testes_rotas_registro.py

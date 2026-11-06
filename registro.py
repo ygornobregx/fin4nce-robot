@@ -17,10 +17,16 @@ assim a API importa este módulo sem ter o pacote nem a chave da IA.
 
 As exceções não são embrulhadas: a mensagem de erro do bot mostra str(e)
 ("Erro: 'valor'"), e uma classe de erro nova mudaria o texto visível.
+
+A parte da API (PRO-88, no fim do arquivo) é outra: prévia com o mesmo prompt,
+validação de tudo de novo na gravação, chave de toque duplo gravada na mesma
+transação do lançamento, e os erros viram ErroRegistro com um código (nunca
+str(e) da IA). O bot não usa essa parte.
 """
 import asyncio
 import json
 import re
+import time
 from datetime import datetime
 from typing import NamedTuple, Optional
 
@@ -58,11 +64,18 @@ async def gerar_conteudo_com_retry(prompt, tentativas=3, espera_inicial=2):
     Chama a API do Gemini com retry automático (backoff exponencial) quando o
     modelo está sobrecarregado (erro 503/UNAVAILABLE) ou há limite de taxa (429).
     Para outros erros, propaga imediatamente sem tentar de novo.
+
+    Desde a PRO-88 (D4), a chamada síncrona do pacote roda numa thread
+    (asyncio.to_thread): enquanto o Gemini responde, o bot continua atendendo
+    os outros usuários e a API não trava o servidor. O cliente é obtido aqui,
+    fora da thread, e as novas tentativas, as esperas e as exceções são as
+    mesmas de antes.
     """
     ultimo_erro = None
     for tentativa in range(tentativas):
         try:
-            return obter_cliente_ia().models.generate_content(
+            return await asyncio.to_thread(
+                obter_cliente_ia().models.generate_content,
                 model=MODELO_IA,
                 contents=prompt,
             )
@@ -216,7 +229,14 @@ async def interpretar_gasto(texto_usuario, categorias):
     mensagem de categoria não encontrada fica com quem chama."""
     prompt = montar_prompt_gasto(categorias, texto_usuario)
     response = await gerar_conteudo_com_retry(prompt)
-    dados = limpar_json_ia(response.text)
+    return ler_resposta_gasto(response.text, categorias)
+
+
+def ler_resposta_gasto(texto_resposta, categorias):
+    """Lê o texto devolvido pela IA como o bot sempre leu (ver
+    interpretar_gasto): separado da chamada à IA na PRO-88, sem mudar as
+    leituras nem as exceções."""
+    dados = limpar_json_ia(texto_resposta)
 
     tipo = dados['tipo'].strip().lower()
     if tipo == 'receita':
@@ -263,17 +283,22 @@ def debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento, met
     return cat[0], cursor.lastrowid
 
 
-def registrar_gasto_avulso(conn, user_id, categoria, valor, momento, metodo_pagamento=None, descricao=None, estabelecimento=None):
+def registrar_gasto_avulso(conn, user_id, categoria, valor, momento, metodo_pagamento=None, descricao=None, estabelecimento=None, commit=True):
     """Gasto de uma vez só (Débito/Pix ou Crédito à vista): uma linha em
     'transacoes' com o valor cheio, e o commit. 'valor' já vem com o sinal do
     banco (despesa positiva). 'momento' é o texto 'AAAA-MM-DD HH:MM:SS' em
     Brasília (no bot, a hora da mensagem no Telegram; ver momento_agora).
     Devolve (cat_id, transacao_id), ou None se a categoria não existe mais
     (apagada no meio do fluxo): nesse caso nada é gravado. A conexão não é
-    fechada aqui: quem abriu fecha."""
+    fechada aqui: quem abriu fecha.
+
+    commit=False (PRO-88): grava sem o commit, para quem chama gravar mais
+    linhas na mesma transação (a chave de registro) e fazer o commit ou o
+    rollback. O bot usa o padrão (commit=True), como sempre."""
     cursor = conn.cursor()
     lancamento = debitar_categoria(cursor, user_id, categoria, valor, momento, metodo_pagamento, descricao=descricao, estabelecimento=estabelecimento)
-    conn.commit()
+    if commit:
+        conn.commit()
     return lancamento
 
 
@@ -285,7 +310,7 @@ class ParceladoRegistrado(NamedTuple):
     ciclo_referencia: str
 
 
-def registrar_gasto_parcelado(conn, user_id, categoria, valor_total, total_parcelas, momento, metodo_pagamento=None, descricao=None, estabelecimento=None):
+def registrar_gasto_parcelado(conn, user_id, categoria, valor_total, total_parcelas, momento, metodo_pagamento=None, descricao=None, estabelecimento=None, commit=True):
     """Compra parcelada: divide o valor total pelo número de parcelas, grava o
     parcelamento — com a fatura ('ciclo_referencia') calculada a partir do dia
     de fechamento do usuário, base de todas as parcelas seguintes — e a
@@ -299,7 +324,11 @@ def registrar_gasto_parcelado(conn, user_id, categoria, valor_total, total_parce
 
     'parcelamentos.descricao' guarda a descrição como veio; a parcela 1 em
     'transacoes' a guarda aparada (debitar_categoria). É assim desde antes da
-    PRO-85 e não muda aqui. A conexão não é fechada aqui: quem abriu fecha."""
+    PRO-85 e não muda aqui. A conexão não é fechada aqui: quem abriu fecha.
+
+    commit=False (PRO-88): não faz o commit no sucesso (quem chama grava a
+    chave de registro na mesma transação e faz o commit); a categoria
+    inexistente e os erros continuam desfazendo tudo, como no padrão."""
     valor_parcela = round(valor_total / total_parcelas, 2)
     try:
         cursor = conn.cursor()
@@ -322,7 +351,8 @@ def registrar_gasto_parcelado(conn, user_id, categoria, valor_total, total_parce
         if lancamento is None:
             conn.rollback()
             return None
-        conn.commit()
+        if commit:
+            conn.commit()
     except Exception:
         conn.rollback()
         raise
@@ -350,7 +380,7 @@ def validar_valor_receita(valor):
     return valor if valor > 0 else None
 
 
-def registrar_receita(conn, user_id, valor, momento, descricao=None, origem='avulsa'):
+def registrar_receita(conn, user_id, valor, momento, descricao=None, origem='avulsa', commit=True):
     """Grava uma receita na tabela 'receitas' (valor sempre positivo) e faz o
     commit; devolve o id da linha nova. Valida o valor de novo
     (validar_valor_receita) e levanta ValueError ANTES do INSERT se ele não
@@ -360,7 +390,11 @@ def registrar_receita(conn, user_id, valor, momento, descricao=None, origem='avu
     tem categoria nem forma de pagamento e não cria linha em 'transacoes'. A
     conexão não é fechada aqui: quem abriu fecha. Se o banco recusar a linha
     (ex.: user_id ou momento nulos, pelas restrições NOT NULL), desfaz e a
-    exceção sobe. Base da rota POST /receitas da PRO-88."""
+    exceção sobe. Base da rota POST /receitas da PRO-88.
+
+    commit=False (PRO-88): não faz o commit no sucesso (quem chama grava a
+    chave de registro na mesma transação e faz o commit); em erro, desfaz
+    como no padrão."""
     valor_valido = validar_valor_receita(valor)
     if valor_valido is None:
         raise ValueError(f"Valor de receita inválido: {valor!r}")
@@ -371,7 +405,8 @@ def registrar_receita(conn, user_id, valor, momento, descricao=None, origem='avu
             (user_id, valor_valido, _aparar_descricao(descricao), momento, origem)
         )
         receita_id = cursor.lastrowid
-        conn.commit()
+        if commit:
+            conn.commit()
     except Exception:
         conn.rollback()
         raise
@@ -430,3 +465,395 @@ def momento_agora(agora=None):
     elif agora.tzinfo is None:
         agora = agora.replace(tzinfo=FUSO_BRASILIA)
     return agora.astimezone(FUSO_BRASILIA).strftime('%Y-%m-%d %H:%M:%S')
+
+
+# --- REGISTRO PELA API DO MINI APP (PRO-88) ---
+# Regras das rotas POST /registro/interpretar, POST /gastos e POST /receitas.
+# A API só traduz ErroRegistro.codigo em status HTTP e monta o JSON. O bot não
+# usa esta parte (D12: a validar_valor entra no bot numa tarefa própria).
+VALOR_MAXIMO = 1_000_000.0          # D9: teto do valor (gasto e receita)
+TEXTO_MAXIMO = 200                  # D8: tamanho máximo do texto livre
+DESCRICAO_MAXIMA = 100              # D9
+ESTABELECIMENTO_MAXIMO = 60         # D9
+PARCELAS_MAXIMAS = 12               # D9
+METODOS_PAGAMENTO = ('Débito/Pix', 'Crédito')  # os mesmos textos que o bot grava
+TIPOS_REGISTRO = ('gasto', 'receita')
+_TIPO_DA_IA = {'despesa': 'gasto', 'receita': 'receita'}
+# UUID v4 (crypto.randomUUID() da tela), comparado em minúsculas.
+_FORMATO_CHAVE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}')
+
+
+class ErroRegistro(Exception):
+    """Pedido recusado, com o código que a API devolve em {"detail": codigo}.
+    A mensagem é só o código: nunca o texto do usuário nem o erro da IA."""
+
+    def __init__(self, codigo):
+        super().__init__(codigo)
+        self.codigo = codigo
+
+
+def validar_valor(valor):
+    """Valor aceito nas gravações e na prévia da API (gasto e receita): número
+    (int ou float; bool e texto NÃO valem), finito, maior que zero e até
+    VALOR_MAXIMO depois de arredondado a 2 casas. Devolve o float arredondado,
+    ou None se não servir. Mesma base da validar_valor_receita, mais o teto."""
+    valor = validar_valor_receita(valor)
+    if valor is None or valor > VALOR_MAXIMO:
+        return None
+    return valor
+
+
+def validar_chave(chave):
+    """Chave de idempotência da gravação: UUID v4 em texto. Devolve a chave em
+    minúsculas; fora do formato, ErroRegistro('chave_invalida')."""
+    if not isinstance(chave, str) or not _FORMATO_CHAVE.fullmatch(chave.lower()):
+        raise ErroRegistro('chave_invalida')
+    return chave.lower()
+
+
+def validar_pedido_interpretacao(tipo, texto):
+    """Confere o pedido da prévia antes de gastar a IA: 'tipo' é 'gasto' ou
+    'receita'; o texto, aparado, tem de 1 a TEXTO_MAXIMO caracteres. Devolve
+    (tipo, texto aparado)."""
+    if not isinstance(tipo, str) or tipo not in TIPOS_REGISTRO:
+        raise ErroRegistro('tipo_invalido')
+    if not isinstance(texto, str):
+        raise ErroRegistro('texto_invalido')
+    texto = texto.strip()
+    if not texto or len(texto) > TEXTO_MAXIMO:
+        raise ErroRegistro('texto_invalido')
+    return tipo, texto
+
+
+class Previa(NamedTuple):
+    """O que a IA entendeu, já validado ("Entendi assim:"). Na receita,
+    'estabelecimento' e 'categoria' ficam None."""
+    tipo: str
+    valor: float
+    descricao: Optional[str]
+    estabelecimento: Optional[str]
+    categoria: Optional[str]
+
+
+def _cortar(texto, maximo):
+    """Texto da IA cortado no tamanho máximo da gravação (para a prévia sempre
+    poder ser confirmada); vazio vira None."""
+    if texto is None:
+        return None
+    return texto[:maximo].rstrip() or None
+
+
+async def interpretar_previa(tipo, texto, categorias):
+    """Prévia da API: o MESMO prompt do bot (montar_prompt_gasto, com as
+    categorias do usuário; D5) e a mesma chamada à IA, sem gravar nada. 'tipo'
+    e 'texto' já passaram por validar_pedido_interpretacao.
+
+    O texto do usuário é dado, não ordem (injeção de prompt): tudo o que a IA
+    devolve é validado como entrada do usuário. Erros, sempre ErroRegistro:
+      - a IA falhou (503/429 depois das novas tentativas, sem chave, qualquer
+        outro erro): 'ia_indisponivel' (a exceção da IA é descartada);
+      - JSON quebrado, sem 'tipo', sem 'valor', tipo desconhecido ou gasto sem
+        'categoria': 'resposta_ia_invalida';
+      - a IA entendeu o outro tipo: 'tipo_divergente' (D6);
+      - valor que não é número, zero, negativo ou acima do teto:
+        'valor_nao_entendido' (D7);
+      - categoria fora da lista do usuário: 'categoria_nao_encontrada' (D7).
+    A categoria passa pelo mesmo capitalize() do bot. Descrição e
+    estabelecimento são aparados (vazios viram None) e cortados nos tamanhos
+    das gravações."""
+    prompt = montar_prompt_gasto(categorias, texto)
+    try:
+        resposta = await gerar_conteudo_com_retry(prompt)
+    except Exception:
+        raise ErroRegistro('ia_indisponivel') from None
+    try:
+        dados = limpar_json_ia(resposta.text)
+        tipo_ia = dados['tipo'].strip().lower()
+        valor_ia = dados['valor']
+    except Exception:
+        raise ErroRegistro('resposta_ia_invalida') from None
+
+    tipo_lido = _TIPO_DA_IA.get(tipo_ia)
+    if tipo_lido is None:
+        raise ErroRegistro('resposta_ia_invalida')
+    if tipo_lido != tipo:
+        raise ErroRegistro('tipo_divergente')
+
+    valor = validar_valor(_ler_valor_receita(valor_ia))
+    if valor is None:
+        raise ErroRegistro('valor_nao_entendido')
+    descricao = _cortar(_aparar_descricao(dados.get('descricao')), DESCRICAO_MAXIMA)
+    if tipo == 'receita':
+        return Previa('receita', valor, descricao, None, None)
+
+    if 'categoria' not in dados:
+        raise ErroRegistro('resposta_ia_invalida')
+    categoria = dados['categoria']
+    categoria = categoria.capitalize() if isinstance(categoria, str) else None
+    if categoria is None or categoria not in categorias:
+        raise ErroRegistro('categoria_nao_encontrada')
+    estabelecimento = _cortar(normalizar_estabelecimento(dados.get('estabelecimento')), ESTABELECIMENTO_MAXIMO)
+    return Previa('gasto', valor, descricao, estabelecimento, categoria)
+
+
+class ChaveRegistro(NamedTuple):
+    """Linha de 'chaves_registro': o tipo e o id do lançamento da chave."""
+    tipo: str
+    lancamento_id: int
+
+
+def buscar_chave(conn, user_id, chave):
+    """ChaveRegistro da chave DESTE usuário, ou None. A chave vale por usuário
+    (D1): a mesma chave de outro usuário nunca é encontrada aqui."""
+    linha = conn.execute(
+        'SELECT tipo, lancamento_id FROM chaves_registro WHERE user_id = ? AND chave = ?',
+        (user_id, chave)
+    ).fetchone()
+    return ChaveRegistro(linha[0], linha[1]) if linha else None
+
+
+def _desfazer(conn):
+    """Rollback que não esconde o erro original se ele mesmo falhar."""
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+
+
+# Esperas entre as tentativas de gravar quando o banco está ocupado: até 4
+# tentativas no total (a primeira e mais 3).
+ESPERAS_BANCO_OCUPADO = (0.25, 0.5, 1.0)
+
+# Sinais de erro PASSAGEIRO na mensagem (sem diferenciar maiúsculas): banco
+# ocupado ou transação desfeita pelo servidor (o Turso desfaz a transação
+# interativa de um stream parado: "interactive transaction was rolled back
+# ... code: SQLITE_BUSY"). NÃO usar "stream error": ele também aparece na
+# chave repetida (UNIQUE) do libsql.
+_SINAIS_PASSAGEIRO = ('sqlite_busy', 'database is locked', 'was rolled back')
+
+
+def erro_passageiro(erro):
+    """True se a mensagem do erro indica banco ocupado ou transação desfeita
+    pelo servidor (vale tentar de novo)."""
+    texto = str(erro).lower()
+    return any(sinal in texto for sinal in _SINAIS_PASSAGEIRO)
+
+
+def _esperar(segundos):
+    """Espera entre as tentativas (os testes trocam por uma que não dorme).
+    As rotas que gravam são síncronas (rodam em thread), então dormir aqui
+    não trava o servidor."""
+    time.sleep(segundos)
+
+
+def gravar_com_chave(conn, user_id, chave, tipo, momento, gravar):
+    """Grava o lançamento e a linha da chave NA MESMA TRANSAÇÃO e faz um único
+    commit. 'gravar' é uma função sem argumentos que grava o lançamento sem
+    commit e devolve o id dele (ou None se a categoria não existe mais).
+
+    Devolve (ChaveRegistro, repetido), ou (None, False) se 'gravar' devolveu
+    None (nada fica gravado).
+
+    Em QUALQUER exceção (no gravar, no INSERT da chave ou no commit), desfaz a
+    transação e consulta a chave do usuário:
+      - a chave existe: devolve a do pedido que gravou, com repetido=True. É o
+        caso de dois pedidos juntos (o segundo bate na chave primária) e o de
+        um commit que deu certo no servidor mas chegou como erro ao cliente;
+      - a chave não existe e o erro é PASSAGEIRO (erro_passageiro, ou a
+        própria consulta da chave falhou): espera (ESPERAS_BANCO_OCUPADO) e
+        tenta a gravação inteira de novo, numa transação nova. Esgotadas as 4
+        tentativas: ErroRegistro('banco_ocupado');
+      - a chave não existe e o erro não é passageiro: a exceção original sobe.
+    Não depende da classe do erro (o SQLite levanta sqlite3.IntegrityError; o
+    libsql, ValueError com "SQLITE_CONSTRAINT" ou "SQLITE_BUSY"). Gravação em
+    dobro é impossível: a chave primária (user_id, chave) entra na mesma
+    transação do lançamento, e cada nova tentativa passa por ela."""
+    tentativas = len(ESPERAS_BANCO_OCUPADO) + 1
+    for tentativa in range(tentativas):
+        try:
+            lancamento_id = gravar()
+            if lancamento_id is None:
+                _desfazer(conn)
+                return None, False
+            conn.execute(
+                'INSERT INTO chaves_registro (user_id, chave, tipo, lancamento_id, criado_em) VALUES (?, ?, ?, ?, ?)',
+                (user_id, chave, tipo, lancamento_id, momento)
+            )
+            conn.commit()
+            return ChaveRegistro(tipo, lancamento_id), False
+        except Exception as erro:
+            _desfazer(conn)
+            try:
+                existente = buscar_chave(conn, user_id, chave)
+                passageiro = erro_passageiro(erro)
+            except Exception:  # a consulta também falhou (stream quebrado): passageiro
+                existente = None
+                passageiro = True
+            if existente is not None:
+                return existente, True
+            if not passageiro:
+                raise erro
+            if tentativa == tentativas - 1:
+                raise ErroRegistro('banco_ocupado') from None
+            _esperar(ESPERAS_BANCO_OCUPADO[tentativa])
+
+
+class GastoRegistrado(NamedTuple):
+    """Gasto gravado pela API, lido do banco. 'valor' é o total da compra;
+    'valor_parcela' é o da parcela 1 (igual a 'valor' à vista); 'data' é o
+    dia ('AAAA-MM-DD', Brasília)."""
+    id: int
+    valor: float
+    valor_parcela: float
+    parcelas: int
+    descricao: Optional[str]
+    estabelecimento: Optional[str]
+    categoria: str
+    metodo_pagamento: Optional[str]
+    data: str
+    repetido: bool
+
+
+class ReceitaRegistrada(NamedTuple):
+    """Receita gravada pela API, lida do banco ('data' = 'AAAA-MM-DD')."""
+    id: int
+    valor: float
+    descricao: Optional[str]
+    data: str
+    repetido: bool
+
+
+def buscar_gasto_registrado(conn, user_id, transacao_id, repetido=False):
+    """GastoRegistrado da transação do usuário (com a compra, se for a parcela
+    1 de um parcelado), ou None se ela não existe ou é de outro usuário."""
+    linha = conn.execute(
+        '''SELECT t.id, t.valor, t.descricao, t.estabelecimento, t.categoria_nome, t.metodo_pagamento,
+                  t.data_transacao, p.valor_total, p.total_parcelas
+           FROM transacoes t
+           LEFT JOIN parcelamentos p ON p.id = t.parcelamento_id AND p.user_id = t.user_id
+           WHERE t.id = ? AND t.user_id = ?''',
+        (transacao_id, user_id)
+    ).fetchone()
+    if linha is None:
+        return None
+    (id_gasto, valor_parcela, descricao, estabelecimento, categoria, metodo_pagamento,
+     data, valor_total, total_parcelas) = linha
+    parcelado = total_parcelas is not None
+    return GastoRegistrado(
+        id_gasto, valor_total if parcelado else valor_parcela, valor_parcela,
+        total_parcelas if parcelado else 1, descricao, estabelecimento, categoria,
+        metodo_pagamento, str(data)[:10], repetido
+    )
+
+
+def buscar_receita_registrada(conn, user_id, receita_id, repetido=False):
+    """ReceitaRegistrada do usuário, ou None se não existe ou é de outro."""
+    linha = conn.execute(
+        'SELECT id, valor, descricao, data_receita FROM receitas WHERE id = ? AND user_id = ?',
+        (receita_id, user_id)
+    ).fetchone()
+    if linha is None:
+        return None
+    return ReceitaRegistrada(linha[0], linha[1], linha[2], str(linha[3])[:10], repetido)
+
+
+def _lancamento_da_chave(conn, user_id, chave_registro, tipo, repetido):
+    """Lê o lançamento apontado pela chave. A chave já usada no outro tipo, ou
+    cujo lançamento não existe mais, dá 'chave_invalida' (a tela gera outra)."""
+    if chave_registro.tipo != tipo:
+        raise ErroRegistro('chave_invalida')
+    buscar = buscar_gasto_registrado if tipo == 'gasto' else buscar_receita_registrada
+    lancamento = buscar(conn, user_id, chave_registro.lancamento_id, repetido)
+    if lancamento is None:
+        raise ErroRegistro('chave_invalida')
+    return lancamento
+
+
+def _texto_opcional(texto, maximo, codigo, limpar=_aparar_descricao):
+    """Texto opcional aparado (vazio ou não texto vira None); acima do máximo,
+    ErroRegistro(codigo)."""
+    texto = limpar(texto)
+    if texto is not None and len(texto) > maximo:
+        raise ErroRegistro(codigo)
+    return texto
+
+
+def gravar_gasto_api(conn, user_id, chave, valor, descricao, estabelecimento, categoria,
+                     metodo_pagamento, parcelas, momento):
+    """POST /gastos: valida tudo de novo (sem chamar a IA) e grava UMA vez só.
+
+    1. Chave fora do formato: 'chave_invalida'. Chave já gravada por este
+       usuário: devolve o lançamento original (repetido=True), sem validar o
+       resto do pedido nem gravar.
+    2. Valida: valor (validar_valor; 'valor_invalido'), descrição (até 100;
+       'descricao_longa'), estabelecimento (até 60; 'estabelecimento_longo'),
+       forma de pagamento ('Débito/Pix' ou 'Crédito';
+       'metodo_pagamento_invalido'), parcelas (inteiro de 1 a 12;
+       'parcelas_invalidas'; Débito/Pix força 1) e categoria (exatamente uma da
+       lista do usuário; 'categoria_nao_encontrada').
+    3. Grava com a chave (gravar_com_chave): 1 parcela vira gasto avulso (o
+       Crédito 1x grava como à vista, igual ao bot); de 2 a 12, o parcelado
+       (compra + parcela 1). Categoria apagada no meio: 'categoria_nao_encontrada'.
+       Banco ocupado em todas as tentativas: 'banco_ocupado'.
+
+    'momento' vem do servidor ('AAAA-MM-DD HH:MM:SS', Brasília). Devolve
+    GastoRegistrado, lido do banco."""
+    chave = validar_chave(chave)
+    existente = buscar_chave(conn, user_id, chave)
+    if existente is not None:
+        return _lancamento_da_chave(conn, user_id, existente, 'gasto', True)
+
+    valor = validar_valor(valor)
+    if valor is None:
+        raise ErroRegistro('valor_invalido')
+    descricao = _texto_opcional(descricao, DESCRICAO_MAXIMA, 'descricao_longa')
+    estabelecimento = _texto_opcional(estabelecimento, ESTABELECIMENTO_MAXIMO, 'estabelecimento_longo',
+                                      normalizar_estabelecimento)
+    if not isinstance(metodo_pagamento, str) or metodo_pagamento not in METODOS_PAGAMENTO:
+        raise ErroRegistro('metodo_pagamento_invalido')
+    if metodo_pagamento == 'Débito/Pix':
+        parcelas = 1
+    elif isinstance(parcelas, bool) or not isinstance(parcelas, int) or not 1 <= parcelas <= PARCELAS_MAXIMAS:
+        raise ErroRegistro('parcelas_invalidas')
+    if not isinstance(categoria, str) or categoria not in listar_categorias(conn, user_id):
+        raise ErroRegistro('categoria_nao_encontrada')
+
+    def gravar():
+        if parcelas == 1:
+            lancamento = registrar_gasto_avulso(
+                conn, user_id, categoria, valor, momento, metodo_pagamento,
+                descricao=descricao, estabelecimento=estabelecimento, commit=False
+            )
+            return None if lancamento is None else lancamento[1]
+        lancamento = registrar_gasto_parcelado(
+            conn, user_id, categoria, valor, parcelas, momento, metodo_pagamento,
+            descricao=descricao, estabelecimento=estabelecimento, commit=False
+        )
+        return None if lancamento is None else lancamento.transacao_id
+
+    chave_registro, repetido = gravar_com_chave(conn, user_id, chave, 'gasto', momento, gravar)
+    if chave_registro is None:
+        raise ErroRegistro('categoria_nao_encontrada')
+    return _lancamento_da_chave(conn, user_id, chave_registro, 'gasto', repetido)
+
+
+def gravar_receita_api(conn, user_id, chave, valor, descricao, momento):
+    """POST /receitas: mesma regra da chave do gravar_gasto_api; valida o
+    valor (validar_valor; 'valor_invalido') e a descrição (até 100;
+    'descricao_longa') e grava com a chave (registrar_receita sem commit).
+    Devolve ReceitaRegistrada, lida do banco."""
+    chave = validar_chave(chave)
+    existente = buscar_chave(conn, user_id, chave)
+    if existente is not None:
+        return _lancamento_da_chave(conn, user_id, existente, 'receita', True)
+
+    valor = validar_valor(valor)
+    if valor is None:
+        raise ErroRegistro('valor_invalido')
+    descricao = _texto_opcional(descricao, DESCRICAO_MAXIMA, 'descricao_longa')
+
+    def gravar():
+        return registrar_receita(conn, user_id, valor, momento, descricao, commit=False)
+
+    chave_registro, repetido = gravar_com_chave(conn, user_id, chave, 'receita', momento, gravar)
+    return _lancamento_da_chave(conn, user_id, chave_registro, 'receita', repetido)

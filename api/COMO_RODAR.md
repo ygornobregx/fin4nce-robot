@@ -4,6 +4,14 @@ Antes de tudo: o `.env` local deve apontar para o **bot de teste** (`TOKEN`) e p
 banco **`fin4ncetest`** (`TURSO_DATABASE_URL` e `TURSO_AUTH_TOKEN`). Nunca use os
 valores de produção. Não copie esses valores para lugar nenhum.
 
+Desde a PRO-88, o `.env` também leva a chave do Gemini (`GEMINI_API_KEY`), lida só no
+servidor. Ela não é obrigatória para a API subir: sem ela, só `POST /registro/interpretar`
+responde `503 ia_indisponivel`; as leituras e as gravações continuam funcionando.
+
+A tabela `chaves_registro` (PRO-88) é criada pelo bot (`iniciar_banco()`). Suba o bot
+desta versão pelo menos uma vez antes de gravar pela API: sem a tabela, `POST /gastos`
+e `POST /receitas` dão erro 500.
+
 ## 1. Instalar as dependências
 
 No venv do projeto:
@@ -36,13 +44,39 @@ Rotas:
   receita ou sem descrição dá `404 gasto_nao_encontrado` (exige o mesmo cabeçalho).
 - Home do Mini App em `/app/` (PRO-77): a tela que o usuário vê, servida de `mini-apps/home/`. A tela de detalhe do gasto
   (PRO-80) é uma segunda tela dentro da mesma página, aberta ao tocar numa linha de "Últimos gastos".
+- `POST /registro/interpretar` (PRO-88): corpo `{"tipo": "gasto" | "receita", "texto": "..."}` (1 a 200
+  caracteres). A IA lê o texto com as categorias do usuário e a rota devolve a prévia, **sem gravar**.
+  Limite: 10 chamadas por minuto por usuário (só nesta rota).
+- `POST /gastos` (PRO-88): grava o gasto confirmado. Corpo com `chave` (UUID v4 gerado pela tela, um por
+  prévia), `valor` (total), `descricao`, `estabelecimento`, `categoria`, `metodo_pagamento` (`"Débito/Pix"` ou
+  `"Crédito"`) e `parcelas` (1 a 12; Débito/Pix grava 1). `201` gravou; `200` com `"repetido": true` quando a
+  mesma chave já tinha sido gravada (devolve o lançamento original, sem gravar de novo).
+- `POST /receitas` (PRO-88): corpo `{"chave", "valor", "descricao"}`; mesmo `201`/`200` de `/gastos`.
 - Página de diagnóstico em `/teste/`, que chama `/me`, `/resumo`, `/historico` e `/gastos/recentes` e mostra as quatro respostas.
+  Desde a PRO-88, tem também o bloco "Registro (diagnóstico)": "Interpretar" mostra a prévia em JSON e "Gravar"
+  manda o mesmo pedido duas vezes ao mesmo tempo, com a mesma chave (prova do toque duplo: um `201` e um `200`
+  com o mesmo `id`).
 - As duas páginas vão com `Cache-Control: no-cache`: o Telegram sempre confere com o servidor se a página
   mudou (sem mudança, a resposta é um 304). Depois de mudar o código, reinicie a API (`Ctrl + C` e o comando acima).
 
 Erros de `/resumo`, `/historico`, `/gastos/recentes` e `/gastos/{id}`: `401 nao_autorizado`, `404 usuario_nao_cadastrado` e
 `409 cadastro_incompleto` (usuário sem dia de fechamento). Só `/gastos/{id}` tem ainda o
 `404 gasto_nao_encontrado`; um id que não é número dá `422` (padrão do FastAPI).
+
+Erros das rotas de registro (PRO-88), além dos três acima, sempre `{"detail": "<código>"}`:
+
+- `/registro/interpretar`: `422 texto_invalido`, `tipo_invalido`, `tipo_divergente` (a IA entendeu o outro
+  tipo), `valor_nao_entendido`, `categoria_nao_encontrada`; `429 limite_excedido` (com o cabeçalho
+  `Retry-After`, em segundos); `502 resposta_ia_invalida`; `503 ia_indisponivel`.
+- `/gastos`: `422 chave_invalida`, `valor_invalido` (maior que 0 e até R$ 1.000.000,00), `categoria_nao_encontrada`,
+  `metodo_pagamento_invalido`, `parcelas_invalidas`, `descricao_longa` (mais de 100), `estabelecimento_longo` (mais de 60).
+- `/receitas`: `422 chave_invalida`, `valor_invalido`, `descricao_longa`.
+- `/gastos` e `/receitas`: `503 banco_ocupado` quando o banco continuou ocupado (ou desfez a transação) depois
+  de 4 tentativas (esperas de 0,25 s, 0,5 s e 1 s). Nada fica gravado em dobro: a tela reenvia o **mesmo** corpo
+  com a **mesma** chave (o mesmo vale para falha de rede), e a resposta vem `201` ou `200` com `"repetido": true`.
+- As três rotas: erro inesperado dá `500 {"detail": "erro_interno"}`, sem a mensagem do banco nem o traceback
+  (no log, só "Registro falhou: erro_interno" e o nome da classe).
+- Um corpo que nem é JSON (ou campo de texto com número) dá o `422` padrão do FastAPI (`detail` em lista).
 
 ## 3. Abrir o túnel
 
@@ -70,6 +104,7 @@ Todos rodam sem `.env` e sem internet:
 ```
 python testes_initdata.py
 python testes_rotas_leitura.py
+python testes_rotas_registro.py
 python testes_estabelecimento.py
 python testes_calculos.py
 ```
