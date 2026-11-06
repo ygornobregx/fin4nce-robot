@@ -1,10 +1,11 @@
 """API local do Mini App: autentica pelo initData do Telegram (PRO-72) e expõe
 as rotas de leitura /me, /resumo e /historico (PRO-76; /resumo sem orçamento
 por categoria desde a PRO-83; com o total de receitas da fatura desde a
-PRO-86) e /gastos/recentes (PRO-79, com o
-estabelecimento do gasto desde a PRO-81) e /gastos/{id} (PRO-80, detalhe de um
-gasto, com as parcelas pagas). Os números e a consulta vêm todos do
-calculos.py; as rotas só buscam os dados e montam o JSON.
+PRO-86), /gastos/recentes (PRO-79, com o
+estabelecimento do gasto desde a PRO-81), /gastos/{id} (PRO-80, detalhe de um
+gasto, com as parcelas pagas) e /movimentacoes/recentes (PRO-92, gastos e
+receitas numa lista só, com o campo "tipo" em cada item). Os números e a
+consulta vêm todos do calculos.py; as rotas só buscam os dados e montam o JSON.
 
 Rotas de registro (PRO-88): POST /registro/interpretar (prévia com a IA, sem
 gravar), POST /gastos e POST /receitas (gravação confirmada, uma vez só por
@@ -38,6 +39,7 @@ from calculos import (
     FUSO_BRASILIA,
     buscar_gasto,
     buscar_gastos_recentes,
+    buscar_movimentacoes_recentes,
     calcular_parcelas_pagas,
     calcular_resumo_fatura,
     calcular_serie_gastos_mensais,
@@ -49,6 +51,7 @@ logger = logging.getLogger("api")
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 LIMITE_GASTOS_RECENTES = 10
+LIMITE_MOVIMENTACOES_RECENTES = 10  # total, somando gastos e receitas (PRO-92)
 
 
 class Config(NamedTuple):
@@ -203,6 +206,36 @@ def gastos_recentes(usuario: dict = Depends(usuario_autenticado), conn=Depends(o
                 "valor_total": None if valor_total is None else em_reais(valor_total),
             }
             for id_gasto, descricao, categoria, valor, data, total_parcelas, valor_total, estabelecimento in gastos
+        ]
+    }
+
+
+@app.get("/movimentacoes/recentes")
+def movimentacoes_recentes(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db)):
+    """Gastos e receitas numa lista só, para a home (PRO-92). Os dois tipos
+    têm os mesmos campos; o front decide pela 'tipo' ("gasto" ou "receita").
+    O valor vai sempre positivo: o sinal e a cor são da tela. Na receita,
+    estabelecimento, categoria, total_parcelas e valor_total vêm null e
+    parcelado false; descrição vazia vem null (nunca texto substituto)."""
+    user_id = usuario["id"]
+    carregar_cadastro(conn, user_id)
+    movimentacoes = buscar_movimentacoes_recentes(conn, user_id, LIMITE_MOVIMENTACOES_RECENTES)
+    return {
+        "movimentacoes": [
+            {
+                "tipo": tipo,
+                "id": id_movimentacao,
+                "descricao": descricao,
+                "estabelecimento": estabelecimento,
+                "categoria": categoria,
+                "valor": em_reais(valor),
+                "data": data,
+                "parcelado": total_parcelas is not None,
+                "total_parcelas": total_parcelas,
+                "valor_total": None if valor_total is None else em_reais(valor_total),
+            }
+            for (tipo, id_movimentacao, descricao, categoria, valor, data,
+                 total_parcelas, valor_total, estabelecimento) in movimentacoes
         ]
     }
 

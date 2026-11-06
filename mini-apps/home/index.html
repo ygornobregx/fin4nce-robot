@@ -30,6 +30,8 @@
       --cor-placeholder: #9A9A9E;
       --cor-microfone-fundo: #F5F5F6;
       --cor-aviso-sombra: #00000038;
+      /* Valor da receita em "Últimas Movimentações" (PRO-92) */
+      --cor-receita: #15803D;
     }
 
     * { box-sizing: border-box; }
@@ -255,7 +257,7 @@
     .coluna.previsto .coluna-barra { background: var(--cor-fundo-suave); border: 1px dashed var(--cor-tracejado); }
     .coluna.previsto .coluna-barra.zerada { border: 0; }
 
-    /* ---------- 4. Últimos gastos ---------- */
+    /* ---------- 4. Últimas Movimentações (gastos e receitas, PRO-92) ---------- */
     .extrato { padding: 28px 24px 0; }
     .extrato .secao-titulo { padding-bottom: 4px; }
 
@@ -268,7 +270,8 @@
     }
     .grupo-data.primeiro { padding-top: 16px; }
 
-    /* A linha é um <button> (abre o detalhe), com a mesma aparência de antes. */
+    /* A linha é um <button> com a mesma aparência de antes: no gasto abre o detalhe;
+       na receita (data-tipo="receita", sem data-id-gasto) mostra "Em breve". */
     .gasto {
       width: 100%;
       text-align: left;
@@ -285,6 +288,8 @@
 
     .gasto-valor { flex-shrink: 0; text-align: right; white-space: nowrap; font-size: 15px; line-height: 20px; font-weight: 700; color: var(--cor-texto); }
     .gasto-valor .parcelas { font-weight: 600; color: var(--cor-texto-2); }
+    /* Receita: mesmo tamanho e peso do gasto, só a cor muda (o "+ " vem no texto). */
+    .gasto-valor.receita { color: var(--cor-receita); }
 
     .extrato-vazio { padding-top: 16px; font-size: 15px; line-height: 20px; font-weight: 500; color: var(--cor-texto-2); }
 
@@ -744,7 +749,7 @@
     </section>
 
     <section class="extrato" id="extrato" hidden>
-      <h2 class="secao-titulo">Últimos gastos</h2>
+      <h2 class="secao-titulo">Últimas Movimentações</h2>
       <div id="extrato-lista"></div>
     </section>
   </main>
@@ -1171,6 +1176,28 @@
       }
       return resultado;
     }
+
+    // ---------- Últimas Movimentações (PRO-92) ----------
+    // Texto do valor de uma linha da lista, decidido pelo 'tipo' (a API manda o valor sempre positivo;
+    // o "+ " e o verde são apresentação). Devolve { texto, parcelas, classe }:
+    //   gasto à vista: "R$ 18,50", sem parcelas; gasto parcelado: "R$ 129,90" e parcelas " · 3x";
+    //   receita: "+ R$ 53,90", sem parcelas, com a classe extra "receita" (cor --cor-receita).
+    function textoValorMovimentacao(m) {
+      if (m.tipo === "receita") {
+        return { texto: "+ " + formatarDinheiro(m.valor), parcelas: null, classe: "gasto-valor receita" };
+      }
+      return {
+        texto: formatarDinheiro(m.valor),
+        parcelas: m.parcelado ? " · " + m.total_parcelas + "x" : null,
+        classe: "gasto-valor",
+      };
+    }
+
+    // Nome da linha: a descrição; a receita sem descrição (null na API) aparece como "Receita".
+    function nomeMovimentacao(m) {
+      if (m.tipo === "receita") return m.descricao || "Receita";
+      return m.descricao;
+    }
   </script>
   <!-- FIM FUNCOES PURAS -->
 
@@ -1318,35 +1345,39 @@
       $("grafico-area").scrollLeft = Math.max(0, indiceAtual - 3) * 64;
     }
 
-    // ---------- Últimos gastos ----------
+    // ---------- Últimas Movimentações (gastos e receitas, PRO-92) ----------
     function rotuloDia(data) {
       // "2026-10-29" -> "29 Out."
       return parseInt(data.slice(8, 10), 10) + " " + MESES_CURTOS[parseInt(data.slice(5, 7), 10) - 1] + ".";
     }
 
-    function mostrarExtrato(gastos) {
+    // 'movimentacoes' vem de /movimentacoes/recentes, já em ordem (mais recente primeiro).
+    function mostrarExtrato(movimentacoes) {
       const lista = $("extrato-lista");
       lista.replaceChildren();
 
-      if (!gastos.length) {
-        lista.append(criar("p", "extrato-vazio", "Seus próximos gastos aparecem aqui"));
+      if (!movimentacoes.length) {
+        lista.append(criar("p", "extrato-vazio", "Suas movimentações aparecem aqui"));
       } else {
         let dataAtual = null;
         let grupo = null;
-        gastos.forEach((g) => {
-          if (g.data !== dataAtual) {
-            dataAtual = g.data;
-            lista.append(criar("div", "grupo-data" + (grupo === null ? " primeiro" : ""), rotuloDia(g.data)));
+        movimentacoes.forEach((m) => {
+          if (m.data !== dataAtual) {
+            dataAtual = m.data;
+            lista.append(criar("div", "grupo-data" + (grupo === null ? " primeiro" : ""), rotuloDia(m.data)));
             grupo = criar("div", "grupo");
             lista.append(grupo);
           }
-          const valor = criar("span", "gasto-valor", formatarDinheiro(g.valor));
-          if (g.parcelado) valor.append(criar("span", "parcelas", " · " + g.total_parcelas + "x"));
-          // Linha clicável: um botão que guarda o id do gasto e abre o detalhe.
+          const textoValor = textoValorMovimentacao(m);
+          const valor = criar("span", textoValor.classe, textoValor.texto);
+          if (textoValor.parcelas) valor.append(criar("span", "parcelas", textoValor.parcelas));
+          // Linha clicável: um botão. Só o gasto guarda o id (data-id-gasto) e abre o detalhe;
+          // os ids de gasto e de receita são independentes, então o da receita nunca vai para /gastos/{id}.
           const linha = criar("button", "gasto");
           linha.type = "button";
-          linha.dataset.idGasto = g.id;
-          linha.append(criar("span", "gasto-nome", g.descricao), valor);
+          if (m.tipo === "gasto") linha.dataset.idGasto = m.id;
+          else linha.dataset.tipo = "receita";
+          linha.append(criar("span", "gasto-nome", nomeMovimentacao(m)), valor);
           grupo.append(linha);
         });
       }
@@ -1432,7 +1463,7 @@
       voltarParaCarregando();
       mostrarDataESaudacao("");
       const resultados = await Promise.all([
-        chamar("/me"), chamar("/resumo"), chamar("/historico"), chamar("/gastos/recentes"),
+        chamar("/me"), chamar("/resumo"), chamar("/historico"), chamar("/movimentacoes/recentes"),
       ]);
       if (resultados.some((r) => r.erro !== undefined)) {
         const erro = mensagemDeErro(resultados);
@@ -1442,7 +1473,7 @@
       const [me, resumo, historico, recentes] = resultados.map((r) => r.dados);
       mostrarCabecalho(me, resumo);
       mostrarGrafico(historico.meses || []);
-      mostrarExtrato(recentes.gastos || []);
+      mostrarExtrato(recentes.movimentacoes || []);
     }
 
     // ---------- Telegram ----------
@@ -1928,9 +1959,12 @@
       $("aviso-botao").addEventListener("click", carregar);
 
       // Detalhe do gasto: toque na linha, voltar (cabeçalho, erro ou BackButton do Telegram) e ações "Em breve".
+      // Só a linha com data-id-gasto abre o detalhe; a receita ainda não tem tela (PRO-92, D2): "Em breve".
       $("extrato-lista").addEventListener("click", (evento) => {
         const linha = evento.target.closest(".gasto");
-        if (linha) abrirDetalhe(linha.dataset.idGasto);
+        if (!linha) return;
+        if (linha.dataset.idGasto) abrirDetalhe(linha.dataset.idGasto);
+        else avisarEmBreve();
       });
       $("detalhe-voltar").addEventListener("click", voltarParaHome);
       $("detalhe-erro-voltar").addEventListener("click", voltarParaHome);

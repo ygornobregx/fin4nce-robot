@@ -1,6 +1,7 @@
 """Testes das rotas de leitura da API: GET /resumo e GET /historico (PRO-76) e
-GET /gastos/recentes (PRO-79; campo estabelecimento na PRO-81), e de
-GET /gastos/{id} com o cálculo das parcelas pagas (PRO-80).
+GET /gastos/recentes (PRO-79; campo estabelecimento na PRO-81), de
+GET /gastos/{id} com o cálculo das parcelas pagas (PRO-80) e de
+GET /movimentacoes/recentes (PRO-92, gastos e receitas numa lista só).
 
 Roda com `python testes_rotas_leitura.py`. Não usa .env nem rede: o token é
 falso, o banco é um SQLite em memória e o "agora" da API é fixo (17/10/2026
@@ -727,6 +728,237 @@ class TestGastosRecentes(TesteRotasBase):
         self.assertIsInstance(gasto["total_parcelas"], int)
 
 
+class TestMovimentacoesRecentes(TesteRotasBase):
+    """PRO-92: GET /movimentacoes/recentes junta gastos (transacoes) e receitas
+    (receitas) numa lista só, com o campo "tipo" e os mesmos campos nos dois."""
+
+    ROTA = "/movimentacoes/recentes"
+
+    def resumo(self, movimentacoes):
+        return [(m["tipo"], m["id"], m["descricao"]) for m in movimentacoes]
+
+    def test_sem_cabecalho_401(self):
+        self.iniciar(banco_completo())
+        resposta = self.client.get(self.ROTA)
+        self.assertEqual(resposta.status_code, 401)
+        self.assertEqual(resposta.json(), {"detail": "nao_autorizado"})
+
+    def test_esquema_errado_e_initdata_invalido_401(self):
+        self.iniciar(banco_completo())
+        self.assertEqual(self.client.get(self.ROTA, headers={"Authorization": "Bearer abc"}).status_code, 401)
+        adulterado = montar_init_data(auth_date=int(time.time()), hash_override="0" * 64)
+        self.assertEqual(self.client.get(self.ROTA, headers={"Authorization": "tma " + adulterado}).status_code, 401)
+
+    def test_usuario_nao_cadastrado_404(self):
+        self.iniciar(banco_completo())
+        resposta = self.obter(self.ROTA, user_id=777)
+        self.assertEqual(resposta.status_code, 404)
+        self.assertEqual(resposta.json(), {"detail": "usuario_nao_cadastrado"})
+
+    def test_sem_dia_fechamento_409(self):
+        for dia in (None, 0):
+            with self.subTest(dia_fechamento=dia):
+                self.iniciar(novo_banco(dia_fechamento=dia))
+                resposta = self.obter(self.ROTA)
+                self.assertEqual(resposta.status_code, 409)
+                self.assertEqual(resposta.json(), {"detail": "cadastro_incompleto"})
+                self.tearDown()
+
+    def test_lista_vazia(self):
+        self.iniciar(novo_banco())
+        resposta = self.obter(self.ROTA)
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.json(), {"movimentacoes": []})
+
+    def test_banco_completo_sem_descricao_e_sem_receita_da_lista_vazia(self):
+        # banco_completo só tem gastos sem descrição e um negativo antigo.
+        self.iniciar(banco_completo())
+        self.assertEqual(self.obter(self.ROTA).json(), {"movimentacoes": []})
+
+    def test_contrato_completo_de_receita_e_gasto_parcelado(self):
+        conn = novo_banco()
+        parcelamento(conn, "Casa", 389.7, 3, "2026-10-28 11:00:00", "2026-10", descricao="Magazine Luiza",
+                     estabelecimento="Magazine Luiza")                                    # gasto id 1
+        receita(conn, 53.9, "2026-10-29 09:00:00", descricao="Reembolso")                  # receita id 1
+        conn.commit()
+        self.iniciar(conn)
+        resposta = self.obter(self.ROTA)
+        self.assertEqual(resposta.status_code, 200)
+        # Os dois tipos com os mesmos campos; o gasto e a receita têm o mesmo id 1
+        # (tabelas independentes): só o par (tipo, id) identifica a linha.
+        self.assertEqual(resposta.json(), {"movimentacoes": [
+            {"tipo": "receita", "id": 1, "descricao": "Reembolso", "estabelecimento": None,
+             "categoria": None, "valor": 53.9, "data": "2026-10-29", "parcelado": False,
+             "total_parcelas": None, "valor_total": None},
+            {"tipo": "gasto", "id": 1, "descricao": "Magazine Luiza", "estabelecimento": "Magazine Luiza",
+             "categoria": "Casa", "valor": 129.9, "data": "2026-10-28", "parcelado": True,
+             "total_parcelas": 3, "valor_total": 389.7},
+        ]})
+
+    def test_gasto_parcelado_igual_ao_da_gastos_recentes(self):
+        conn = novo_banco()
+        parcelamento(conn, "Casa", 100.0, 3, "2026-10-28 11:00:00", "2026-10", descricao="Teste")
+        conn.commit()
+        self.iniciar(conn)
+        movimentacoes = self.obter(self.ROTA).json()["movimentacoes"]
+        gastos = self.obter("/gastos/recentes").json()["gastos"]
+        # Aparece uma vez (parcela 1), com os mesmos campos da /gastos/recentes mais o "tipo".
+        self.assertEqual(len(movimentacoes), 1)
+        self.assertEqual(movimentacoes[0], {"tipo": "gasto", **gastos[0]})
+        self.assertEqual((movimentacoes[0]["valor"], movimentacoes[0]["valor_total"]), (33.33, 100.0))
+        self.assertIsInstance(movimentacoes[0]["total_parcelas"], int)
+
+    def test_campos_da_receita_nulos_e_valor_positivo_com_duas_casas(self):
+        conn = novo_banco()
+        receita(conn, 10.119, "2026-10-10 10:00:00", descricao="Pix")
+        conn.commit()
+        self.iniciar(conn)
+        item = self.obter(self.ROTA).json()["movimentacoes"][0]
+        self.assertEqual(item["tipo"], "receita")
+        for campo in ("estabelecimento", "categoria", "total_parcelas", "valor_total"):
+            self.assertIn(campo, item)
+            self.assertIsNone(item[campo], campo)
+        self.assertIs(item["parcelado"], False)
+        # 10,119 -> 10,12: positivo, float, 2 casas (o "+" é da tela).
+        self.assertEqual(item["valor"], 10.12)
+        self.assertIsInstance(item["valor"], float)
+
+    def test_ordem_mista_pelo_momento_completo(self):
+        conn = novo_banco()
+        transacao(conn, "Lazer", 10.0, "2026-10-10 08:00:00", descricao="Café")         # gasto 1
+        receita(conn, 100.0, "2026-10-10 12:00:00", descricao="Freela")                  # receita 1
+        transacao(conn, "Lazer", 20.0, "2026-10-10 18:30:00", descricao="Jantar")       # gasto 2
+        receita(conn, 30.0, "2026-10-09 23:59:59", descricao="Reembolso")                # receita 2
+        transacao(conn, "Lazer", 5.0, "2026-10-11 00:00:00", descricao="Bala")          # gasto 3
+        conn.commit()
+        self.iniciar(conn)
+        # Mesmo dia (10/10) em horas diferentes: vale a hora, não só o dia.
+        self.assertEqual(self.resumo(self.obter(self.ROTA).json()["movimentacoes"]), [
+            ("gasto", 3, "Bala"),
+            ("gasto", 2, "Jantar"),
+            ("receita", 1, "Freela"),
+            ("gasto", 1, "Café"),
+            ("receita", 2, "Reembolso"),
+        ])
+
+    def test_empate_no_mesmo_segundo_gasto_antes_e_maior_id_primeiro(self):
+        conn = novo_banco()
+        momento = "2026-10-15 10:00:00"
+        receita(conn, 1.0, momento, descricao="R1")                # receita 1
+        transacao(conn, "Lazer", 1.0, momento, descricao="G1")    # gasto 1
+        receita(conn, 2.0, momento, descricao="R2")                # receita 2
+        transacao(conn, "Lazer", 2.0, momento, descricao="G2")    # gasto 2
+        conn.commit()
+        self.iniciar(conn)
+        self.assertEqual(self.resumo(self.obter(self.ROTA).json()["movimentacoes"]), [
+            ("gasto", 2, "G2"), ("gasto", 1, "G1"), ("receita", 2, "R2"), ("receita", 1, "R1"),
+        ])
+
+    def test_limite_de_10_no_total_contando_os_dois_tipos(self):
+        conn = novo_banco()
+        for dia in range(1, 8):  # 7 gastos, dias 01 a 07, às 10h
+            transacao(conn, "Lazer", float(dia), f"2026-10-{dia:02d} 10:00:00", descricao=f"Gasto {dia}")
+        for dia in range(1, 8):  # 7 receitas, dias 01 a 07, às 11h
+            receita(conn, float(dia), f"2026-10-{dia:02d} 11:00:00", descricao=f"Receita {dia}")
+        conn.commit()
+        self.iniciar(conn)
+        movimentacoes = self.obter(self.ROTA).json()["movimentacoes"]
+        # 14 no banco, 10 na resposta: dias 07 a 03 (receita das 11h antes do gasto das 10h).
+        self.assertEqual(len(movimentacoes), 10)
+        esperado = []
+        for dia in range(7, 2, -1):
+            esperado += [f"Receita {dia}", f"Gasto {dia}"]
+        self.assertEqual([m["descricao"] for m in movimentacoes], esperado)
+
+    def test_outro_usuario_nunca_aparece_nos_dois_tipos(self):
+        outro = 999
+        conn = novo_banco()
+        transacao(conn, "Lazer", 10.0, "2026-10-10 10:00:00", descricao="Meu gasto")
+        receita(conn, 20.0, "2026-10-10 11:00:00", descricao="Minha receita")
+        transacao(conn, "Lazer", 99.0, "2026-10-12 10:00:00", descricao="Gasto alheio", user_id=outro)
+        receita(conn, 999.0, "2026-10-12 11:00:00", descricao="Receita alheia", user_id=outro)
+        parcelamento(conn, "Lazer", 600.0, 6, "2026-10-13 10:00:00", "2026-10", descricao="Compra alheia",
+                     user_id=outro)
+        conn.execute("INSERT INTO usuarios (user_id, nome, renda_mensal, dia_fechamento) VALUES (?, ?, ?, ?)",
+                     (outro, "Outro", RENDA, DIA_FECHAMENTO))
+        conn.commit()
+        self.iniciar(conn)
+        self.assertEqual([m["descricao"] for m in self.obter(self.ROTA).json()["movimentacoes"]],
+                         ["Minha receita", "Meu gasto"])
+        # O user_id vem só do initData: o outro usuário, autenticado, vê só os dados dele.
+        self.assertEqual([m["descricao"] for m in self.obter(self.ROTA, user_id=outro).json()["movimentacoes"]],
+                         ["Compra alheia", "Receita alheia", "Gasto alheio"])
+
+    def test_ficam_fora_negativo_antigo_e_gasto_sem_descricao_e_receita_sem_descricao_entra(self):
+        conn = novo_banco()
+        transacao(conn, "Mercado", 50.0, "2026-10-01 10:00:00")                          # gasto antigo, NULL
+        transacao(conn, "Mercado", 51.0, "2026-10-02 10:00:00", descricao="")            # vazia
+        transacao(conn, "Mercado", 52.0, "2026-10-03 10:00:00", descricao="   ")         # só espaços
+        transacao(conn, "Mercado", -500.0, "2026-10-04 10:00:00", descricao="Salário")   # negativo antigo
+        transacao(conn, "Mercado", 10.0, "2026-10-05 10:00:00", descricao="Padaria")     # gasto id 5
+        receita(conn, 40.0, "2026-10-06 10:00:00")                                        # receita 1, NULL
+        receita(conn, 41.0, "2026-10-07 10:00:00", descricao="   ")                       # receita 2, espaços
+        receita(conn, 42.0, "2026-10-08 10:00:00", descricao="  Pix da Ana  ")            # receita 3
+        conn.commit()
+        self.iniciar(conn)
+        movimentacoes = self.obter(self.ROTA).json()["movimentacoes"]
+        # Receita sem descrição entra com null (o "Receita" é escrito pela tela).
+        self.assertEqual(self.resumo(movimentacoes), [
+            ("receita", 3, "Pix da Ana"),
+            ("receita", 2, None),
+            ("receita", 1, None),
+            ("gasto", 5, "Padaria"),
+        ])
+        self.assertTrue(all(m["valor"] > 0 for m in movimentacoes))
+
+    def test_transferencia_entre_categorias_nao_aparece(self):
+        conn = novo_banco()
+        transacao(conn, "Mercado", 40.0, "2026-10-05 10:00:00", descricao="Feira")
+        transferencia(conn, "Lazer", "Mercado", 200.0, "2026-10-12 10:00:00")
+        conn.commit()
+        self.iniciar(conn)
+        self.assertEqual([m["descricao"] for m in self.obter(self.ROTA).json()["movimentacoes"]], ["Feira"])
+
+    def test_gastos_recentes_e_detalhe_continuam_iguais_com_receitas_no_banco(self):
+        conn = novo_banco()
+        transacao(conn, "Alimentação", 18.5, "2026-10-14 14:30:00", descricao="Padaria")  # gasto 1
+        receita(conn, 500.0, "2026-10-15 10:00:00", descricao="Freela")                     # receita 1
+        receita(conn, 60.0, "2026-10-16 10:00:00", descricao="Pix")                         # receita 2
+        conn.commit()
+        self.iniciar(conn)
+        # /gastos/recentes: só o gasto, no contrato de antes (sem "tipo").
+        self.assertEqual(self.obter("/gastos/recentes").json(), {"gastos": [{
+            "id": 1, "descricao": "Padaria", "estabelecimento": None,
+            "categoria": "Alimentação", "valor": 18.5,
+            "data": "2026-10-14", "parcelado": False, "total_parcelas": None, "valor_total": None,
+        }]})
+        # /gastos/{id}: o gasto 1 como antes; o id 2 só existe como receita e dá 404.
+        detalhe = self.obter("/gastos/1")
+        self.assertEqual(detalhe.status_code, 200)
+        self.assertEqual(detalhe.json(), {
+            "id": 1, "descricao": "Padaria", "estabelecimento": None,
+            "categoria": "Alimentação", "valor": 18.5,
+            "data": "2026-10-14", "parcelado": False, "total_parcelas": None, "valor_total": None,
+            "parcelas_pagas": None,
+        })
+        resposta = self.obter("/gastos/2")
+        self.assertEqual(resposta.status_code, 404)
+        self.assertEqual(resposta.json(), {"detail": "gasto_nao_encontrado"})
+
+    def test_funcao_do_calculos_devolve_tuplas_documentadas(self):
+        conn = novo_banco()
+        transacao(conn, "Lazer", 10.0, "2026-10-10 10:00:00", descricao="Cinema", estabelecimento="  Cinemark ")
+        receita(conn, 20.0, "2026-10-11 10:00:00", descricao="Freela")
+        conn.commit()
+        self.assertEqual(calculos.buscar_movimentacoes_recentes(conn, USER_ID, 10), [
+            ("receita", 1, "Freela", None, 20.0, "2026-10-11", None, None, None),
+            ("gasto", 1, "Cinema", "Lazer", 10.0, "2026-10-10", None, None, "Cinemark"),
+        ])
+        self.assertEqual(calculos.buscar_movimentacoes_recentes(conn, USER_ID, 1),
+                         [("receita", 1, "Freela", None, 20.0, "2026-10-11", None, None, None)])
+        conn.close()
+
+
 class TestParcelasPagas(unittest.TestCase):
     """calcular_parcelas_pagas (PRO-80): função pura, com o "agora" por parâmetro.
     Fechamento dia 28: até o dia 27 a fatura vigente é a do próprio mês."""
@@ -962,7 +1194,8 @@ class TestPaginasEstaticas(TesteRotasBase):
         self.iniciar(banco_completo())
         resposta = self.client.get("/app/")
         self.assertEqual(resposta.status_code, 200)
-        self.assertIn("Últimos gastos", resposta.text)
+        # Título da lista desde a PRO-92 (antes: "Últimos gastos").
+        self.assertIn("Últimas Movimentações", resposta.text)
 
     def test_teste_serve_a_pagina_de_diagnostico(self):
         self.iniciar(banco_completo())

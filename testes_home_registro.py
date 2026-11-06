@@ -12,6 +12,10 @@ Duas partes:
      parcela comparado com o round() do Python, textos do aviso, mensagens de erro,
      regra das novas tentativas (mesmo corpo, mesma chave), barra da Sobra e chave.
 Se o `node` não estiver instalado, a parte 2 é pulada (skipTest).
+
+Desde a PRO-92, também a lista "Últimas Movimentações" da home: título, rota
+/movimentacoes/recentes, texto da lista vazia, receita sem detalhe ("Em breve"),
+--cor-receita e as funções puras do valor e do nome de cada linha.
 """
 import json
 import os
@@ -201,6 +205,50 @@ class TestEstruturaDaHome(unittest.TestCase):
     def test_sem_a_palavra_transferencia(self):
         # O testes_sem_transferencia.py exige isso da home.
         self.assertNotIn('Transferência', HOME)
+
+    # --- Últimas Movimentações (PRO-92) ---
+    def test_titulo_ultimas_movimentacoes(self):
+        self.assertIn('<h2 class="secao-titulo">Últimas Movimentações</h2>', HOME)
+        self.assertNotIn('Últimos gastos', HOME)
+
+    def test_home_chama_a_rota_de_movimentacoes(self):
+        corpo = corpo_da_funcao(codigo_principal(HOME), 'async function carregar')
+        self.assertIn('chamar("/movimentacoes/recentes")', corpo)
+        self.assertIn('mostrarExtrato(recentes.movimentacoes || [])', corpo)
+        self.assertNotIn('/gastos/recentes', HOME)
+
+    def test_texto_da_lista_vazia(self):
+        corpo = corpo_da_funcao(codigo_principal(HOME), 'function mostrarExtrato')
+        self.assertIn('"Suas movimentações aparecem aqui"', corpo)
+        self.assertNotIn('Seus próximos gastos aparecem aqui', HOME)
+
+    def test_linha_usa_as_funcoes_puras_e_so_o_gasto_guarda_o_id(self):
+        corpo = corpo_da_funcao(codigo_principal(HOME), 'function mostrarExtrato')
+        self.assertIn('textoValorMovimentacao(m)', corpo)
+        self.assertIn('nomeMovimentacao(m)', corpo)
+        self.assertIn('if (m.tipo === "gasto") linha.dataset.idGasto = m.id;', corpo)
+        self.assertIn('linha.dataset.tipo = "receita"', corpo)
+        self.assertEqual(corpo.count('dataset.idGasto'), 1)   # o id só é gravado na linha de gasto
+
+    def test_receita_nao_abre_o_detalhe(self):
+        principal = codigo_principal(HOME)
+        inicio = principal.index('$("extrato-lista").addEventListener("click"')
+        ouvinte = principal[inicio:principal.index('});', inicio)]
+        # O detalhe só abre com data-id-gasto; sem ele (receita), o toque mostra "Em breve" (D2).
+        self.assertIn('if (linha.dataset.idGasto) abrirDetalhe(linha.dataset.idGasto);', ouvinte)
+        self.assertIn('else avisarEmBreve();', ouvinte)
+        self.assertEqual(principal.count('abrirDetalhe('), 2)  # a definição e esta única chamada
+
+    def test_cor_da_receita_no_root(self):
+        raiz = HOME[HOME.index(':root {'):HOME.index('}', HOME.index(':root {'))]
+        self.assertIn('--cor-receita: #15803D;', raiz)
+        self.assertIn('.gasto-valor.receita { color: var(--cor-receita); }', HOME)
+
+    def test_lista_monta_tudo_com_textcontent(self):
+        corpo = corpo_da_funcao(codigo_principal(HOME), 'function mostrarExtrato')
+        self.assertNotIn('innerHTML', corpo)
+        self.assertNotIn('insertAdjacentHTML', corpo)
+        self.assertIn('criar("span", "gasto-nome", nomeMovimentacao(m))', corpo)
 
     def test_blocos_de_script_formam_um_so_programa(self):
         # Uma const repetida entre os dois blocos (ex.: formatarDinheiro) é SyntaxError na página.
@@ -578,6 +626,32 @@ class TestBarraDaSobra(unittest.TestCase):
         self.assertEqual(obtido['estourou'], 1)
         self.assertEqual(obtido['negativa'], 0)
         self.assertEqual(obtido['soma'], 0.3)
+
+
+@unittest.skipUnless(NODE, 'node não encontrado no PATH')
+class TestUltimasMovimentacoes(unittest.TestCase):
+    """PRO-92: texto, parcelas e classe do valor, e o nome de cada linha da lista."""
+
+    def test_texto_do_valor_e_nome_por_tipo(self):
+        casos = [
+            {'tipo': 'gasto', 'id': 1, 'descricao': 'Padaria', 'valor': 18.5, 'parcelado': False,
+             'total_parcelas': None},
+            {'tipo': 'gasto', 'id': 48, 'descricao': 'Magazine Luiza', 'valor': 129.9, 'parcelado': True,
+             'total_parcelas': 3},
+            {'tipo': 'receita', 'id': 3, 'descricao': 'Reembolso', 'valor': 53.9, 'parcelado': False,
+             'total_parcelas': None},
+            {'tipo': 'receita', 'id': 4, 'descricao': None, 'valor': 1234.56, 'parcelado': False,
+             'total_parcelas': None},
+        ]
+        obtido = rodar_node(com_funcoes_puras(
+            "console.log(JSON.stringify(ENTRADA.map((m) => [textoValorMovimentacao(m), nomeMovimentacao(m)])));"
+        ), casos)
+        self.assertEqual(obtido, [
+            [{'texto': 'R$ 18,50', 'parcelas': None, 'classe': 'gasto-valor'}, 'Padaria'],
+            [{'texto': 'R$ 129,90', 'parcelas': ' · 3x', 'classe': 'gasto-valor'}, 'Magazine Luiza'],
+            [{'texto': '+ R$ 53,90', 'parcelas': None, 'classe': 'gasto-valor receita'}, 'Reembolso'],
+            [{'texto': '+ R$ 1.234,56', 'parcelas': None, 'classe': 'gasto-valor receita'}, 'Receita'],
+        ])
 
 
 if __name__ == '__main__':

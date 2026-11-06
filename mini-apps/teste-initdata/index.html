@@ -79,9 +79,9 @@
     if (!tg || !tg.initData) {
       status.textContent = "Esta página foi aberta fora do Telegram (initData vazio). Abra pelo botão de menu do bot.";
     } else {
-      status.textContent = "Chamando /me, /resumo, /historico e /gastos/recentes...";
+      status.textContent = "Chamando /me, /resumo, /historico, /gastos/recentes e /movimentacoes/recentes...";
       (async () => {
-        for (const rota of ["/me", "/resumo", "/historico", "/gastos/recentes"]) { await consultar(rota); }
+        for (const rota of ["/me", "/resumo", "/historico", "/gastos/recentes", "/movimentacoes/recentes"]) { await consultar(rota); }
         status.textContent = "Respostas da API:";
       })();
     }

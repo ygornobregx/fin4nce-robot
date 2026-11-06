@@ -358,6 +358,35 @@ def calcular_serie_gastos_mensais(conn, user_id, dia_fechamento, agora=None):
     return serie
 
 # --- ÚLTIMOS GASTOS (EXTRATO DO MINI APP) ---
+# Trechos comuns das consultas de gasto do extrato (PRO-92), escritos UMA vez e
+# usados por buscar_gastos_recentes, buscar_gasto e buscar_movimentacoes_recentes,
+# para que a regra de "o que é um gasto do extrato" nunca seja copiada à mão.
+#
+# _SQL_COLUNAS_GASTO_EXTRATO: as oito colunas do gasto, nesta ordem: id,
+# descrição sem espaços nas pontas, categoria, valor, dia "AAAA-MM-DD"
+# (substr da data já gravada em Brasília), total_parcelas e valor_total do
+# parcelamento (NULL à vista) e estabelecimento (NULL quando vazio ou só com
+# espaços). Os apelidos (AS) não mudam o resultado das consultas; servem para
+# dar nome às colunas quando o trecho é a primeira parte de uma união.
+_SQL_COLUNAS_GASTO_EXTRATO = (
+    "t.id AS id, TRIM(t.descricao) AS descricao, t.categoria_nome AS categoria, "
+    "t.valor AS valor, substr(t.data_transacao, 1, 10) AS data, "
+    "p.total_parcelas AS total_parcelas, p.valor_total AS valor_total, "
+    "NULLIF(TRIM(t.estabelecimento), '') AS estabelecimento"
+)
+# _SQL_ORIGEM_GASTO_EXTRATO: FROM e WHERE do gasto do extrato. Recebe 1
+# parâmetro (user_id). Só despesas (valor > 0: as transações negativas antigas
+# ficam fora), só com descrição preenchida (vazia ou só com espaços não conta)
+# e LEFT JOIN com parcelamentos pela coluna parcelamento_id, com a condição de
+# dono (p.user_id = t.user_id) no ON. Quem usa pode acrescentar "AND ..." logo
+# depois, porque o trecho termina dentro do WHERE.
+_SQL_ORIGEM_GASTO_EXTRATO = (
+    "FROM transacoes t "
+    "LEFT JOIN parcelamentos p ON p.id = t.parcelamento_id AND p.user_id = t.user_id "
+    "WHERE t.user_id = ? AND t.valor > 0 "
+    "AND t.descricao IS NOT NULL AND TRIM(t.descricao) <> '' "
+)
+
 def buscar_gastos_recentes(conn, user_id, limite):
     """Os últimos 'limite' gastos do usuário, para o extrato da tela home do
     Mini App. Retorna [(id, descricao, categoria, valor, data, total_parcelas,
@@ -386,15 +415,14 @@ def buscar_gastos_recentes(conn, user_id, limite):
     - sem filtro por p.ativo: a compra aconteceu e continua no extrato;
     - transferências entre categorias não entram: ficam em transferencias, não
       em transacoes. Se um dia passarem a ser gravadas em transacoes, esta
-      consulta terá de tratá-las."""
+      consulta terá de tratá-las.
+
+    As colunas e o filtro vêm de _SQL_COLUNAS_GASTO_EXTRATO e
+    _SQL_ORIGEM_GASTO_EXTRATO (PRO-92), os mesmos do detalhe e da lista de
+    movimentações."""
     return conn.execute(
-        "SELECT t.id, TRIM(t.descricao), t.categoria_nome, t.valor, "
-        "substr(t.data_transacao, 1, 10), p.total_parcelas, p.valor_total, "
-        "NULLIF(TRIM(t.estabelecimento), '') "
-        "FROM transacoes t "
-        "LEFT JOIN parcelamentos p ON p.id = t.parcelamento_id AND p.user_id = t.user_id "
-        "WHERE t.user_id = ? AND t.valor > 0 "
-        "AND t.descricao IS NOT NULL AND TRIM(t.descricao) <> '' "
+        "SELECT " + _SQL_COLUNAS_GASTO_EXTRATO + " "
+        + _SQL_ORIGEM_GASTO_EXTRATO +
         "ORDER BY t.data_transacao DESC, t.id DESC "
         "LIMIT ?",
         (user_id, limite),
@@ -409,20 +437,64 @@ def buscar_gasto(conn, user_id, id_gasto):
     alimentam calcular_parcelas_pagas.
 
     Mesmas regras de buscar_gastos_recentes (só despesas, só com descrição,
-    LEFT JOIN com a condição de dono no ON, estabelecimento vazio vira None).
+    LEFT JOIN com a condição de dono no ON, estabelecimento vazio vira None),
+    pelas mesmas constantes _SQL_COLUNAS_GASTO_EXTRATO e
+    _SQL_ORIGEM_GASTO_EXTRATO (PRO-92).
     Retorna None se o gasto não existir, for de outro usuário, for negativo ou
     não tiver descrição, sem distinguir o motivo."""
     return conn.execute(
-        "SELECT t.id, TRIM(t.descricao), t.categoria_nome, t.valor, "
-        "substr(t.data_transacao, 1, 10), p.total_parcelas, p.valor_total, "
-        "NULLIF(TRIM(t.estabelecimento), ''), p.ciclo_referencia, p.data_criacao "
-        "FROM transacoes t "
-        "LEFT JOIN parcelamentos p ON p.id = t.parcelamento_id AND p.user_id = t.user_id "
-        "WHERE t.user_id = ? AND t.valor > 0 "
-        "AND t.descricao IS NOT NULL AND TRIM(t.descricao) <> '' "
+        "SELECT " + _SQL_COLUNAS_GASTO_EXTRATO + ", "
+        "p.ciclo_referencia, p.data_criacao "
+        + _SQL_ORIGEM_GASTO_EXTRATO +
         "AND t.id = ?",
         (user_id, id_gasto),
     ).fetchone()
+
+def buscar_movimentacoes_recentes(conn, user_id, limite):
+    """As últimas 'limite' movimentações do usuário (gastos e receitas numa
+    lista só), para a lista "Últimas Movimentações" da home do Mini App
+    (PRO-92). Retorna [(tipo, id, descricao, categoria, valor, data,
+    total_parcelas, valor_total, estabelecimento)]:
+      - tipo: "gasto" (linha de transacoes) ou "receita" (linha de receitas).
+        Os ids das duas tabelas são independentes (o gasto 3 e a receita 3
+        podem existir juntos), então uma linha só é identificada pelo par
+        (tipo, id);
+      - gasto: os mesmos campos e as mesmas regras de buscar_gastos_recentes
+        (_SQL_COLUNAS_GASTO_EXTRATO e _SQL_ORIGEM_GASTO_EXTRATO: só despesas,
+        só com descrição, LEFT JOIN com a condição de dono no ON, parcelado
+        uma vez pela parcela 1, estabelecimento vazio vira None);
+      - receita: 'descricao' sem espaços nas pontas, ou None quando vazia ou
+        só com espaços (a receita entra mesmo assim; o texto substituto é
+        escrito pela tela, nunca aqui); 'categoria', 'total_parcelas',
+        'valor_total' e 'estabelecimento' sempre None;
+      - 'valor' sempre positivo nos dois tipos (o sinal é apresentação);
+      - 'data' é o dia "AAAA-MM-DD" já gravado no fuso de Brasília.
+
+    Regras:
+    - uma consulta só, com UNION ALL das duas tabelas; o user_id entra nas
+      DUAS partes, nunca se mistura dado de outro usuário;
+    - as transações negativas antigas (reembolsos anteriores à PRO-86) ficam
+      fora, como em todo o extrato;
+    - ordem determinística: momento completo (data e hora, "AAAA-MM-DD
+      HH:MM:SS" nas duas tabelas, então ordenável como texto) do mais recente
+      para o mais antigo; no mesmo segundo, "gasto" antes de "receita"; no
+      mesmo tipo, maior id primeiro;
+    - 'limite' vale para o total, contando os dois tipos (ORDER BY e LIMIT
+      aplicados depois da união)."""
+    return conn.execute(
+        "SELECT tipo, id, descricao, categoria, valor, data, "
+        "total_parcelas, valor_total, estabelecimento FROM ("
+        "SELECT 'gasto' AS tipo, " + _SQL_COLUNAS_GASTO_EXTRATO + ", "
+        "t.data_transacao AS momento "
+        + _SQL_ORIGEM_GASTO_EXTRATO +
+        "UNION ALL "
+        "SELECT 'receita', r.id, NULLIF(TRIM(r.descricao), ''), NULL, r.valor, "
+        "substr(r.data_receita, 1, 10), NULL, NULL, NULL, r.data_receita "
+        "FROM receitas r WHERE r.user_id = ?"
+        ") ORDER BY momento DESC, tipo ASC, id DESC "
+        "LIMIT ?",
+        (user_id, user_id, limite),
+    ).fetchall()
 
 # --- RESUMO MENSAL (ENVIADO NO FECHAMENTO DA FATURA) ---
 def calcular_dados_resumo_mensal(conn, user_id, dia_fechamento, agora, data_corte=None):
