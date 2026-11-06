@@ -24,6 +24,12 @@
       --cor-texto-3: #8C8C8C;
       --cor-barra-fechado: #D4D4D4;
       --cor-divisoria: #E8E8E8;
+      /* Telas de Registrar (PRO-89) */
+      --cor-desabilitado-fundo: #E8E8E8;
+      --cor-desabilitado-texto: #A3A3A3;
+      --cor-placeholder: #9A9A9E;
+      --cor-microfone-fundo: #F5F5F6;
+      --cor-aviso-sombra: #00000038;
     }
 
     * { box-sizing: border-box; }
@@ -371,6 +377,288 @@
     .segmento.pago { background: var(--cor-grafite); }
     .barra-continua { margin-top: 6px; height: 6px; border-radius: 3px; background: var(--cor-divisoria); overflow: hidden; }
     .barra-continua div { height: 6px; background: var(--cor-grafite); }
+
+    /* ---------- Registrar (PRO-89) ---------- */
+    /* Cabeçalho das telas de Registrar: seta de voltar + título (quadros FUTURO - REGISTRAR). */
+    .cabecalho-registro { padding-bottom: 24px; }
+    .cabecalho-titulo { justify-content: flex-start; gap: 14px; }
+    .titulo-tela { font-size: 22px; line-height: 30px; font-weight: 800; letter-spacing: -0.02em; }
+
+    /* Opções: Gasto ou Receita */
+    .opcoes-corpo { padding: 28px 24px 0; display: flex; flex-direction: column; gap: 14px; }
+    .opcoes-pergunta { padding-bottom: 4px; font-size: 15px; line-height: 20px; font-weight: 600; color: var(--cor-texto-2); }
+
+    .opcao {
+      width: 100%;
+      padding: 24px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      text-align: left;
+      border: 1px solid var(--cor-divisoria);
+      border-radius: 18px;
+    }
+    .opcao-icone {
+      width: 56px;
+      height: 56px;
+      border-radius: 18px;
+      background: var(--cor-fundo-suave);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .opcao-icone svg { width: 24px; height: 24px; fill: none; stroke: var(--cor-grafite); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .opcao-textos { flex-grow: 1; display: flex; flex-direction: column; gap: 2px; }
+    .opcao-titulo { font-size: 18px; line-height: 24px; font-weight: 800; letter-spacing: -0.01em; color: var(--cor-texto); }
+    .opcao-subtitulo { font-size: 14px; line-height: 20px; font-weight: 500; color: var(--cor-texto-2); }
+    .opcao-seta { width: 20px; height: 20px; flex-shrink: 0; fill: none; stroke: var(--cor-texto); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+    /* Chat: ocupa a altura visível do Telegram (muda com o teclado do celular). */
+    .tela-chat {
+      height: var(--altura-tela, 100vh);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .tela-chat .cabecalho { flex-shrink: 0; }
+    body.modo-chat { padding-bottom: 0; overflow: hidden; }
+    /* Teclado aberto: sobra pouca altura, então o cabeçalho e o ícone do chat vazio encolhem. */
+    .tela-chat.teclado .cabecalho-registro { padding-bottom: 12px; }
+    .tela-chat.teclado .chat-vazio-icone { display: none; }
+
+    .chat { flex: 1; min-height: 0; padding: 20px 16px; display: flex; flex-direction: column; overflow-y: auto; }
+    .chat > .encostado { margin-top: auto; }
+
+    .chat-vazio {
+      margin: auto 0;
+      padding: 0 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      text-align: center;
+      font-size: 15px;
+      line-height: 22px;
+      font-weight: 500;
+      color: var(--cor-texto-2);
+    }
+    .chat-vazio-icone {
+      width: 56px;
+      height: 56px;
+      border-radius: 18px;
+      background: var(--cor-fundo-suave);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .chat-vazio-icone svg { width: 24px; height: 24px; fill: none; stroke: var(--cor-grafite); stroke-width: 1.8; stroke-linejoin: round; }
+    .chat-vazio strong { font-weight: 700; color: var(--cor-texto); }
+
+    .chat-entendendo, .chat-erro {
+      padding: 16px 20px;
+      border-radius: 18px;
+      font-size: 15px;
+      line-height: 20px;
+      font-weight: 600;
+    }
+    .chat-entendendo { border: 1px solid var(--cor-divisoria); color: var(--cor-texto-2); }
+    .chat-erro { background: var(--cor-fundo-suave); color: var(--cor-texto); }
+
+    /* Prévia "Entendi assim:" */
+    .previa { padding: 0 20px; border: 1px solid var(--cor-divisoria); border-radius: 18px; background: var(--cor-branco); }
+    .previa-titulo { padding: 16px 0 4px; font-size: 13px; line-height: 18px; font-weight: 700; color: var(--cor-texto-2); }
+    .previa-linha {
+      padding: 12px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      border-bottom: 1px solid var(--cor-divisoria);
+    }
+    .previa-linha.ultima { padding-bottom: 16px; border-bottom: 0; }
+    .previa-rotulo { font-size: 14px; line-height: 20px; font-weight: 500; color: var(--cor-texto-2); }
+    .previa-valor { min-width: 0; text-align: right; font-size: 15px; line-height: 20px; font-weight: 700; color: var(--cor-texto); overflow-wrap: anywhere; }
+    .previa-valor.sem-informacao { font-weight: 600; color: var(--cor-texto-2); }
+    .previa-valor-grande { font-size: 18px; line-height: 24px; font-weight: 800; letter-spacing: -0.01em; color: var(--cor-texto); }
+
+    .previa-parcelas { padding: 12px 0 16px; display: flex; flex-direction: column; gap: 10px; }
+    .fichas {
+      margin-right: -20px;
+      padding-right: 20px;
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .fichas::-webkit-scrollbar { display: none; }
+    .ficha {
+      min-width: 46px;
+      height: 38px;
+      padding: 0 12px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      border: 1px solid var(--cor-tracejado);
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 20px;
+      font-weight: 700;
+      color: var(--cor-texto);
+    }
+    .ficha .ficha-nota { font-size: 12px; line-height: 16px; font-weight: 600; color: var(--cor-texto-2); }
+    .ficha[aria-checked="true"] { background: var(--cor-grafite); border-color: var(--cor-grafite); color: var(--cor-branco); font-weight: 800; }
+    .ficha[aria-checked="true"] .ficha-nota { color: var(--cor-branco); }
+    .ficha:disabled { cursor: default; }
+    .previa-parcelas-rodape { display: flex; justify-content: space-between; align-items: baseline; }
+    .previa-parcela-texto { font-size: 15px; line-height: 20px; font-weight: 800; color: var(--cor-texto); }
+    .previa-nota { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--cor-texto-2); }
+
+    /* Rodapé: campo, microfone, enviar, forma de pagamento e Confirmar */
+    .rodape {
+      flex-shrink: 0;
+      padding: 14px 16px calc(24px + env(safe-area-inset-bottom, 0px));
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      border-top: 1px solid var(--cor-divisoria);
+      background: var(--cor-branco);
+    }
+    .registro-receita .rodape { padding-bottom: calc(34px + env(safe-area-inset-bottom, 0px)); }
+
+    .campo-linha { display: flex; align-items: flex-end; gap: 8px; }
+    .campo {
+      flex: 1;
+      min-width: 0;
+      min-height: 48px;
+      max-height: 120px;
+      padding: 14px 18px;
+      display: block;
+      resize: none;
+      border: 0;
+      border-radius: 24px;
+      outline: none;
+      background: var(--cor-fundo-suave);
+      color: var(--cor-texto);
+      font: 500 15px/20px "Manrope", system-ui, sans-serif;
+    }
+    .campo::placeholder { color: var(--cor-placeholder); }
+    .campo:disabled { opacity: 1; color: var(--cor-texto-2); }
+
+    .botao-redondo {
+      width: 48px;
+      height: 48px;
+      flex-shrink: 0;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 24px;
+    }
+    .botao-redondo svg { width: 22px; height: 22px; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .botao-microfone { background: var(--cor-microfone-fundo); cursor: default; }
+    .botao-microfone svg { stroke: var(--cor-tracejado); stroke-width: 1.8; }
+    .selo-em-breve {
+      position: absolute;
+      top: -9px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: var(--cor-grafite);
+      color: var(--cor-branco);
+      font-size: 9px;
+      line-height: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .botao-enviar { background: var(--cor-grafite); }
+    .botao-enviar svg { stroke: var(--cor-branco); stroke-width: 2; }
+    .botao-enviar:disabled { background: var(--cor-desabilitado-fundo); cursor: default; }
+    .botao-enviar:disabled svg { stroke: var(--cor-desabilitado-texto); }
+
+    .pagamento { display: flex; flex-direction: column; gap: 8px; }
+    .pagamento-rotulo { font-size: 13px; line-height: 18px; font-weight: 700; color: var(--cor-texto); }
+    .pagamento-rotulo span { font-weight: 500; color: var(--cor-texto-2); }
+    .pagamento-botoes { display: flex; gap: 8px; }
+    .forma {
+      height: 44px;
+      flex: 1 1 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 1.5px solid var(--cor-tracejado);
+      border-radius: 14px;
+      background: var(--cor-branco);
+      font-size: 14px;
+      line-height: 20px;
+      font-weight: 700;
+      color: var(--cor-texto);
+    }
+    .forma-bolinha {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1.5px solid var(--cor-tracejado);
+      border-radius: 8px;
+    }
+    .forma[aria-checked="true"] { background: var(--cor-grafite); border-color: var(--cor-grafite); color: var(--cor-branco); }
+    .forma[aria-checked="true"] .forma-bolinha { border-color: var(--cor-branco); }
+    .forma[aria-checked="true"] .forma-bolinha::after { content: ""; width: 8px; height: 8px; border-radius: 4px; background: var(--cor-branco); }
+    .forma:disabled { cursor: default; }
+
+    .erro-gravacao { padding: 12px 16px; border-radius: 14px; background: var(--cor-fundo-suave); font-size: 13px; line-height: 18px; font-weight: 600; color: var(--cor-texto); }
+
+    .botao-confirmar {
+      height: 52px;
+      margin-top: 4px;
+      border-radius: 16px;
+      background: var(--cor-grafite);
+      color: var(--cor-branco);
+      font-size: 16px;
+      line-height: 22px;
+      font-weight: 700;
+    }
+    .botao-confirmar:disabled { background: var(--cor-desabilitado-fundo); color: var(--cor-desabilitado-texto); cursor: default; }
+    .dica-confirmar { margin-top: -4px; text-align: center; font-size: 12px; line-height: 16px; font-weight: 500; color: var(--cor-texto-2); }
+
+    /* Aviso no topo da home: some em 10 s, com a barra que esvazia (quadro FUTURO - HOME COM AVISO). */
+    .aviso-topo {
+      position: fixed;
+      z-index: 20;
+      top: calc(12px + env(safe-area-inset-top, 0px));
+      left: 16px;
+      right: 16px;
+      overflow: hidden;
+      border-radius: 16px;
+      background: var(--cor-branco);
+      box-shadow: 0 10px 28px var(--cor-aviso-sombra);
+    }
+    .aviso-topo-linha { padding: 14px 16px; display: flex; align-items: center; gap: 12px; }
+    .aviso-topo-icone {
+      width: 32px;
+      height: 32px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 16px;
+      background: var(--cor-fundo-suave);
+    }
+    .aviso-topo-icone svg { width: 18px; height: 18px; fill: none; stroke: var(--cor-grafite); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .aviso-topo-texto { flex-grow: 1; min-width: 0; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--cor-texto); overflow-wrap: anywhere; }
+    .aviso-topo-texto strong { font-weight: 800; }
+    .aviso-topo-trilho { height: 3px; background: var(--cor-divisoria); }
+    .aviso-topo-barra { height: 3px; width: 100%; background: var(--cor-grafite); transform-origin: left center; }
+    .aviso-topo-barra.esvaziando { animation: esvaziar-aviso 10s linear forwards; }
+    @keyframes esvaziar-aviso { from { transform: scaleX(1); } to { transform: scaleX(0); } }
   </style>
 </head>
 <body>
@@ -423,7 +711,7 @@
         </span>
         <span class="atalho-rotulo">Categorias</span>
       </button>
-      <button class="atalho" type="button" aria-label="Registrar">
+      <button class="atalho" id="atalho-registrar" type="button" aria-label="Registrar">
         <span class="atalho-icone">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 5v14"/><path d="M5 12h14"/>
@@ -554,6 +842,338 @@
     </div>
   </main>
 
+  <!-- Registrar (PRO-89), tela 1: Gasto ou Receita -->
+  <main id="registro-opcoes" hidden>
+    <header class="cabecalho cabecalho-registro">
+      <div class="cabecalho-linha cabecalho-titulo">
+        <button class="botao-menu" id="opcoes-voltar" type="button" aria-label="Voltar">
+          <svg viewBox="0 0 22 22" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17 11H5"/><path d="M10 6l-5 5 5 5"/>
+          </svg>
+        </button>
+        <h1 class="titulo-tela">Registrar</h1>
+      </div>
+    </header>
+
+    <div class="opcoes-corpo">
+      <p class="opcoes-pergunta">O Que Você Quer Registrar?</p>
+      <button class="opcao" id="opcao-gasto" type="button" data-tipo="gasto">
+        <span class="opcao-icone">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17L17 7"/><path d="M9 7h8v8"/></svg>
+        </span>
+        <span class="opcao-textos">
+          <span class="opcao-titulo">Gasto</span>
+          <span class="opcao-subtitulo">Subtrai do seu mês</span>
+        </span>
+        <svg class="opcao-seta" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5L13 10l-5.5 5.5"/></svg>
+      </button>
+      <button class="opcao" id="opcao-receita" type="button" data-tipo="receita">
+        <span class="opcao-icone">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 7L7 17"/><path d="M15 17H7V9"/></svg>
+        </span>
+        <span class="opcao-textos">
+          <span class="opcao-titulo">Receita</span>
+          <span class="opcao-subtitulo">Soma ao seu mês</span>
+        </span>
+        <svg class="opcao-seta" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5L13 10l-5.5 5.5"/></svg>
+      </button>
+    </div>
+  </main>
+
+  <!-- Registrar (PRO-89), tela 2: chat de texto livre, prévia e Confirmar (gasto e receita no mesmo bloco) -->
+  <main id="registro" class="tela-chat" hidden>
+    <header class="cabecalho cabecalho-registro">
+      <div class="cabecalho-linha cabecalho-titulo">
+        <button class="botao-menu" id="registro-voltar" type="button" aria-label="Voltar">
+          <svg viewBox="0 0 22 22" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17 11H5"/><path d="M10 6l-5 5 5 5"/>
+          </svg>
+        </button>
+        <h1 class="titulo-tela" id="registro-titulo"></h1>
+      </div>
+    </header>
+
+    <div class="chat" id="chat">
+      <div class="chat-vazio" id="chat-vazio">
+        <span class="chat-vazio-icone">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 5h14a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 19 17H10l-4.5 3.5V17H5a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 5 5z"/>
+          </svg>
+        </span>
+        <p id="chat-vazio-texto"></p>
+      </div>
+
+      <p class="chat-entendendo encostado" id="chat-entendendo" role="status" hidden>Entendendo...</p>
+      <p class="chat-erro encostado" id="chat-erro" role="alert" hidden></p>
+
+      <section class="previa encostado" id="previa" aria-label="Prévia do registro" hidden>
+        <p class="previa-titulo">Entendi assim:</p>
+        <div class="previa-linha">
+          <span class="previa-rotulo">Valor</span>
+          <span class="previa-valor-grande" id="previa-valor"></span>
+        </div>
+        <div class="previa-linha" id="previa-linha-descricao">
+          <span class="previa-rotulo">Descrição</span>
+          <span class="previa-valor" id="previa-descricao"></span>
+        </div>
+        <div class="previa-linha" id="previa-linha-estabelecimento">
+          <span class="previa-rotulo">Estabelecimento</span>
+          <span class="previa-valor" id="previa-estabelecimento"></span>
+        </div>
+        <div class="previa-linha" id="previa-linha-categoria">
+          <span class="previa-rotulo">Categoria</span>
+          <span class="previa-valor" id="previa-categoria"></span>
+        </div>
+        <div class="previa-linha" id="previa-linha-forma">
+          <span class="previa-rotulo">Forma de Pagamento</span>
+          <span class="previa-valor" id="previa-forma"></span>
+        </div>
+        <div class="previa-parcelas" id="previa-parcelas" hidden>
+          <p class="previa-rotulo">Em Quantas Vezes?</p>
+          <div class="fichas" id="fichas" role="radiogroup" aria-label="Em quantas vezes"></div>
+          <div class="previa-parcelas-rodape">
+            <p class="previa-parcela-texto" id="previa-parcela-texto"></p>
+            <p class="previa-nota">De 1x a 12x</p>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="rodape" id="rodape">
+      <form class="campo-linha" id="registro-form" autocomplete="off">
+        <textarea class="campo" id="campo" rows="1" maxlength="200" enterkeyhint="send" aria-label="Texto do registro"></textarea>
+        <button class="botao-redondo botao-microfone" id="botao-microfone" type="button" disabled aria-label="Gravar por voz (em breve)">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/>
+          </svg>
+          <span class="selo-em-breve">Em Breve</span>
+        </button>
+        <button class="botao-redondo botao-enviar" id="botao-enviar" type="submit" disabled aria-label="Enviar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5"/><path d="M6 11l6-6 6 6"/></svg>
+        </button>
+      </form>
+
+      <div class="pagamento" id="pagamento" hidden>
+        <p class="pagamento-rotulo">Forma de Pagamento <span>(Obrigatório)</span></p>
+        <div class="pagamento-botoes" role="radiogroup" aria-label="Forma de pagamento">
+          <button class="forma" id="forma-debito" type="button" role="radio" aria-checked="false" data-forma="Débito/Pix">
+            <span class="forma-bolinha"></span><span>Débito / Pix</span>
+          </button>
+          <button class="forma" id="forma-credito" type="button" role="radio" aria-checked="false" data-forma="Crédito">
+            <span class="forma-bolinha"></span><span>Crédito</span>
+          </button>
+        </div>
+      </div>
+
+      <p class="erro-gravacao" id="erro-gravacao" role="alert" hidden></p>
+      <button class="botao-confirmar" id="botao-confirmar" type="button" disabled>Confirmar</button>
+      <p class="dica-confirmar" id="dica-confirmar" hidden>Escolha a forma de pagamento</p>
+    </div>
+  </main>
+
+  <!-- Aviso no topo da home depois de registrar (some em 10 s) -->
+  <div class="aviso-topo" id="aviso-topo" role="status" aria-live="polite" hidden>
+    <div class="aviso-topo-linha">
+      <span class="aviso-topo-icone">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10.5l3.2 3.2L15 7"/></svg>
+      </span>
+      <p class="aviso-topo-texto" id="aviso-topo-texto"></p>
+    </div>
+    <div class="aviso-topo-trilho"><div class="aviso-topo-barra" id="aviso-topo-barra"></div></div>
+  </div>
+
+  <!-- INICIO FUNCOES PURAS (PRO-89): sem DOM e sem rede; o testes_home_registro.py extrai este bloco e roda no node. -->
+  <script id="funcoes-puras">
+    // ---------- Dinheiro ----------
+    const formatadorDinheiro = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+
+    // "R$ 1.234,56"; negativo vira "−R$ 120,00" (sinal de menos de verdade).
+    function formatarDinheiro(valor) {
+      const texto = formatadorDinheiro.format(Math.abs(valor)).replace(/\s/g, " ");
+      return (valor < 0 && texto !== "R$ 0,00" ? "−" : "") + texto;
+    }
+
+    // Imita o round(x, 2) do Python (usado pelo servidor na parcela): arredonda o valor EXATO do
+    // double para 2 casas, e nos empates exatos vai para o par. O toFixed do JavaScript também
+    // usa o valor exato, mas desempata para cima (0.125 -> "0.13"; o Python dá 0.12).
+    // Só é exibição: quem decide o valor gravado é o servidor.
+    function arredondar2(x) {
+      if (!Number.isFinite(x)) return x;
+      // Só há empate exato em 2 casas quando x = (ímpar)/8. Multiplicar por 8 e por 100 é exato aqui.
+      const oitavos = x * 8;
+      if (Math.abs(x) < 1e12 && Number.isInteger(oitavos) && Math.abs(oitavos) % 2 === 1) {
+        const centesimos = x * 100;
+        const abaixo = Math.floor(centesimos);
+        return (abaixo % 2 === 0 ? abaixo : abaixo + 1) / 100;
+      }
+      return Number(x.toFixed(2));
+    }
+
+    // Valor de uma parcela: o mesmo round(valor_total / n, 2) do registro.py.
+    function valorParcela(total, parcelas) {
+      return arredondar2(total / parcelas);
+    }
+
+    // "em 3x de R$ 200,00"
+    function textoParcela(total, parcelas) {
+      return "em " + parcelas + "x de " + formatarDinheiro(valorParcela(total, parcelas));
+    }
+
+    // ---------- Barra da Sobra (D8): o "de R$" é renda + receitas avulsas ----------
+    function baseDaBarra(renda, totalReceitas) {
+      const r = Number(renda);
+      const t = Number(totalReceitas);
+      const soma = (Number.isFinite(r) ? r : 0) + (Number.isFinite(t) ? t : 0);
+      return Math.round(soma * 100) / 100;
+    }
+
+    // Preenchimento de 0 a 1; null quando não há base (sem renda nem receita: barra escondida).
+    function proporcaoDaBarra(totalGasto, base) {
+      if (!(base > 0)) return null;
+      return Math.min(Math.max(totalGasto / base, 0), 1);
+    }
+
+    // ---------- Chave de idempotência (uma por prévia) ----------
+    function gerarChave(cripto) {
+      cripto = cripto || globalThis.crypto;
+      if (cripto && typeof cripto.randomUUID === "function") return cripto.randomUUID();
+      // WebView antigo sem randomUUID: UUID v4 a partir de getRandomValues.
+      const b = new Uint8Array(16);
+      cripto.getRandomValues(b);
+      b[6] = (b[6] & 0x0f) | 0x40;
+      b[8] = (b[8] & 0x3f) | 0x80;
+      const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+      return h.slice(0, 8) + "-" + h.slice(8, 12) + "-" + h.slice(12, 16) + "-" + h.slice(16, 20) + "-" + h.slice(20);
+    }
+
+    // ---------- Pedidos de gravação ----------
+    const FORMA_DEBITO = "Débito/Pix";
+    const FORMA_CREDITO = "Crédito";
+    const MAX_PARCELAS = 12;
+
+    function montarCorpoGasto(previa, forma, parcelas, chave) {
+      return {
+        chave: chave,
+        valor: previa.valor,
+        descricao: previa.descricao,
+        estabelecimento: previa.estabelecimento,
+        categoria: previa.categoria,
+        metodo_pagamento: forma,
+        parcelas: forma === FORMA_CREDITO ? parcelas : 1,
+      };
+    }
+
+    function montarCorpoReceita(previa, chave) {
+      return { chave: chave, valor: previa.valor, descricao: previa.descricao };
+    }
+
+    // A prévia que veio do servidor serve para a tela? (tipo certo, valor número, gasto com categoria)
+    function previaValida(dados, tipo) {
+      if (!dados || typeof dados !== "object" || dados.tipo !== tipo) return false;
+      if (typeof dados.valor !== "number" || !Number.isFinite(dados.valor) || dados.valor <= 0) return false;
+      if (tipo === "gasto" && (typeof dados.categoria !== "string" || !dados.categoria)) return false;
+      return true;
+    }
+
+    // Confirmar liga quando há prévia, nada em andamento e, no gasto, a forma de pagamento escolhida.
+    function podeConfirmar(e) {
+      if (!e.previa || e.interpretando || e.gravando) return false;
+      if (e.tipo === "gasto" && e.forma !== FORMA_DEBITO && e.forma !== FORMA_CREDITO) return false;
+      return true;
+    }
+
+    // ---------- Aviso no topo (D3): o valor é o total que o servidor devolveu ----------
+    function montarAviso(tipo, resposta) {
+      const antes = tipo === "receita" ? "Receita registrada: " : "Gasto registrado: ";
+      let negrito = formatarDinheiro(resposta.valor);
+      if (tipo === "gasto" && Number.isInteger(resposta.parcelas) && resposta.parcelas > 1) {
+        negrito += " em " + resposta.parcelas + "x";
+      }
+      const descricao = typeof resposta.descricao === "string" ? resposta.descricao.trim() : "";
+      const depois = descricao ? " · " + descricao : "";
+      return { antes: antes, negrito: negrito, depois: depois, texto: antes + negrito + depois };
+    }
+
+    // ---------- Erros (D4): nunca mostram o texto cru do servidor ----------
+    const MSG_SEM_CONEXAO = "Sem conexão. Confira a internet e tente de novo.";
+    const MSG_SESSAO = "Sua sessão expirou. Feche e abra o app de novo.";
+    const MSG_NAO_ENTENDI = "Não consegui entender agora. Tente de novo em instantes.";
+    const MSG_NAO_REGISTROU = "Não consegui registrar agora. Toque em Confirmar para tentar de novo.";
+    const MSG_NAO_REGISTRAVEL = "Não consegui registrar isso. Volte e escreva de novo.";
+    const MSG_CADASTRO_404 = "Você ainda não tem cadastro. Mande /start no bot para começar.";
+    const MSG_CADASTRO_409 = "Seu cadastro está incompleto. Volte ao bot e informe o dia de fechamento da fatura.";
+
+    // momento: "interpretar" (a prévia) ou "gravar" (o Confirmar). tipo: "gasto" ou "receita".
+    // resultado: { erro: status HTTP (0 = rede), detalhe: código do servidor, retryAfter: segundos }.
+    function mensagemErroRegistro(resultado, momento, tipo) {
+      const status = resultado.erro;
+      const codigo = typeof resultado.detalhe === "string" ? resultado.detalhe : "";
+      if (status === 0) return MSG_SEM_CONEXAO;
+      if (status === 401) return MSG_SESSAO;
+      if (status === 404) return MSG_CADASTRO_404;
+      if (status === 409) return MSG_CADASTRO_409;
+      if (momento === "interpretar") {
+        if (status === 429) {
+          const s = Number(resultado.retryAfter);
+          if (Number.isFinite(s) && s >= 1) {
+            const segundos = Math.ceil(s);
+            return "Muitas tentativas seguidas. Espere " + segundos + (segundos === 1 ? " segundo." : " segundos.");
+          }
+          return "Muitas tentativas seguidas. Espere alguns segundos.";
+        }
+        if (status === 422) {
+          if (codigo === "tipo_divergente") {
+            return tipo === "receita"
+              ? "Isso parece um gasto. Volte e escolha Gasto."
+              : "Isso parece uma receita. Volte e escolha Receita.";
+          }
+          if (codigo === "valor_nao_entendido") {
+            const exemplo = tipo === "receita" ? "Recebi 200 de reembolso" : "Gastei 30 no iFood";
+            return "Não entendi o valor. Escreva de novo com o valor, por exemplo: \"" + exemplo + "\"";
+          }
+          if (codigo === "categoria_nao_encontrada") {
+            return "Não achei uma categoria sua para isso. Escreva de outro jeito.";
+          }
+        }
+        return MSG_NAO_ENTENDI;
+      }
+      // Gravação: 422 (pedido recusado) não melhora tentando igual; o resto pode ser tentado de novo.
+      if (status === 422) return MSG_NAO_REGISTRAVEL;
+      return MSG_NAO_REGISTROU;
+    }
+
+    // ---------- Novas tentativas da gravação (D5) ----------
+    const ESPERAS_TENTATIVAS_MS = [1000, 2000]; // até 3 tentativas: espera 1 s e depois 2 s
+    const MAX_TENTATIVAS = ESPERAS_TENTATIVAS_MS.length + 1;
+
+    // Só vale tentar de novo na falha de rede (erro 0) e no 503 banco_ocupado.
+    function erroDeNovaTentativa(resultado) {
+      return resultado.erro === 0 || (resultado.erro === 503 && resultado.detalhe === "banco_ocupado");
+    }
+
+    // Quanto esperar (ms) antes da tentativa seguinte, ou null se não deve tentar de novo.
+    // 'tentativa' é a que acabou de falhar (1, 2...).
+    function esperaAntesDeNovaTentativa(resultado, tentativa) {
+      if (resultado.erro === undefined || !erroDeNovaTentativa(resultado)) return null;
+      if (tentativa >= MAX_TENTATIVAS) return null;
+      return ESPERAS_TENTATIVAS_MS[tentativa - 1];
+    }
+
+    // Manda SEMPRE o mesmo corpo (e, portanto, a mesma chave) em todas as tentativas.
+    // 'enviar' e 'esperar' vêm de fora para o teste poder trocá-los.
+    async function gravarComTentativas(enviar, corpo, esperar) {
+      let resultado;
+      for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
+        resultado = await enviar(corpo);
+        const espera = esperaAntesDeNovaTentativa(resultado, tentativa);
+        if (espera === null) return resultado;
+        await esperar(espera);
+      }
+      return resultado;
+    }
+  </script>
+  <!-- FIM FUNCOES PURAS -->
+
   <script>
     const FUSO = "America/Sao_Paulo";
     const MESES_COMPLETOS = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
@@ -580,14 +1200,8 @@
     }
 
     // ---------- Formatação ----------
-    const formatadorDinheiro = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+    // formatadorDinheiro e formatarDinheiro ficam no bloco de funções puras (acima).
     const formatadorNumero = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-    // "R$ 1.234,56"; negativo vira "−R$ 120,00" (sinal de menos de verdade).
-    function formatarDinheiro(valor) {
-      const texto = formatadorDinheiro.format(Math.abs(valor)).replace(/\s/g, " ");
-      return (valor < 0 && texto !== "R$ 0,00" ? "−" : "") + texto;
-    }
 
     function maiuscula(texto) {
       return texto.charAt(0).toUpperCase() + texto.slice(1);
@@ -655,16 +1269,16 @@
       const temSobra = resumo.sobra_mes !== null && resumo.sobra_mes !== undefined;
       $("sobra-valor").textContent = temSobra ? formatarDinheiro(resumo.sobra_mes) : "—";
 
-      // Sem renda, a barra e o "de R$ ..." ficam escondidos; a sobra continua.
-      const renda = Number(resumo.renda);
-      const temRenda = Number.isFinite(renda) && renda > 0;
-      const mostrarBarra = temSobra && temRenda;
+      // O "de R$ ..." é a renda mais as receitas avulsas (PRO-86/PRO-89, D8): Sobra + gasto = o "de".
+      // Sem renda nem receita, a barra e o "de R$ ..." ficam escondidos; a sobra continua.
+      const base = baseDaBarra(resumo.renda, resumo.total_receitas);
+      const proporcao = proporcaoDaBarra(resumo.total_gasto, base);
+      const mostrarBarra = temSobra && proporcao !== null;
       $("trilho").hidden = !mostrarBarra;
       $("renda-texto").hidden = !mostrarBarra;
       if (mostrarBarra) {
-        const proporcao = Math.min(Math.max(resumo.total_gasto / renda, 0), 1);
         $("preenchimento").style.width = (proporcao * 100) + "%";
-        $("renda-texto").textContent = "de " + formatarDinheiro(renda);
+        $("renda-texto").textContent = "de " + formatarDinheiro(base);
       }
 
       $("carregando").hidden = true;
@@ -755,6 +1369,37 @@
         return { dados: await resposta.json() };
       } catch (e) {
         return { erro: 0 };
+      }
+    }
+
+    // POST com corpo JSON (PRO-89), no mesmo formato do 'chamar': nunca lança; devolve
+    // { dados, status } (status 201 = gravou, 200 = repetido) ou { erro: status HTTP, detalhe, retryAfter }
+    // (erro 0 = falha de rede ou tempo esgotado). 'retryAfter' vem do cabeçalho Retry-After (429), em segundos.
+    async function enviarJson(rota, corpo, tempoLimiteMs = 30000) {
+      const controle = new AbortController();
+      const relogio = setTimeout(() => controle.abort(), tempoLimiteMs);
+      try {
+        const resposta = await fetch(rota, {
+          method: "POST",
+          headers: {
+            "Authorization": "tma " + initData,
+            "ngrok-skip-browser-warning": "1",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(corpo),
+          signal: controle.signal,
+        });
+        if (!resposta.ok) {
+          let detalhe;
+          try { detalhe = (await resposta.json()).detail; } catch (e) { /* corpo sem JSON */ }
+          const retryAfter = parseInt(resposta.headers.get("Retry-After"), 10);
+          return { erro: resposta.status, detalhe, retryAfter: Number.isFinite(retryAfter) ? retryAfter : undefined };
+        }
+        return { dados: await resposta.json(), status: resposta.status };
+      } catch (e) {
+        return { erro: 0 };
+      } finally {
+        clearTimeout(relogio);
       }
     }
 
@@ -920,6 +1565,348 @@
       }
     }
 
+    // ---------- Registrar (PRO-89) ----------
+    // Fluxo: home -> opções -> registro (gasto ou receita, um bloco só) -> prévia -> Confirmar -> home + aviso.
+    // Cada prévia nasce com a sua chave de idempotência; a chave só muda quando nasce uma prévia nova.
+    const registroEstado = {
+      tipo: null,            // "gasto" ou "receita"
+      previa: null,          // resposta de POST /registro/interpretar
+      chave: null,           // UUID da prévia; nunca muda numa nova tentativa da mesma prévia
+      forma: null,           // "Débito/Pix" ou "Crédito" (só no gasto)
+      parcelas: 1,
+      corpo: null,           // corpo do Confirmar, guardado na primeira tentativa para repetir idêntico
+      interpretando: false,
+      gravando: false,
+      erroChat: null,        // texto de erro no lugar da prévia
+      erroGravacao: null,    // texto de erro acima do Confirmar
+      versao: 0,             // sobe ao sair/zerar: descarta resposta atrasada
+    };
+    let temporizadorAviso = null;
+
+    const esperar = (ms) => new Promise((resolver) => setTimeout(resolver, ms));
+
+    function zerarRegistro() {
+      const e = registroEstado;
+      e.versao++;
+      e.previa = null;
+      e.chave = null;
+      e.forma = null;
+      e.parcelas = 1;
+      e.corpo = null;
+      e.interpretando = false;
+      e.gravando = false;
+      e.erroChat = null;
+      e.erroGravacao = null;
+    }
+
+    function mostrarBackButton(mostrar) {
+      if (!tg) return;
+      try { if (mostrar) tg.BackButton.show(); else tg.BackButton.hide(); } catch (e) { /* versão antiga */ }
+    }
+
+    // O chat ocupa a altura visível do Telegram, que encolhe com o teclado do celular (R1 da PRO-89).
+    function ajustarAlturaTela() {
+      const altura = (tg && tg.viewportHeight) || window.innerHeight;
+      document.documentElement.style.setProperty("--altura-tela", altura + "px");
+      const estavel = (tg && tg.viewportStableHeight) || altura;
+      $("registro").classList.toggle("teclado", estavel - altura > 120);
+      if (!$("registro").hidden) window.scrollTo(0, 0);
+    }
+
+    function abrirOpcoes() {
+      rolagemHome = window.scrollY;
+      rolagemGrafico = $("grafico-area").scrollLeft;
+      $("tela").hidden = true;
+      $("registro-opcoes").hidden = false;
+      window.scrollTo(0, 0);
+      mostrarBackButton(true);
+    }
+
+    function voltarDasOpcoesParaHome() {
+      $("registro-opcoes").hidden = true;
+      $("tela").hidden = false;
+      $("grafico-area").scrollLeft = rolagemGrafico;
+      window.scrollTo(0, rolagemHome);
+      mostrarBackButton(false);
+    }
+
+    function ajustarAlturaCampo() {
+      const campo = $("campo");
+      campo.style.height = "auto";
+      campo.style.height = Math.min(campo.scrollHeight, 120) + "px";
+    }
+
+    function abrirRegistro(tipo) {
+      zerarRegistro();
+      const gasto = tipo === "gasto";
+      registroEstado.tipo = tipo;
+      $("registro-titulo").textContent = gasto ? "Registrar Gasto" : "Registrar Receita";
+      $("registro").classList.toggle("registro-receita", !gasto);
+      $("campo").placeholder = gasto ? "Escreva o gasto..." : "Escreva a receita...";
+      $("campo").value = "";
+      ajustarAlturaCampo();
+      if (gasto) {
+        $("chat-vazio-texto").replaceChildren(
+          document.createTextNode("Registre aqui o seu gasto, por exemplo: "),
+          criar("strong", "", "\"Gastei 30 no iFood\"")
+        );
+      } else {
+        $("chat-vazio-texto").textContent = "Registre Aqui as Suas Receitas Avulsas";
+      }
+      $("pagamento").hidden = !gasto;
+      $("registro-opcoes").hidden = true;
+      $("registro").hidden = false;
+      document.body.classList.add("modo-chat");
+      ajustarAlturaTela();
+      window.scrollTo(0, 0);
+      atualizarRegistro();
+    }
+
+    // Volta do chat para as opções e descarta a prévia (nada foi gravado).
+    function voltarParaOpcoes() {
+      zerarRegistro();
+      $("campo").blur();
+      $("registro").hidden = true;
+      document.body.classList.remove("modo-chat");
+      $("registro-opcoes").hidden = false;
+      window.scrollTo(0, 0);
+    }
+
+    // Seta do cabeçalho e BackButton do Telegram: sobem UM nível por vez.
+    function voltarUmNivel() {
+      if (!$("registro").hidden) {
+        if (!registroEstado.gravando) voltarParaOpcoes(); // gravando: espera terminar (tem tempo limite)
+      } else if (!$("registro-opcoes").hidden) {
+        voltarDasOpcoesParaHome();
+      } else if (!$("detalhe").hidden) {
+        voltarParaHome();
+      }
+    }
+
+    function textoFicha(n) {
+      return n === 1 ? ["1x", "À Vista"] : [n + "x"];
+    }
+
+    function criarFichas() {
+      const fichas = $("fichas");
+      for (let n = 1; n <= MAX_PARCELAS; n++) {
+        const partes = textoFicha(n);
+        const ficha = criar("button", "ficha", partes[0]);
+        ficha.type = "button";
+        ficha.setAttribute("role", "radio");
+        ficha.setAttribute("aria-checked", "false");
+        ficha.dataset.parcelas = String(n);
+        if (partes[1]) ficha.append(criar("span", "ficha-nota", partes[1]));
+        fichas.append(ficha);
+      }
+    }
+
+    function textoOuSemInformacao(elemento, texto) {
+      const vazio = typeof texto !== "string" || !texto.trim();
+      elemento.textContent = vazio ? SEM_INFORMACAO : texto;
+      elemento.classList.toggle("sem-informacao", vazio);
+    }
+
+    // Preenche o cartão "Entendi assim:" com a prévia nova (uma vez por prévia).
+    function mostrarPrevia(previa) {
+      const gasto = registroEstado.tipo === "gasto";
+      $("previa-valor").textContent = formatarDinheiro(previa.valor);
+      textoOuSemInformacao($("previa-descricao"), previa.descricao);
+      $("previa-linha-estabelecimento").hidden = !gasto;
+      $("previa-linha-categoria").hidden = !gasto;
+      $("previa-linha-forma").hidden = !gasto;
+      if (gasto) {
+        textoOuSemInformacao($("previa-estabelecimento"), previa.estabelecimento);
+        $("previa-categoria").textContent = previa.categoria;
+      }
+      $("fichas").scrollLeft = 0;
+    }
+
+    // Desenha o estado (botões, erros, forma, parcelas). Não recria a prévia nem as fichas.
+    function atualizarRegistro() {
+      const e = registroEstado;
+      const gasto = e.tipo === "gasto";
+      const ocupado = e.interpretando || e.gravando;
+      const credito = gasto && e.forma === FORMA_CREDITO;
+
+      $("chat-vazio").hidden = !!(e.previa || e.interpretando || e.erroChat);
+      $("chat-entendendo").hidden = !e.interpretando;
+      $("chat-erro").hidden = !e.erroChat;
+      $("chat-erro").textContent = e.erroChat || "";
+      $("previa").hidden = !e.previa;
+
+      if (e.previa) {
+        const forma = $("previa-forma");
+        forma.textContent = e.forma === FORMA_CREDITO ? "Crédito" : e.forma === FORMA_DEBITO ? "Débito / Pix" : "Escolha abaixo";
+        forma.classList.toggle("sem-informacao", !e.forma);
+        $("previa-parcelas").hidden = !credito;
+        if (credito) $("previa-parcela-texto").textContent = textoParcela(e.previa.valor, e.parcelas);
+        // A última linha visível fica sem a divisória (e com mais respiro embaixo).
+        const linhas = ["previa-linha-descricao", "previa-linha-estabelecimento", "previa-linha-categoria", "previa-linha-forma"]
+          .map($).filter((l) => !l.hidden);
+        linhas.forEach((l, i) => l.classList.toggle("ultima", i === linhas.length - 1 && !credito));
+      }
+
+      // Depois da primeira tentativa de gravar, forma e parcelas ficam travadas: o corpo e a chave se repetem iguais.
+      const travado = ocupado || e.corpo !== null;
+      document.querySelectorAll(".forma").forEach((b) => {
+        b.setAttribute("aria-checked", String(b.dataset.forma === e.forma));
+        b.disabled = travado;
+      });
+      document.querySelectorAll(".ficha").forEach((b) => {
+        b.setAttribute("aria-checked", String(parseInt(b.dataset.parcelas, 10) === e.parcelas));
+        b.disabled = travado;
+      });
+
+      $("campo").disabled = ocupado;
+      atualizarEnviar();
+
+      $("erro-gravacao").hidden = !e.erroGravacao;
+      $("erro-gravacao").textContent = e.erroGravacao || "";
+      $("botao-confirmar").disabled = !podeConfirmar(e);
+      $("botao-confirmar").textContent = e.gravando ? "Registrando..." : "Confirmar";
+      $("dica-confirmar").hidden = !(gasto && e.forma !== FORMA_DEBITO && e.forma !== FORMA_CREDITO);
+
+      if (e.previa || e.erroChat) $("chat").scrollTop = $("chat").scrollHeight;
+    }
+
+    function atualizarEnviar() {
+      const ocupado = registroEstado.interpretando || registroEstado.gravando;
+      $("botao-enviar").disabled = ocupado || !$("campo").value.trim();
+    }
+
+    function escolherPagamento(forma) {
+      const e = registroEstado;
+      if (e.interpretando || e.gravando || e.corpo) return;
+      e.forma = forma;
+      if (forma !== FORMA_CREDITO) e.parcelas = 1; // trocar para Débito esconde as fichas e volta para 1x
+      atualizarRegistro();
+    }
+
+    function escolherParcelas(n) {
+      const e = registroEstado;
+      if (e.interpretando || e.gravando || e.corpo) return;
+      if (!Number.isInteger(n) || n < 1 || n > MAX_PARCELAS) return;
+      e.parcelas = n;
+      atualizarRegistro();
+    }
+
+    // Manda o texto à IA e mostra a prévia. Reenviar troca a prévia E a chave.
+    async function interpretar() {
+      const e = registroEstado;
+      const texto = $("campo").value.trim();
+      if (!texto || e.interpretando || e.gravando) return;
+      const versao = ++e.versao;
+      e.interpretando = true;
+      e.previa = null;
+      e.chave = null;
+      e.parcelas = 1;
+      e.corpo = null;
+      e.erroChat = null;
+      e.erroGravacao = null;
+      atualizarRegistro();
+
+      const resultado = await enviarJson("/registro/interpretar", { tipo: e.tipo, texto: texto });
+      if (versao !== e.versao) return; // o usuário voltou enquanto a IA pensava
+      e.interpretando = false;
+      if (resultado.erro !== undefined) {
+        e.erroChat = mensagemErroRegistro(resultado, "interpretar", e.tipo);
+      } else if (!previaValida(resultado.dados, e.tipo)) {
+        e.erroChat = MSG_NAO_ENTENDI;
+      } else {
+        e.previa = resultado.dados;
+        e.chave = gerarChave();
+        mostrarPrevia(e.previa);
+      }
+      atualizarRegistro();
+    }
+
+    // Grava uma vez só: trava no primeiro toque; 503 banco_ocupado e falha de rede repetem o MESMO corpo e a MESMA chave.
+    async function confirmar() {
+      const e = registroEstado;
+      if (!podeConfirmar(e)) return;
+      const gasto = e.tipo === "gasto";
+      e.gravando = true;
+      e.erroGravacao = null;
+      if (!e.corpo) {
+        e.corpo = gasto
+          ? montarCorpoGasto(e.previa, e.forma, e.parcelas, e.chave)
+          : montarCorpoReceita(e.previa, e.chave);
+      }
+      const versao = e.versao;
+      const tipo = e.tipo;
+      const rota = gasto ? "/gastos" : "/receitas";
+      atualizarRegistro();
+
+      const resultado = await gravarComTentativas((corpo) => enviarJson(rota, corpo, 15000), e.corpo, esperar);
+      if (versao !== e.versao) return;
+      e.gravando = false;
+      if (resultado.erro !== undefined) {
+        e.erroGravacao = mensagemErroRegistro(resultado, "gravar", tipo);
+        atualizarRegistro();
+        return;
+      }
+      concluirRegistro(tipo, resultado.dados);
+    }
+
+    // Aviso no topo da home por 10 s, com a barra que esvazia.
+    function mostrarAvisoTopo(aviso) {
+      clearTimeout(temporizadorAviso);
+      $("aviso-topo-texto").replaceChildren(
+        document.createTextNode(aviso.antes),
+        criar("strong", "", aviso.negrito),
+        document.createTextNode(aviso.depois)
+      );
+      const barra = $("aviso-topo-barra");
+      barra.classList.remove("esvaziando");
+      void barra.offsetWidth; // reinicia a animação se já havia um aviso
+      barra.classList.add("esvaziando");
+      $("aviso-topo").hidden = false;
+      temporizadorAviso = setTimeout(() => {
+        $("aviso-topo").hidden = true;
+        barra.classList.remove("esvaziando");
+      }, 10000);
+    }
+
+    // Gravou (201) ou já estava gravado (200): volta à home, recarrega os números e avisa.
+    function concluirRegistro(tipo, dados) {
+      zerarRegistro();
+      $("registro").hidden = true;
+      document.body.classList.remove("modo-chat");
+      $("tela").hidden = false;
+      mostrarBackButton(false);
+      window.scrollTo(0, 0);
+      carregar();
+      mostrarAvisoTopo(montarAviso(tipo, dados));
+    }
+
+    function iniciarRegistro() {
+      criarFichas();
+      $("atalho-registrar").addEventListener("click", abrirOpcoes);
+      $("opcoes-voltar").addEventListener("click", voltarUmNivel);
+      $("registro-voltar").addEventListener("click", voltarUmNivel);
+      $("opcao-gasto").addEventListener("click", () => abrirRegistro("gasto"));
+      $("opcao-receita").addEventListener("click", () => abrirRegistro("receita"));
+
+      $("registro-form").addEventListener("submit", (evento) => { evento.preventDefault(); interpretar(); });
+      $("campo").addEventListener("input", () => { ajustarAlturaCampo(); atualizarEnviar(); });
+      $("campo").addEventListener("keydown", (evento) => {
+        if (evento.key === "Enter" && !evento.shiftKey) { evento.preventDefault(); interpretar(); }
+      });
+
+      document.querySelectorAll(".forma").forEach((b) => b.addEventListener("click", () => escolherPagamento(b.dataset.forma)));
+      $("fichas").addEventListener("click", (evento) => {
+        const ficha = evento.target.closest(".ficha");
+        if (ficha) escolherParcelas(parseInt(ficha.dataset.parcelas, 10));
+      });
+      $("botao-confirmar").addEventListener("click", confirmar);
+
+      window.addEventListener("resize", ajustarAlturaTela);
+      if (tg) {
+        try { tg.onEvent("viewportChanged", ajustarAlturaTela); } catch (e) { /* versão antiga */ }
+      }
+    }
+
     function iniciar() {
       if (tg) {
         try { tg.ready(); } catch (e) { /* versão antiga */ }
@@ -935,7 +1922,9 @@
       }
 
       $("botao-menu").addEventListener("click", avisarEmBreve);
-      document.querySelectorAll(".atalho").forEach((b) => b.addEventListener("click", avisarEmBreve));
+      // Só o "Registrar" abre o fluxo (PRO-89); "Categorias" e "Recorrentes" seguem com o "Em breve".
+      document.querySelectorAll(".atalho:not(#atalho-registrar)").forEach((b) => b.addEventListener("click", avisarEmBreve));
+      iniciarRegistro();
       $("aviso-botao").addEventListener("click", carregar);
 
       // Detalhe do gasto: toque na linha, voltar (cabeçalho, erro ou BackButton do Telegram) e ações "Em breve".
@@ -948,7 +1937,8 @@
       $("detalhe-erro-tentar").addEventListener("click", carregarDetalhe);
       document.querySelectorAll(".acao, .cartao-icone").forEach((b) => b.addEventListener("click", avisarEmBreve));
       if (tg) {
-        try { tg.BackButton.onClick(voltarParaHome); } catch (e) { /* versão antiga */ }
+        // O BackButton sobe um nível por vez: registro -> opções -> home, ou detalhe -> home.
+        try { tg.BackButton.onClick(voltarUmNivel); } catch (e) { /* versão antiga */ }
       }
       carregar();
     }
