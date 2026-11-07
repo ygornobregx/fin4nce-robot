@@ -220,13 +220,16 @@ class TestLancarItemRecorrente(unittest.TestCase):
 
 
 def carregar_cadastro():
-    """receber_nomes_categorias e _normalizar_texto do bot.py (AST), com as
-    constantes de estado reais (NOME_USUARIO... e DIA_FECHAMENTO) e um
-    enviar_fluxo falso que só guarda o texto enviado."""
+    """receber_nomes_categorias do bot.py (AST), com as constantes de estado
+    reais (NOME_USUARIO... e DIA_FECHAMENTO) e um enviar_fluxo falso que só
+    guarda o texto enviado. Desde a PRO-96, a regra dos nomes
+    (montar_lista_categorias) e a _normalizar_texto ficam no cadastro.py, que o
+    bot importa: vêm de lá, como no bot."""
+    import cadastro
     raiz = os.path.dirname(os.path.abspath(__file__))
     with open(os.path.join(raiz, 'bot.py'), encoding='utf-8') as f:
         arvore = ast.parse(f.read())
-    funcoes = {'receber_nomes_categorias', '_normalizar_texto'}
+    funcoes = {'receber_nomes_categorias'}
     constantes = {'NOMES_CATEGORIAS', 'DIA_FECHAMENTO'}
     selecionados = [
         no for no in arvore.body
@@ -241,7 +244,9 @@ def carregar_cadastro():
         enviados.append(texto)
 
     ns = {'unicodedata': unicodedata, 'enviar_fluxo': enviar_fluxo_falso,
-          'Update': object, 'ContextTypes': SimpleNamespace(DEFAULT_TYPE=object)}
+          'Update': object, 'ContextTypes': SimpleNamespace(DEFAULT_TYPE=object),
+          '_normalizar_texto': cadastro.normalizar_texto,
+          'montar_lista_categorias': cadastro.montar_lista_categorias}
     exec(compile(ast.Module(body=selecionados, type_ignores=[]), 'bot.py', 'exec'), ns)
     faltando = (funcoes | constantes) - set(ns)
     if faltando:

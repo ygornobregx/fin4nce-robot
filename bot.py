@@ -3,7 +3,6 @@ import re
 import libsql
 import asyncio
 import calendar
-import unicodedata
 from datetime import time, datetime
 from html import escape
 from types import SimpleNamespace
@@ -18,6 +17,15 @@ from calculos import (
     calcular_gasto_categoria,
     calcular_resumo_fatura,
     obter_ciclo_atual,
+)
+# Regras do cadastro (PRO-96): nomes das categorias sem repetição, dia válido e
+# gravação de 'usuarios' e 'categorias' ficam no cadastro.py, que a API também
+# usa. Os nomes antigos (_normalizar_texto, dia_valido) continuam valendo aqui.
+from cadastro import (
+    dia_valido,
+    gravar_cadastro,
+    montar_lista_categorias,
+    normalizar_texto as _normalizar_texto,
 )
 # Interpretação do gasto pela IA e gravação do gasto (PRO-85) e da receita
 # (PRO-86): ficam no registro.py, que a API também usa. O bot cuida das
@@ -38,7 +46,7 @@ from registro import (
     registrar_receita,
     validar_valor_receita,
 )
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.error import BadRequest, NetworkError
 from telegram.ext import (
     ApplicationBuilder,
@@ -211,10 +219,6 @@ def parse_valor(texto):
     elif ',' in limpo:
         limpo = limpo.replace(',', '.')
     return float(limpo)
-
-def dia_valido(dia):
-    """Valida se o dia informado é um dia possível dentro de um mês (1 a 31)."""
-    return 1 <= dia <= 31
 
 def formatar_estabelecimento(estabelecimento):
     """Texto da linha 'Estabelecimento:' das confirmações (a mensagem usa HTML,
@@ -509,6 +513,24 @@ async def voltar_para_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # --- FLUXO DE CONFIGURAÇÃO (/start) ---
+# Porta de entrada do Mini App (PRO-96): com URL_MINI_APP no ambiente (a home
+# do Mini App, terminando em /app/), quem não tem cadastro recebe só o botão
+# que abre o Mini App, onde o cadastro é feito. Sem a variável, o cadastro
+# antigo no chat continua igual (a produção, até a PRO-94 ligar a variável).
+TEXTO_PORTA_DE_ENTRADA = "<b>Bem-vindo ao L1d3r!</b> Toque no botão abaixo para abrir o seu painel."
+
+def obter_url_mini_app():
+    """URL_MINI_APP lida do ambiente na hora (não no import). Só vale se
+    começar com https:// (o Telegram exige HTTPS no botão web_app); senão,
+    é tratada como ausente (None). Não é segredo, mas nunca fica no código."""
+    url = (os.getenv('URL_MINI_APP') or '').strip()
+    if not url.startswith('https://') or len(url) == len('https://'):
+        return None
+    return url
+
+def montar_teclado_porta_de_entrada(url_mini_app):
+    return InlineKeyboardMarkup([[InlineKeyboardButton("Abrir o L1d3r", web_app=WebAppInfo(url=url_mini_app))]])
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     iniciar_banco()
     try:
@@ -527,6 +549,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Menu Principal, sem tocar nos dados já configurados.
         texto_menu = await montar_texto_menu_principal(user_id)
         await enviar_fluxo(context, update.effective_chat.id, texto_menu, reply_markup=obter_teclado_menu())
+        return ConversationHandler.END
+
+    url_mini_app = obter_url_mini_app()
+    if url_mini_app:
+        # Porta de entrada: só a mensagem e o botão que abre o Mini App. A
+        # conversa termina aqui e nada é gravado (o cadastro é pelo Mini App).
+        await enviar_fluxo(
+            context, update.effective_chat.id, TEXTO_PORTA_DE_ENTRADA,
+            reply_markup=montar_teclado_porta_de_entrada(url_mini_app)
+        )
         return ConversationHandler.END
 
     await enviar_fluxo(
@@ -573,18 +605,9 @@ async def receber_nomes_categorias(update: Update, context: ContextTypes.DEFAULT
         pass
 
     # Nomes repetidos ("Lazer, lazer", "Alimentação, alimentacao") viram uma
-    # categoria só: mesma comparação do rename (_normalizar_texto), mantendo a
-    # primeira grafia e a ordem digitada. O vínculo é por nome, então duas
-    # categorias iguais misturariam os registros.
-    categorias = []
-    vistos = set()
-    for c in texto.split(','):
-        nome_cat = c.strip().capitalize()
-        chave = _normalizar_texto(nome_cat)
-        if not chave or chave in vistos:
-            continue
-        vistos.add(chave)
-        categorias.append(nome_cat)
+    # categoria só, mantendo a primeira grafia e a ordem digitada: regra do
+    # cadastro.py (montar_lista_categorias), a mesma da API.
+    categorias = montar_lista_categorias(texto.split(','))
     if not categorias:
         return NOMES_CATEGORIAS
 
@@ -617,16 +640,12 @@ async def receber_dia_fechamento(update: Update, context: ContextTypes.DEFAULT_T
     nome = context.user_data['nome_temp']
     renda = context.user_data['renda_temp']
 
-    conn = obter_conexao_db()
-    cursor = conn.cursor()
-    cursor.execute('INSERT OR REPLACE INTO usuarios (user_id, nome, renda_mensal, dia_fechamento, horario_alerta) VALUES (?, ?, ?, ?, ?)', (user_id, nome, renda, dia, "20:00"))
-    cursor.execute('DELETE FROM categorias WHERE user_id = ?', (user_id,))
+    # Cadastro antigo (PRO-96: pelo cadastro.py, com substituir=True): INSERT OR
+    # REPLACE em 'usuarios' e apaga e recria as categorias, como sempre foi.
     data_criacao = datetime.now(FUSO_BRASILIA).strftime('%Y-%m-%d %H:%M:%S')
-    # orcamento_mensal e saldo_atual ficam sem uso desde a PRO-83: gravados com
-    # 0, nunca nulos (o código antigo, numa reversão, ainda os lê).
-    for cat_nome in context.user_data['categorias_temp']:
-        cursor.execute('INSERT INTO categorias (user_id, nome, orcamento_mensal, saldo_atual, data_criacao) VALUES (?, ?, ?, ?, ?)', (user_id, cat_nome, 0.0, 0.0, data_criacao))
-    conn.commit()
+    conn = obter_conexao_db()
+    gravar_cadastro(conn, user_id, nome, renda, dia, "20:00", context.user_data['categorias_temp'],
+                    data_criacao, substituir=True)
     conn.close()
 
     agendar_tarefa_alerta(context.job_queue, user_id, "20:00")
@@ -998,14 +1017,6 @@ async def iniciar_editar_valor_ultimo_gasto(update: Update, context: ContextType
 
     await atualizar_callback(query, context, "Envie o valor correto para este gasto:", reply_markup=TECLADO_VOLTAR)
     return EDITAR_ULTIMO_GASTO
-
-def _normalizar_texto(texto):
-    """Forma de comparação sem maiúsculas, acentos e espaços repetidos
-    ('  Alimentação ' -> 'alimentacao')."""
-    sem_acento = ''.join(
-        c for c in unicodedata.normalize('NFKD', texto) if not unicodedata.combining(c)
-    )
-    return ' '.join(sem_acento.casefold().split())
 
 def _montar_tela_editar_categoria_gasto(valor, categorias, aviso=""):
     """Texto da tela 'Editar Categoria': lista todas as categorias do usuário,

@@ -61,6 +61,16 @@ Rotas:
   `"Crédito"`) e `parcelas` (1 a 12; Débito/Pix grava 1). `201` gravou; `200` com `"repetido": true` quando a
   mesma chave já tinha sido gravada (devolve o lançamento original, sem gravar de novo).
 - `POST /receitas` (PRO-88): corpo `{"chave", "valor", "descricao"}`; mesmo `201`/`200` de `/gastos`.
+- `POST /cadastro` (PRO-96): cria o cadastro de quem ainda não tem. Corpo
+  `{"nome": "Ygor", "dia_fechamento": 5, "categorias": ["Alimentação", "Casa", "Lazer", "Pet"]}`:
+  `nome` de 1 a 30 caracteres (aparado, gravado como veio); `dia_fechamento` inteiro de 1 a 31 (não vale
+  `true`, `5.5` nem `"5"`); `categorias` lista de 1 a 20 nomes (contados depois de juntar as repetidas: "lazer",
+  " Lazer " e "LAZER" viram "Lazer", na primeira grafia e na ordem), cada um com até 30 caracteres. Grava
+  `usuarios` com renda `0.0` e `horario_alerta` `NULL` (nenhum alerta diário) e as categorias, numa transação só,
+  com a data de criação do servidor (Brasília). `201` devolve `{"user_id", "nome", "dia_fechamento", "categorias"}`
+  (as categorias como foram gravadas). O `user_id` vem só do initData: `user_id`, `renda_mensal`,
+  `horario_alerta` ou qualquer outro campo a mais no corpo são ignorados. As regras ficam no `cadastro.py`, o
+  mesmo módulo que o cadastro antigo do bot usa.
 - Página de diagnóstico em `/teste/`, que chama `/me`, `/resumo`, `/historico`, `/gastos/recentes` e
   `/movimentacoes/recentes` (PRO-92) e mostra as cinco respostas.
   Desde a PRO-88, tem também o bloco "Registro (diagnóstico)": "Interpretar" mostra a prévia em JSON e "Gravar"
@@ -86,6 +96,11 @@ Erros das rotas de registro (PRO-88), além dos três acima, sempre `{"detail": 
   com a **mesma** chave (o mesmo vale para falha de rede), e a resposta vem `201` ou `200` com `"repetido": true`.
 - As três rotas: erro inesperado dá `500 {"detail": "erro_interno"}`, sem a mensagem do banco nem o traceback
   (no log, só "Registro falhou: erro_interno" e o nome da classe).
+
+Erros de `POST /cadastro` (PRO-96), sempre `{"detail": "<código>"}`: `401 nao_autorizado`; `409 usuario_ja_cadastrado`
+(já existe linha em `usuarios`, antes ou durante a gravação, como no toque duplo; nada é alterado); `422 nome_invalido`,
+`dia_invalido`, `categorias_invalidas`; `503 banco_ocupado` (banco ocupado nas 4 tentativas, com esperas de 0,25 s,
+0,5 s e 1 s); `500 erro_interno` (sem detalhes; no log, só "Cadastro falhou: erro_interno" e o nome da classe).
 - Um corpo que nem é JSON (ou campo de texto com número) dá o `422` padrão do FastAPI (`detail` em lista).
 
 ## 3. Abrir o túnel
@@ -101,13 +116,24 @@ Com domínio estático: `ngrok http --url=<domínio estático> 8000`.
 No **bot de teste**, defina o Menu Button (ou a Main Mini App) com a URL
 `https://<host-do-ngrok>/app/` (a home). A página de diagnóstico das rotas fica em `/teste/`.
 
-## 5. Tela de aviso do ngrok
+## 5. Porta de entrada no bot de teste (`URL_MINI_APP`, PRO-96)
+
+Com a variável `URL_MINI_APP` no `.env` do **bot de teste** (a URL da home pelo ngrok, `https://<host-do-ngrok>/app/`),
+o `/start` de quem **não tem cadastro** mostra só "Bem-vindo ao L1d3r!" e o botão "Abrir o L1d3r", que abre o Mini
+App; nada é gravado e o chat não pergunta nada. Quem já tem cadastro continua vendo o Menu Principal.
+
+- A variável é lida a cada `/start` e só vale se começar com `https://` (o Telegram exige HTTPS); sem ela, ou com
+  outro começo, o cadastro antigo no chat continua igual.
+- Não é segredo, mas fica só no ambiente: nunca no código, nas notas nem nos testes.
+- Na produção, a variável **não** existe até a PRO-94 (hospedagem): lá o `/start` segue com o cadastro antigo.
+
+## 6. Tela de aviso do ngrok
 
 No primeiro acesso, o ngrok (plano gratuito) pode mostrar uma tela de aviso antes da
 página HTML; basta confirmar uma vez. O `fetch` da página envia o cabeçalho
 `ngrok-skip-browser-warning`, então as chamadas a `/me`, `/resumo`, `/historico` e `/movimentacoes/recentes` não são interceptadas.
 
-## 6. Testes
+## 7. Testes
 
 Todos rodam sem `.env` e sem internet:
 
@@ -115,6 +141,7 @@ Todos rodam sem `.env` e sem internet:
 python testes_initdata.py
 python testes_rotas_leitura.py
 python testes_rotas_registro.py
+python testes_cadastro.py
 python testes_estabelecimento.py
 python testes_calculos.py
 ```

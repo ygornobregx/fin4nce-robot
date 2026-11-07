@@ -11,6 +11,10 @@ Rotas de registro (PRO-88): POST /registro/interpretar (prévia com a IA, sem
 gravar), POST /gastos e POST /receitas (gravação confirmada, uma vez só por
 chave). As regras ficam no registro.py; aqui só o HTTP (status, JSON, limite).
 
+Rota de cadastro (PRO-96): POST /cadastro cria o cadastro de quem ainda não tem
+(renda 0, sem alerta diário, categorias sem repetição) e recusa quem já tem
+(409). As regras ficam no cadastro.py, o mesmo módulo que o bot usa.
+
 Também serve, na mesma origem, a home do Mini App em /app (mini-apps/home, PRO-77)
 e a página de diagnóstico das rotas em /teste (mini-apps/teste-initdata).
 
@@ -33,6 +37,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import cadastro
 import registro
 from api.initdata import InitDataError, validate_init_data
 from calculos import (
@@ -317,11 +322,12 @@ def erro_registro(erro: registro.ErroRegistro) -> HTTPException:
     return HTTPException(status_code=STATUS_ERRO_REGISTRO.get(erro.codigo, 422), detail=erro.codigo)
 
 
-def erro_interno(erro: Exception) -> HTTPException:
-    """Erro inesperado nas rotas de registro: 500 {"detail": "erro_interno"}.
+def erro_interno(erro: Exception, rotulo: str = "Registro") -> HTTPException:
+    """Erro inesperado nas rotas que gravam: 500 {"detail": "erro_interno"}.
     Nem a resposta nem o log levam a mensagem (a do banco pode trazer SQL ou
-    dados) nem o traceback; o log leva só o código e o nome da classe."""
-    logger.error("Registro falhou: erro_interno (%s)", type(erro).__name__)
+    dados) nem o traceback; o log leva só o código e o nome da classe.
+    'rotulo' diz de que rota veio ("Registro" ou, desde a PRO-96, "Cadastro")."""
+    logger.error("%s falhou: erro_interno (%s)", rotulo, type(erro).__name__)
     return HTTPException(status_code=500, detail="erro_interno")
 
 
@@ -446,6 +452,57 @@ def gravar_receita(pedido: PedidoReceita, response: Response, usuario: dict = De
         "descricao": receita.descricao,
         "data": receita.data,
         "repetido": receita.repetido,
+    }
+
+
+# --- CADASTRO (PRO-96) ---
+# Códigos do cadastro.ErroCadastro que não são 422.
+STATUS_ERRO_CADASTRO = {"usuario_ja_cadastrado": 409, "banco_ocupado": 503}
+
+
+def erro_cadastro(erro: cadastro.ErroCadastro) -> HTTPException:
+    """HTTPException {"detail": codigo}. O log leva só o código: nunca o nome,
+    as categorias nem o initData."""
+    logger.warning("Cadastro recusado: %s", erro.codigo)
+    return HTTPException(status_code=STATUS_ERRO_CADASTRO.get(erro.codigo, 422), detail=erro.codigo)
+
+
+class PedidoCadastro(BaseModel):
+    """Campos soltos (Any): quem confere é o cadastro.py, com os códigos de
+    erro do contrato (ex.: o dia tem de ser inteiro de verdade, não 5.5 nem
+    "5"). Campos a mais (user_id, renda_mensal, horario_alerta...) são
+    ignorados: o user_id vem só do initData, a renda é 0 e não há alerta."""
+    nome: Any = None
+    dia_fechamento: Any = None
+    categorias: Any = None
+
+
+@app.post("/cadastro", status_code=201)
+def cadastrar(pedido: PedidoCadastro, usuario: dict = Depends(usuario_autenticado),
+              conn=Depends(obter_conexao_db), agora: datetime = Depends(obter_agora)):
+    """Cria o cadastro pelo Mini App: 'usuarios' com renda 0.0 e
+    horario_alerta NULL (nenhum alerta diário) e as categorias, numa transação
+    só; data de criação do servidor, em Brasília. 201 com o que foi gravado
+    (as categorias como ficaram, sem repetição, na ordem). Já cadastrado
+    (antes ou durante a gravação, como no toque duplo): 409
+    usuario_ja_cadastrado, sem alterar nada. Banco ocupado depois das novas
+    tentativas: 503 banco_ocupado. Erro inesperado: 500 erro_interno, sem
+    detalhes."""
+    user_id = usuario["id"]
+    try:
+        criado = cadastro.cadastrar_pela_api(
+            conn, user_id, pedido.nome, pedido.dia_fechamento, pedido.categorias,
+            registro.momento_agora(agora)
+        )
+    except cadastro.ErroCadastro as erro:
+        raise erro_cadastro(erro) from None
+    except Exception as erro:
+        raise erro_interno(erro, "Cadastro") from None
+    return {
+        "user_id": criado.user_id,
+        "nome": criado.nome,
+        "dia_fechamento": criado.dia_fechamento,
+        "categorias": criado.categorias,
     }
 
 
