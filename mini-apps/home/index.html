@@ -32,6 +32,10 @@
       --cor-aviso-sombra: #00000038;
       /* Valor da receita em "Últimas Movimentações" (PRO-92) */
       --cor-receita: #15803D;
+      /* Boas-vindas, cadastro e painel vazio (PRO-97, quadros FUTURO - BOAS-VINDAS - V1) */
+      --cor-erro: #D93025;
+      --cor-erro-fundo: #FFF5F4;
+      --cor-receita-fundo: #15803D14;
     }
 
     * { box-sizing: border-box; }
@@ -257,6 +261,25 @@
     .coluna.previsto .coluna-barra { background: var(--cor-fundo-suave); border: 1px dashed var(--cor-tracejado); }
     .coluna.previsto .coluna-barra.zerada { border: 0; }
 
+    /* Sem gasto em nenhum mês (PRO-97): a caixa tracejada no lugar das colunas. */
+    .grafico-vazio {
+      height: 140px;
+      margin: 12px 24px 0 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      border: 1.5px dashed var(--cor-barra-fechado);
+      border-radius: 18px;
+      text-align: center;
+      font-size: 13px;
+      line-height: 18px;
+      font-weight: 600;
+      color: var(--cor-texto-3);
+    }
+    .grafico-vazio svg { width: 28px; height: 28px; fill: none; stroke: var(--cor-tracejado); stroke-width: 2; stroke-linecap: round; }
+
     /* ---------- 4. Últimas Movimentações (gastos e receitas, PRO-92) ---------- */
     .extrato { padding: 28px 24px 0; }
     .extrato .secao-titulo { padding-bottom: 4px; }
@@ -291,7 +314,51 @@
     /* Receita: mesmo tamanho e peso do gasto, só a cor muda (o "+ " vem no texto). */
     .gasto-valor.receita { color: var(--cor-receita); }
 
-    .extrato-vazio { padding-top: 16px; font-size: 15px; line-height: 20px; font-weight: 500; color: var(--cor-texto-2); }
+    /* Lista vazia e cartão do salário (PRO-97, quadro FUTURO - BOAS-VINDAS - PAINEL VAZIO - V1) */
+    .extrato-vazio {
+      margin-top: 12px;
+      padding: 28px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      border-radius: 18px;
+      background: var(--cor-fundo-suave);
+      text-align: center;
+      font-size: 15px;
+      line-height: 20px;
+      font-weight: 600;
+      color: var(--cor-texto-2);
+    }
+    .extrato-vazio svg { width: 26px; height: 26px; fill: none; stroke: var(--cor-texto-3); stroke-width: 1.8; stroke-linecap: round; }
+
+    .cartao-salario {
+      width: 100%;
+      margin-top: 12px;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-align: left;
+      border: 1px solid var(--cor-divisoria);
+      border-radius: 14px;
+      font-size: 13px;
+      line-height: 18px;
+      font-weight: 500;
+      color: var(--cor-texto-2);
+    }
+    .cartao-salario strong { font-weight: 700; color: var(--cor-receita); }
+    .cartao-salario-icone {
+      width: 32px;
+      height: 32px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      background: var(--cor-receita-fundo);
+    }
+    .cartao-salario-icone svg { width: 18px; height: 18px; fill: none; stroke: var(--cor-receita); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
     /* ---------- Detalhe do gasto (PRO-80) ---------- */
     .detalhe-erro {
@@ -621,7 +688,8 @@
 
     .erro-gravacao { padding: 12px 16px; border-radius: 14px; background: var(--cor-fundo-suave); font-size: 13px; line-height: 18px; font-weight: 600; color: var(--cor-texto); }
 
-    .botao-confirmar {
+    /* .botao-principal (PRO-97): o mesmo botão grande, nos rodapés das telas de boas-vindas. */
+    .botao-confirmar, .botao-principal {
       height: 52px;
       margin-top: 4px;
       border-radius: 16px;
@@ -631,7 +699,8 @@
       line-height: 22px;
       font-weight: 700;
     }
-    .botao-confirmar:disabled { background: var(--cor-desabilitado-fundo); color: var(--cor-desabilitado-texto); cursor: default; }
+    .botao-principal { width: 100%; margin-top: 0; }
+    .botao-confirmar:disabled, .botao-principal:disabled { background: var(--cor-desabilitado-fundo); color: var(--cor-desabilitado-texto); cursor: default; }
     .dica-confirmar { margin-top: -4px; text-align: center; font-size: 12px; line-height: 16px; font-weight: 500; color: var(--cor-texto-2); }
 
     /* Aviso no topo da home: some em 10 s, com a barra que esvazia (quadro FUTURO - HOME COM AVISO). */
@@ -664,6 +733,262 @@
     .aviso-topo-barra { height: 3px; width: 100%; background: var(--cor-grafite); transform-origin: left center; }
     .aviso-topo-barra.esvaziando { animation: esvaziar-aviso 10s linear forwards; }
     @keyframes esvaziar-aviso { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+    /* ---------- Boas-vindas, cadastro e tour (PRO-97, quadros FUTURO - BOAS-VINDAS - V1) ---------- */
+    /* Telas de altura cheia: o corpo cresce e o rodapé (Continuar, Próximo...) fica embaixo. */
+    body.modo-boas-vindas { padding-bottom: 0; }
+    .tela-cheia { min-height: var(--altura-tela, 100vh); display: flex; flex-direction: column; }
+    .tela-cheia > .cabecalho { flex-shrink: 0; }
+
+    .rodape-tela {
+      margin-top: auto;
+      padding: 14px 16px calc(32px + env(safe-area-inset-bottom, 0px));
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    .rodape-tela.com-dica { padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
+    .dica-rodape { text-align: center; font-size: 12px; line-height: 16px; font-weight: 500; color: var(--cor-texto-2); }
+
+    /* Escolha inicial */
+    .cabecalho-boas-vindas { padding-bottom: 32px; }
+    .boas-vindas-topo { padding: 8px 24px 12px; display: flex; flex-direction: column; gap: 14px; }
+    .logo-caixa {
+      width: 56px;
+      height: 56px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 18px;
+      background: var(--cor-botao-menu);
+    }
+    .logo-caixa svg { width: 38px; height: 38px; fill: none; stroke: var(--cor-branco); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+    .boas-vindas-textos { display: flex; flex-direction: column; gap: 6px; }
+    .boas-vindas-ola { font-size: 14px; line-height: 20px; font-weight: 600; color: var(--cor-texto-cabecalho-2); }
+    .boas-vindas-nome { font-size: 34px; line-height: 40px; font-weight: 800; letter-spacing: -0.03em; }
+    .boas-vindas-sub { font-size: 15px; line-height: 22px; font-weight: 500; color: var(--cor-texto-cabecalho-2); }
+
+    /* "Já Sou Amigo do Adm": carregando, não encontrado e erro, no meio da tela */
+    .estado-central {
+      flex-grow: 1;
+      padding: 24px 40px 80px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      text-align: center;
+    }
+    .estado-central.com-rodape { padding-bottom: 40px; }
+    .estado-icone {
+      width: 64px;
+      height: 64px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 20px;
+      background: var(--cor-fundo-suave);
+    }
+    .estado-icone .lupa { width: 28px; height: 28px; fill: none; stroke: var(--cor-grafite); stroke-width: 1.8; stroke-linecap: round; }
+    .estado-textos { display: flex; flex-direction: column; gap: 8px; }
+    .estado-titulo { font-size: 20px; line-height: 28px; font-weight: 800; letter-spacing: -0.01em; color: var(--cor-texto); }
+    .estado-texto { font-size: 15px; line-height: 22px; font-weight: 500; color: var(--cor-texto-2); }
+
+    /* Logo em cinza com o traço em grafite se desenhando por cima, do 1 até o 3, em loop (só CSS). */
+    .logo-animada { width: 40px; height: 40px; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .logo-animada .base { stroke: var(--cor-barra-fechado); }
+    .logo-animada .traco { stroke: var(--cor-grafite); stroke-dasharray: 1; stroke-dashoffset: 1; animation: 2.4s ease-in-out infinite; }
+    .logo-animada .traco-1 { animation-name: tracar-1; }
+    .logo-animada .traco-2 { animation-name: tracar-2; }
+    .logo-animada .traco-3 { animation-name: tracar-3; }
+    @keyframes tracar-1 {
+      0% { stroke-dashoffset: 1; opacity: 1; }
+      12% { stroke-dashoffset: 0; }
+      85% { stroke-dashoffset: 0; opacity: 1; }
+      100% { stroke-dashoffset: 0; opacity: 0; }
+    }
+    @keyframes tracar-2 {
+      0%, 11.9% { stroke-dashoffset: 1; opacity: 0; }
+      12% { stroke-dashoffset: 1; opacity: 1; }
+      60% { stroke-dashoffset: 0; }
+      85% { stroke-dashoffset: 0; opacity: 1; }
+      100% { stroke-dashoffset: 0; opacity: 0; }
+    }
+    @keyframes tracar-3 {
+      0%, 59.9% { stroke-dashoffset: 1; opacity: 0; }
+      60% { stroke-dashoffset: 1; opacity: 1; }
+      75% { stroke-dashoffset: 0; }
+      85% { stroke-dashoffset: 0; opacity: 1; }
+      100% { stroke-dashoffset: 0; opacity: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .logo-animada .traco { animation: none; stroke-dashoffset: 0; opacity: 1; }
+    }
+
+    /* Criar Cadastro: barra de 3 passos no cabeçalho */
+    .progresso { padding: 20px 24px 0; display: flex; flex-direction: column; gap: 8px; }
+    .progresso-barras { display: flex; gap: 6px; }
+    .progresso-barras span { flex: 1 1 0; height: 4px; border-radius: 2px; background: var(--cor-trilho-barra); }
+    .progresso-barras span.feito { background: var(--cor-branco); }
+    .progresso-texto { font-size: 13px; line-height: 18px; font-weight: 600; color: var(--cor-texto-cabecalho-2); }
+
+    .cadastro-corpo { padding: 32px 24px 24px; display: flex; flex-direction: column; gap: 20px; }
+    .cadastro-corpo.passo-dia { padding-top: 28px; gap: 18px; }
+    .pergunta-bloco { display: flex; flex-direction: column; gap: 8px; }
+    .pergunta { font-size: 26px; line-height: 32px; font-weight: 800; letter-spacing: -0.02em; color: var(--cor-texto); }
+    .pergunta-apoio { font-size: 15px; line-height: 22px; font-weight: 500; color: var(--cor-texto-2); }
+    .pergunta-apoio.menor { font-size: 14px; line-height: 21px; }
+
+    .campo-bloco { display: flex; flex-direction: column; gap: 8px; }
+    .campo-rotulo { font-size: 13px; line-height: 18px; font-weight: 700; color: var(--cor-texto); }
+    .campo-texto {
+      width: 100%;
+      height: 52px;
+      padding: 0 18px;
+      border: 1.5px solid var(--cor-tracejado);
+      border-radius: 16px;
+      outline: none;
+      background: var(--cor-branco);
+      color: var(--cor-texto);
+      caret-color: var(--cor-grafite);
+      font: 600 16px/22px "Manrope", system-ui, sans-serif;
+    }
+    .campo-texto::placeholder { color: var(--cor-placeholder); font-weight: 500; }
+    .campo-texto:focus { border-color: var(--cor-grafite); }
+    .campo-texto.com-erro { border-color: var(--cor-erro); background: var(--cor-erro-fundo); caret-color: var(--cor-erro); }
+    .campo-texto.compacto { flex: 1; min-width: 0; height: 48px; padding: 0 16px; border-radius: 14px; font-size: 15px; line-height: 20px; }
+    .campo-erro { display: flex; align-items: center; gap: 6px; font-size: 13px; line-height: 18px; font-weight: 600; color: var(--cor-erro); }
+    .campo-erro svg, .calendario-nota svg { flex-shrink: 0; fill: none; stroke-width: 1.5; stroke-linecap: round; }
+    .campo-erro svg { width: 16px; height: 16px; stroke: var(--cor-erro); }
+    .campo-erro svg .ponto { fill: var(--cor-erro); stroke: none; }
+
+    /* Linha "rótulo à esquerda, valor à direita" (Dia do Mês / Sugeridas) */
+    .linha-rotulo { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+    .linha-rotulo-valor { font-size: 13px; line-height: 18px; font-weight: 600; color: var(--cor-texto-2); }
+    .linha-rotulo-valor strong { font-weight: 800; color: var(--cor-texto); }
+
+    /* Passo 2: calendário de 1 a 31 */
+    .calendario { padding: 16px; display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--cor-divisoria); border-radius: 18px; }
+    .calendario-grade { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); column-gap: 4px; row-gap: 6px; }
+    .dia { height: 40px; border-radius: 12px; font-size: 15px; line-height: 18px; font-weight: 600; color: var(--cor-texto); }
+    .dia[aria-checked="true"] { background: var(--cor-grafite); color: var(--cor-branco); font-weight: 800; }
+    .calendario-nota {
+      padding-top: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border-top: 1px solid var(--cor-divisoria);
+      font-size: 12px;
+      line-height: 16px;
+      font-weight: 500;
+      color: var(--cor-texto-2);
+    }
+    .calendario-nota svg { width: 14px; height: 14px; stroke: var(--cor-texto-2); }
+    .calendario-nota svg .ponto { fill: var(--cor-texto-2); stroke: none; }
+
+    /* Passo 3: fichas de categoria (classe própria: .ficha é a das parcelas do Registrar) */
+    .categorias-bloco { display: flex; flex-direction: column; gap: 12px; }
+    .categorias-fichas { display: flex; flex-wrap: wrap; gap: 8px; }
+    .categoria-ficha {
+      max-width: 100%;
+      height: 40px;
+      padding: 0 14px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border: 1.5px solid var(--cor-tracejado);
+      border-radius: 14px;
+      background: var(--cor-branco);
+      font-size: 14px;
+      line-height: 20px;
+      font-weight: 700;
+      color: var(--cor-texto);
+    }
+    .categoria-ficha span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .categoria-ficha svg { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .categoria-ficha .marca { display: none; stroke: var(--cor-branco); }
+    .categoria-ficha[aria-checked="true"] { padding-left: 12px; border-color: var(--cor-grafite); background: var(--cor-grafite); color: var(--cor-branco); }
+    .categoria-ficha[aria-checked="true"] .marca { display: block; }
+    .categoria-ficha.adicionar { padding-left: 12px; border-style: dashed; }
+    .categoria-ficha.adicionar svg { stroke: var(--cor-texto); }
+    .categoria-ficha.adicionar[aria-expanded="true"] { border-style: solid; border-color: var(--cor-grafite); }
+    .categoria-ficha:disabled { opacity: 0.4; cursor: default; }
+
+    .nova-categoria { padding-top: 4px; display: flex; flex-direction: column; gap: 8px; }
+    .nova-categoria-linha { display: flex; align-items: center; gap: 8px; }
+    .botao-adicionar {
+      height: 48px;
+      padding: 0 16px;
+      flex-shrink: 0;
+      border-radius: 14px;
+      background: var(--cor-grafite);
+      color: var(--cor-branco);
+      font-size: 14px;
+      line-height: 20px;
+      font-weight: 700;
+    }
+    .botao-adicionar:disabled { background: var(--cor-desabilitado-fundo); color: var(--cor-desabilitado-texto); cursor: default; }
+
+    /* Tour de 2 passos */
+    .cabecalho-tour { padding-bottom: 32px; }
+    .tour-topo { padding: 8px 24px 12px; display: flex; flex-direction: column; gap: 10px; }
+    .tour-saudacao { font-size: 28px; line-height: 34px; font-weight: 800; letter-spacing: -0.03em; overflow-wrap: anywhere; }
+    .tour-sub { font-size: 15px; line-height: 22px; font-weight: 500; color: var(--cor-texto-cabecalho-2); }
+    .tour-passo { flex-grow: 1; display: flex; flex-direction: column; }
+    .tour-corpo { padding: 28px 24px 16px; display: flex; flex-direction: column; gap: 16px; }
+    .tour-corpo.segundo { padding-top: 24px; gap: 14px; }
+    .tour-passo-rotulo { font-size: 13px; line-height: 18px; font-weight: 700; color: var(--cor-texto-2); }
+    .tour-titulo { font-size: 22px; line-height: 28px; font-weight: 800; letter-spacing: -0.01em; color: var(--cor-texto); }
+    .tour-texto { font-size: 14px; line-height: 20px; font-weight: 500; color: var(--cor-texto-2); }
+    .tour-texto strong { font-weight: 700; color: var(--cor-texto); }
+    .tour-cartao { padding: 24px 20px; display: flex; flex-direction: column; align-items: center; gap: 14px; border: 1px solid var(--cor-divisoria); border-radius: 18px; }
+    .tour-cartao .tour-texto { text-align: center; }
+    .tour-atalhos { align-self: stretch; display: flex; justify-content: space-between; gap: 12px; }
+    .tour-atalho { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 8px; opacity: 0.35; }
+    .tour-atalho.destaque { opacity: 1; }
+    .tour-atalho.destaque .atalho-icone { box-shadow: 0 0 0 3px var(--cor-branco), 0 0 0 5px var(--cor-grafite); }
+    .tour-atalho.destaque .atalho-rotulo { font-weight: 800; }
+    .tour-etapas { display: flex; flex-direction: column; gap: 10px; }
+    .tour-etapa { display: flex; align-items: flex-start; gap: 12px; }
+    .tour-etapa .tour-texto { padding-top: 2px; }
+    .tour-etapa-numero {
+      width: 24px;
+      height: 24px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      background: var(--cor-grafite);
+      color: var(--cor-branco);
+      font-size: 12px;
+      line-height: 16px;
+      font-weight: 800;
+    }
+    .tour-exemplo { padding: 14px 16px 4px; display: flex; flex-direction: column; border: 1px solid var(--cor-divisoria); border-radius: 18px; }
+    .tour-exemplo-titulo { padding-bottom: 2px; font-size: 15px; line-height: 20px; font-weight: 800; letter-spacing: -0.01em; color: var(--cor-texto); }
+    .tour-exemplo-linha {
+      padding: 10px 0;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--cor-divisoria);
+      font-size: 14px;
+      line-height: 20px;
+      font-weight: 600;
+      color: var(--cor-texto);
+    }
+    .tour-exemplo-linha:last-child { border-bottom: 0; }
+    .tour-exemplo-linha span + span { font-weight: 700; white-space: nowrap; }
+    .tour-exemplo-linha .receita { color: var(--cor-receita); }
+    .tour-rodape { margin-top: auto; padding: 8px 16px calc(28px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 10px; }
+    .tour-bolinhas { padding-bottom: 6px; display: flex; justify-content: center; gap: 6px; }
+    .tour-bolinhas span { width: 6px; height: 6px; border-radius: 3px; background: var(--cor-barra-fechado); }
+    .tour-bolinhas span.atual { width: 20px; background: var(--cor-grafite); }
+    .botao-texto { height: 44px; border-radius: 16px; font-size: 15px; line-height: 20px; font-weight: 700; color: var(--cor-texto-2); }
   </style>
 </head>
 <body>
@@ -742,15 +1067,31 @@
           <span class="legenda-quadrado"></span><span>Só parcelas</span>
         </div>
       </div>
-      <p class="grafico-subtitulo">Arraste para ver outros meses</p>
+      <p class="grafico-subtitulo" id="grafico-subtitulo">Arraste para ver outros meses</p>
       <div class="grafico-area" id="grafico-area">
         <div class="serie" id="serie"><div class="linha-base"></div></div>
+      </div>
+      <!-- Painel vazio (PRO-97): sem gasto em nenhum mês da série -->
+      <div class="grafico-vazio" id="grafico-vazio" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V13"/><path d="M10 19V8"/><path d="M15 19v-4"/><path d="M20 19V10"/></svg>
+        <p>O gráfico aparece com o seu primeiro gasto</p>
       </div>
     </section>
 
     <section class="extrato" id="extrato" hidden>
       <h2 class="secao-titulo">Últimas Movimentações</h2>
       <div id="extrato-lista"></div>
+      <!-- Painel vazio (PRO-97): lista vazia e o cartão que abre o Registrar direto na Receita -->
+      <div class="extrato-vazio" id="extrato-vazio" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8 10h8"/><path d="M8 14h5"/></svg>
+        <p>Suas movimentações aparecem aqui</p>
+      </div>
+      <button class="cartao-salario" id="cartao-salario" type="button" hidden>
+        <span class="cartao-salario-icone">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 7L7 17"/><path d="M15 17H7V9"/></svg>
+        </span>
+        <span>Comece registrando o seu salário como <strong>Receita</strong></span>
+      </button>
     </section>
   </main>
 
@@ -976,6 +1317,285 @@
     </div>
   </main>
 
+  <!-- Boas-vindas (PRO-97), escolha inicial: aparece só para quem abre o Mini App sem cadastro (404 do /me) -->
+  <main id="boas-vindas" class="tela-cheia" hidden>
+    <header class="cabecalho cabecalho-boas-vindas">
+      <div class="boas-vindas-topo">
+        <span class="logo-caixa">
+          <svg viewBox="0 0 32 32" aria-hidden="true">
+            <path d="M8 8L11.5 5"/>
+            <path d="M11.5 5V22.5C11.5 25.3 10 26.8 8 26.8C6.2 26.8 5.3 25.4 6.3 24.4C7.4 23.3 10.2 24 13 24H24.5L27.5 21.2L24.5 18.4H20.5"/>
+            <path d="M24.5 18.4L27.5 15.6L24.5 12.8H19.5"/>
+          </svg>
+        </span>
+        <div class="boas-vindas-textos">
+          <p class="boas-vindas-ola">Boas-vindas ao</p>
+          <h1 class="boas-vindas-nome">L1d3r</h1>
+          <p class="boas-vindas-sub">O seu gerenciador de gastos, direto no Telegram.</p>
+        </div>
+      </div>
+    </header>
+
+    <div class="opcoes-corpo">
+      <p class="opcoes-pergunta">Como Você Chegou Aqui?</p>
+      <button class="opcao" id="escolha-novo" type="button">
+        <span class="opcao-icone">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="10" cy="8" r="3.5"/><path d="M3.5 19.5c.8-3.4 3.4-5.5 6.5-5.5 1.6 0 3 .5 4.1 1.4"/>
+            <path d="M18.5 14v6"/><path d="M15.5 17h6"/>
+          </svg>
+        </span>
+        <span class="opcao-textos">
+          <span class="opcao-titulo">Sou Novo Por Aqui</span>
+          <span class="opcao-subtitulo">Configure tudo em 1 minuto</span>
+        </span>
+        <svg class="opcao-seta" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5L13 10l-5.5 5.5"/></svg>
+      </button>
+      <button class="opcao" id="escolha-amigo" type="button">
+        <span class="opcao-icone">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="9" cy="8" r="3.3"/><path d="M2.8 19.5c.7-3.2 3.1-5.2 6.2-5.2s5.5 2 6.2 5.2"/>
+            <path d="M15.5 4.9a3.3 3.3 0 0 1 0 6.3"/><path d="M17.8 14.6c1.8.7 3 2.4 3.4 4.9"/>
+          </svg>
+        </span>
+        <span class="opcao-textos">
+          <span class="opcao-titulo">Já Sou Amigo do Adm</span>
+          <span class="opcao-subtitulo">Entre com o seu Telegram</span>
+        </span>
+        <svg class="opcao-seta" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5L13 10l-5.5 5.5"/></svg>
+      </button>
+    </div>
+  </main>
+
+  <!-- Boas-vindas (PRO-97), "Já Sou Amigo do Adm": busca o cadastro de novo pelo /me -->
+  <main id="amigo" class="tela-cheia" hidden>
+    <header class="cabecalho cabecalho-registro">
+      <div class="cabecalho-linha cabecalho-titulo">
+        <button class="botao-menu" id="amigo-voltar" type="button" aria-label="Voltar">
+          <svg viewBox="0 0 22 22" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17 11H5"/><path d="M10 6l-5 5 5 5"/>
+          </svg>
+        </button>
+        <h1 class="titulo-tela">Já Sou Amigo do Adm</h1>
+      </div>
+    </header>
+
+    <div class="estado-central" id="amigo-carregando" role="status">
+      <span class="estado-icone">
+        <svg class="logo-animada" viewBox="0 0 32 32" aria-hidden="true">
+          <path class="base" d="M8 8L11.5 5"/>
+          <path class="base" d="M11.5 5V22.5C11.5 25.3 10 26.8 8 26.8C6.2 26.8 5.3 25.4 6.3 24.4C7.4 23.3 10.2 24 13 24H24.5L27.5 21.2L24.5 18.4H20.5"/>
+          <path class="base" d="M24.5 18.4L27.5 15.6L24.5 12.8H19.5"/>
+          <path class="traco traco-1" pathLength="1" d="M8 8L11.5 5"/>
+          <path class="traco traco-2" pathLength="1" d="M11.5 5V22.5C11.5 25.3 10 26.8 8 26.8C6.2 26.8 5.3 25.4 6.3 24.4C7.4 23.3 10.2 24 13 24H24.5L27.5 21.2L24.5 18.4H20.5"/>
+          <path class="traco traco-3" pathLength="1" d="M24.5 18.4L27.5 15.6L24.5 12.8H19.5"/>
+        </svg>
+      </span>
+      <div class="estado-textos">
+        <p class="estado-titulo">Buscando o Seu Cadastro...</p>
+        <p class="estado-texto">Estamos te reconhecendo pelo Telegram. Não precisa digitar nada.</p>
+      </div>
+    </div>
+
+    <div class="estado-central com-rodape" id="amigo-nao-encontrado" hidden>
+      <span class="estado-icone">
+        <svg class="lupa" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L20 20"/><path d="M8.5 8.5l4 4"/><path d="M12.5 8.5l-4 4"/>
+        </svg>
+      </span>
+      <div class="estado-textos">
+        <p class="estado-titulo">Não Encontramos o Seu Cadastro</p>
+        <p class="estado-texto">Sem problema! Criar um cadastro novo leva menos de 1 minuto.</p>
+      </div>
+    </div>
+
+    <div class="estado-central com-rodape" id="amigo-erro" role="alert" hidden>
+      <p class="estado-texto" id="amigo-erro-texto"></p>
+    </div>
+
+    <div class="rodape-tela" id="amigo-rodape" hidden>
+      <button class="botao-principal" id="amigo-novo" type="button">Sou Novo Por Aqui</button>
+      <button class="botao-principal" id="amigo-tentar" type="button" hidden>Tentar de novo</button>
+    </div>
+  </main>
+
+  <!-- Boas-vindas (PRO-97), "Sou Novo Por Aqui": nome, dia do ciclo e categorias, gravados pelo POST /cadastro -->
+  <main id="cadastro" class="tela-cheia" hidden>
+    <header class="cabecalho cabecalho-registro">
+      <div class="cabecalho-linha cabecalho-titulo">
+        <button class="botao-menu" id="cadastro-voltar" type="button" aria-label="Voltar">
+          <svg viewBox="0 0 22 22" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17 11H5"/><path d="M10 6l-5 5 5 5"/>
+          </svg>
+        </button>
+        <h1 class="titulo-tela">Criar Cadastro</h1>
+      </div>
+      <div class="progresso">
+        <div class="progresso-barras" id="cadastro-progresso" aria-hidden="true"><span></span><span></span><span></span></div>
+        <p class="progresso-texto" id="cadastro-progresso-texto"></p>
+      </div>
+    </header>
+
+    <section class="cadastro-corpo" id="cadastro-passo-1">
+      <div class="pergunta-bloco">
+        <h2 class="pergunta">Como Devemos Chamar Você?</h2>
+        <p class="pergunta-apoio">É assim que o L1d3r vai te cumprimentar.</p>
+      </div>
+      <div class="campo-bloco">
+        <label class="campo-rotulo" for="cadastro-nome">Seu Nome</label>
+        <input class="campo-texto" id="cadastro-nome" type="text" maxlength="30" autocomplete="given-name" enterkeyhint="next" placeholder="Digite o seu nome">
+        <p class="campo-erro" id="cadastro-nome-erro" role="alert" hidden>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.8v3.7"/><circle class="ponto" cx="8" cy="11" r="0.9"/></svg>
+          <span>Preencha o seu nome para continuar</span>
+        </p>
+      </div>
+    </section>
+
+    <section class="cadastro-corpo passo-dia" id="cadastro-passo-2" hidden>
+      <div class="pergunta-bloco">
+        <h2 class="pergunta">Qual o Melhor Dia Para o Seu Mês Virar?</h2>
+        <p class="pergunta-apoio menor">Como na fatura do cartão, o ideal é o dia do seu salário. Nesse dia, o mês anterior vai para o histórico e o painel começa um mês novo.</p>
+      </div>
+      <div class="calendario">
+        <div class="linha-rotulo">
+          <p class="campo-rotulo">Dia do Mês</p>
+          <p class="linha-rotulo-valor" id="cadastro-dia-texto"></p>
+        </div>
+        <div class="calendario-grade" id="cadastro-dias" role="radiogroup" aria-label="Dia do mês"></div>
+        <p class="calendario-nota">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 7.2v4"/><circle class="ponto" cx="8" cy="4.9" r="0.9"/></svg>
+          <span>Nos meses mais curtos, usamos o último dia</span>
+        </p>
+      </div>
+    </section>
+
+    <section class="cadastro-corpo" id="cadastro-passo-3" hidden>
+      <div class="pergunta-bloco">
+        <h2 class="pergunta">Escolha as Suas Categorias</h2>
+        <p class="pergunta-apoio">São os grupos em que os seus gastos vão ser organizados. Você pode mudar quando quiser.</p>
+      </div>
+      <div class="categorias-bloco">
+        <div class="linha-rotulo">
+          <p class="campo-rotulo">Sugeridas</p>
+          <p class="linha-rotulo-valor" id="cadastro-contador"></p>
+        </div>
+        <div class="categorias-fichas" id="cadastro-fichas">
+          <button class="categoria-ficha adicionar" id="cadastro-adicionar-outra" type="button" aria-expanded="false" aria-controls="cadastro-nova">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9"/><path d="M3.5 8h9"/></svg>
+            <span>Adicionar Outra</span>
+          </button>
+        </div>
+        <div class="nova-categoria" id="cadastro-nova" hidden>
+          <label class="campo-rotulo" for="cadastro-nova-campo">Nova Categoria</label>
+          <div class="nova-categoria-linha">
+            <input class="campo-texto compacto" id="cadastro-nova-campo" type="text" maxlength="30" autocomplete="off" enterkeyhint="done">
+            <button class="botao-adicionar" id="cadastro-nova-adicionar" type="button" disabled>Adicionar</button>
+          </div>
+          <p class="campo-erro" id="cadastro-nova-erro" role="alert" hidden>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.8v3.7"/><circle class="ponto" cx="8" cy="11" r="0.9"/></svg>
+            <span id="cadastro-nova-erro-texto"></span>
+          </p>
+        </div>
+      </div>
+      <!-- Molde de uma ficha de categoria: o script clona e põe o nome com textContent. -->
+      <template id="modelo-ficha-categoria">
+        <button class="categoria-ficha" type="button" role="checkbox" aria-checked="true">
+          <svg class="marca" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.3l3 3 6-6.3"/></svg>
+          <span></span>
+        </button>
+      </template>
+    </section>
+
+    <div class="rodape-tela" id="cadastro-rodape">
+      <p class="erro-gravacao" id="cadastro-erro" role="alert" hidden></p>
+      <button class="botao-principal" id="cadastro-continuar" type="button" disabled>Continuar</button>
+      <p class="dica-rodape" id="cadastro-dica" hidden></p>
+    </div>
+  </main>
+
+  <!-- Boas-vindas (PRO-97), tour de 2 passos: só logo depois do cadastro feito no Mini App -->
+  <main id="tour" class="tela-cheia" hidden>
+    <header class="cabecalho cabecalho-tour">
+      <div class="tour-topo">
+        <h1 class="tour-saudacao" id="tour-saudacao"></h1>
+        <p class="tour-sub" id="tour-sub">Veja Abaixo um Passo a Passo de Como o Nosso Gerenciador de Gastos Funciona</p>
+      </div>
+    </header>
+
+    <section class="tour-passo" id="tour-passo-1">
+      <div class="tour-corpo">
+        <p class="tour-passo-rotulo">Passo 1 de 2</p>
+        <h2 class="tour-titulo">Como Registro um Gasto ou uma Receita Nova?</h2>
+        <div class="tour-cartao">
+          <div class="tour-atalhos" aria-hidden="true">
+            <div class="tour-atalho">
+              <span class="atalho-icone">
+                <svg viewBox="0 0 24 24">
+                  <rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/>
+                  <rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/>
+                </svg>
+              </span>
+              <span class="atalho-rotulo">Categorias</span>
+            </div>
+            <div class="tour-atalho destaque">
+              <span class="atalho-icone"><svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg></span>
+              <span class="atalho-rotulo">Registrar</span>
+            </div>
+            <div class="tour-atalho">
+              <span class="atalho-icone">
+                <svg viewBox="0 0 24 24">
+                  <path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 3.5V8h4.5"/>
+                  <path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20.5V16h-4.5"/>
+                </svg>
+              </span>
+              <span class="atalho-rotulo">Recorrentes</span>
+            </div>
+          </div>
+          <p class="tour-texto">Na Tela Inicial, toque em <strong>Registrar</strong> e escolha entre Gasto ou Receita.</p>
+        </div>
+      </div>
+      <div class="tour-rodape">
+        <div class="tour-bolinhas" aria-hidden="true"><span class="atual"></span><span></span></div>
+        <button class="botao-principal" id="tour-proximo" type="button">Próximo</button>
+        <button class="botao-texto" id="tour-pular" type="button">Pular</button>
+      </div>
+    </section>
+
+    <section class="tour-passo" id="tour-passo-2" hidden>
+      <div class="tour-corpo segundo">
+        <p class="tour-passo-rotulo">Passo 2 de 2</p>
+        <h2 class="tour-titulo">Escreva do Seu Jeito, o L1d3r Organiza</h2>
+        <div class="tour-etapas">
+          <div class="tour-etapa">
+            <span class="tour-etapa-numero">1</span>
+            <p class="tour-texto">Toque em <strong>Gasto</strong> ou <strong>Receita</strong> e escreva com as suas palavras.</p>
+          </div>
+          <div class="tour-etapa">
+            <span class="tour-etapa-numero">2</span>
+            <p class="tour-texto">Toque em enviar e espere o <strong>L1d3r</strong> categorizar e organizar tudo.</p>
+          </div>
+          <div class="tour-etapa">
+            <span class="tour-etapa-numero">3</span>
+            <p class="tour-texto">Depois é só <strong>Confirmar</strong>.</p>
+          </div>
+        </div>
+        <!-- Ilustração fixa (não são dados) -->
+        <div class="tour-exemplo" aria-hidden="true">
+          <p class="tour-exemplo-titulo">Últimas Movimentações</p>
+          <div class="tour-exemplo-linha"><span>Salário</span><span class="receita">+ R$ 3.000,00</span></div>
+          <div class="tour-exemplo-linha"><span>iFood</span><span>R$ 30,00</span></div>
+          <div class="tour-exemplo-linha"><span>Mercado</span><span>R$ 45,00</span></div>
+        </div>
+        <p class="tour-texto">Confira tudo em <strong>Últimas Movimentações</strong>, no final da Tela Inicial. O seu salário entra como Receita, por exemplo: <strong>"Recebi 3000 de salário"</strong>.</p>
+      </div>
+      <div class="tour-rodape">
+        <div class="tour-bolinhas" aria-hidden="true"><span></span><span class="atual"></span></div>
+        <button class="botao-principal" id="tour-comecar" type="button">Começar</button>
+        <button class="botao-texto" id="tour-voltar" type="button">Voltar</button>
+      </div>
+    </section>
+  </main>
+
   <!-- Aviso no topo da home depois de registrar (some em 10 s) -->
   <div class="aviso-topo" id="aviso-topo" role="status" aria-live="polite" hidden>
     <div class="aviso-topo-linha">
@@ -1105,7 +1725,8 @@
     const MSG_NAO_ENTENDI = "Não consegui entender agora. Tente de novo em instantes.";
     const MSG_NAO_REGISTROU = "Não consegui registrar agora. Toque em Confirmar para tentar de novo.";
     const MSG_NAO_REGISTRAVEL = "Não consegui registrar isso. Volte e escreva de novo.";
-    const MSG_CADASTRO_404 = "Você ainda não tem cadastro. Mande /start no bot para começar.";
+    // Sem cadastro no meio do uso (ex.: apagado). Na abertura, o 404 do /me leva à escolha inicial (PRO-97).
+    const MSG_CADASTRO_404 = "Não encontramos o seu cadastro. Feche e abra o app de novo.";
     const MSG_CADASTRO_409 = "Seu cadastro está incompleto. Volte ao bot e informe o dia de fechamento da fatura.";
 
     // momento: "interpretar" (a prévia) ou "gravar" (o Confirmar). tipo: "gasto" ou "receita".
@@ -1198,6 +1819,147 @@
       if (m.tipo === "receita") return m.descricao || "Receita";
       return m.descricao;
     }
+
+    // ---------- Painel vazio (PRO-97, D5): pelo estado dos dados, para qualquer usuário ----------
+    // Barra da Sobra. 'base' e 'proporcao' vêm de baseDaBarra e proporcaoDaBarra.
+    //   sem Sobra (fatura anterior à data de corte, PRO-83): sem trilho e sem texto à direita;
+    //   renda + receitas = 0: trilho VAZIO e "Sem receitas ainda" (antes, na PRO-89 D8, os dois sumiam);
+    //   senão: trilho com a proporção e "de R$ ...".
+    function estadoDaBarra(temSobra, base, proporcao) {
+      if (!temSobra) return { trilho: false, preenchimento: 0, textoDireita: null };
+      if (proporcao === null) return { trilho: true, preenchimento: 0, textoDireita: "Sem receitas ainda" };
+      return { trilho: true, preenchimento: proporcao, textoDireita: "de " + formatarDinheiro(base) };
+    }
+
+    // Gráfico vazio: nenhum mês na série ou nenhum gasto em mês nenhum.
+    function graficoVazio(meses) {
+      return !Array.isArray(meses) || !meses.some((m) => Number(m.total_gasto) > 0);
+    }
+
+    // O cartão "Comece registrando o seu salário como Receita" aparece com a lista vazia.
+    function mostrarCartaoDoSalario(movimentacoes) {
+      return !Array.isArray(movimentacoes) || movimentacoes.length === 0;
+    }
+
+    // ---------- Entrada (PRO-97, D1): para onde vai a primeira carga ----------
+    // 'resultados' = [me, resumo, historico, recentes] no formato do 'chamar'.
+    // "home": tudo certo; "escolha": o /me respondeu 404 usuario_nao_cadastrado (sem cadastro);
+    // "aviso": outro erro (401 vem antes de tudo; 409 cadastro_incompleto e o resto, como antes).
+    function destinoDaCarga(resultados) {
+      const erros = resultados.filter((r) => r.erro !== undefined);
+      if (!erros.length) return "home";
+      if (erros.some((r) => r.erro === 401)) return "aviso";
+      const me = resultados[0];
+      if (me.erro === 404 && me.detalhe === "usuario_nao_cadastrado") return "escolha";
+      return "aviso";
+    }
+
+    // ---------- Cadastro pelo Mini App (PRO-97, D4: espelho dos limites do cadastro.py) ----------
+    const CATEGORIAS_SUGERIDAS = ["Alimentação", "Casa", "Lazer", "Transporte", "Saúde", "Roupas", "Academia", "Viagens"];
+    const CADASTRO_NOME_MAXIMO = 30;        // NOME_MAXIMO
+    const CADASTRO_CATEGORIA_MAXIMA = 30;   // CATEGORIA_MAXIMA
+    const CADASTRO_CATEGORIAS_MAXIMAS = 20; // CATEGORIAS_MAXIMAS
+
+    // Os espaços do str.split() do Python (o \s do JavaScript não é igual: tem \ufeff e não tem \x1c-\x1f nem \x85).
+    const ESPACOS_DO_PYTHON = /[\t\n\v\f\r\x1c-\x1f \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/;
+
+    // unicodedata.combining(c) != 0 do Python, sem tabela: a normalização canônica reordena uma marca de
+    // classe 240 (U+0345) depois de qualquer marca de classe 1 a 239; com classe 0, nada muda.
+    function temClasseCombinante(c) {
+      if (c === "\u0345") return true;
+      const par = "\u0345" + c;
+      return par.normalize("NFD") !== par;
+    }
+
+    // Igual à normalizar_texto() do cadastro.py: NFKD sem as marcas combinantes, casefold e espaços únicos.
+    // O casefold é o toLowerCase mais os dois casos latinos/gregos em que ele difere (ß -> ss, ς -> σ).
+    // Só serve para AVISAR de categoria repetida na tela; quem decide é o servidor.
+    function normalizarTexto(texto) {
+      const semAcento = Array.from(String(texto).normalize("NFKD")).filter((c) => !temClasseCombinante(c)).join("");
+      const dobrado = semAcento.toLowerCase().replace(/ß/g, "ss").replace(/ς/g, "σ");
+      return dobrado.split(ESPACOS_DO_PYTHON).filter(Boolean).join(" ");
+    }
+
+    // O nome que o servidor grava: strip().capitalize() (primeira letra maiúscula, o resto minúsculo).
+    function nomeDaCategoria(texto) {
+      const aparado = String(texto).trim();
+      return aparado.charAt(0).toUpperCase() + aparado.slice(1).toLowerCase();
+    }
+
+    // A categoria já existe na lista (marcada ou não)? Devolve o nome que já está lá, ou null.
+    function categoriaRepetida(texto, nomes) {
+      const chave = normalizarTexto(texto);
+      if (!chave) return null;
+      return nomes.find((n) => normalizarTexto(n) === chave) || null;
+    }
+
+    // "8 marcadas", "1 marcada", "Nenhuma marcada"
+    function textoContadorCategorias(n) {
+      if (n === 0) return "Nenhuma marcada";
+      return n === 1 ? "1 marcada" : n + " marcadas";
+    }
+
+    // "Todo dia 5" (o número vai em negrito) ou "Nenhum dia escolhido".
+    function textoDiaEscolhido(dia) {
+      return Number.isInteger(dia) ? { antes: "Todo dia ", negrito: String(dia) } : { antes: "Nenhum dia escolhido", negrito: "" };
+    }
+
+    // O Continuar de cada passo liga quando: 1) o nome tem algo além de espaços; 2) há um dia de 1 a 31;
+    // 3) há de 1 a 20 categorias marcadas. Nunca durante o envio.
+    function podeContinuarCadastro(e) {
+      if (e.enviando) return false;
+      if (e.passo === 1) return typeof e.nome === "string" && e.nome.trim().length > 0;
+      if (e.passo === 2) return Number.isInteger(e.dia) && e.dia >= 1 && e.dia <= 31;
+      const marcadas = e.categorias.filter((c) => c.marcada).length;
+      return marcadas >= 1 && marcadas <= CADASTRO_CATEGORIAS_MAXIMAS;
+    }
+
+    // Corpo do POST /cadastro: o nome aparado, o dia e só as categorias MARCADAS, na ordem da tela.
+    function montarCorpoCadastro(nome, dia, categorias) {
+      return {
+        nome: String(nome).trim(),
+        dia_fechamento: dia,
+        categorias: categorias.filter((c) => c.marcada).map((c) => c.nome),
+      };
+    }
+
+    const MSG_CADASTRO_DADOS = "Confira os dados e tente de novo.";
+    const MSG_CADASTRO_FALHOU = "Não foi possível criar o seu cadastro. Tente de novo.";
+
+    // O que fazer com a resposta do POST /cadastro (já depois das novas tentativas do gravarComTentativas):
+    // 201, ou 409 usuario_ja_cadastrado (o cadastro existe; no toque duplo, é o do próprio usuário): segue
+    // para o tour. 422: confira os dados. 401: a mensagem de sessão vencida. 500, 503 e falha de rede que
+    // sobraram das tentativas, e o resto: não foi possível. Nunca mostra o texto cru do servidor.
+    function decisaoDoCadastro(resultado) {
+      if (resultado.erro === undefined) return { seguir: true, mensagem: null };
+      if (resultado.erro === 409 && resultado.detalhe === "usuario_ja_cadastrado") return { seguir: true, mensagem: null };
+      if (resultado.erro === 422) return { seguir: false, mensagem: MSG_CADASTRO_DADOS };
+      if (resultado.erro === 401) return { seguir: false, mensagem: MSG_SESSAO };
+      return { seguir: false, mensagem: MSG_CADASTRO_FALHOU };
+    }
+
+    // ---------- Saudação (home e tour), pela hora de Brasília (agoraEmBrasilia) ----------
+    function saudacaoPorHora(hora) {
+      if (hora >= 5 && hora < 12) return "Bom dia";
+      if (hora >= 12 && hora < 18) return "Boa tarde";
+      return "Boa noite";
+    }
+
+    function primeiroNome(nome) {
+      return nome ? String(nome).trim().split(/\s+/)[0] : "";
+    }
+
+    // "Boa tarde" -> "Boa Tarde"
+    function iniciaisMaiusculas(texto) {
+      return texto.split(" ").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
+    }
+
+    // Tour: "Olá, Ygor! Boa Tarde" (sem nome: só a saudação).
+    function saudacaoDoTour(nome, hora) {
+      const saudacao = iniciaisMaiusculas(saudacaoPorHora(hora));
+      const primeiro = primeiroNome(nome);
+      return primeiro ? "Olá, " + primeiro + "! " + saudacao : saudacao;
+    }
   </script>
   <!-- FIM FUNCOES PURAS -->
 
@@ -1209,7 +1971,9 @@
 
     const MENSAGEM_FORA_DO_TELEGRAM = "Abra esta tela pelo botão do bot no Telegram.";
     const MENSAGEM_401 = "Não foi possível confirmar quem é você. Feche e abra de novo pelo bot.";
-    const MENSAGEM_404 = "Você ainda não tem cadastro. Mande /start no bot para começar.";
+    // Na abertura, o 404 usuario_nao_cadastrado do /me leva à escolha inicial (PRO-97); este texto fica
+    // para um 404 no meio do uso (ex.: o detalhe do gasto de quem teve o cadastro apagado).
+    const MENSAGEM_404 = "Não encontramos o seu cadastro. Feche e abra o app de novo.";
     const MENSAGEM_409 = "Seu cadastro está incompleto. Volte ao bot e informe o dia de fechamento da fatura.";
     const MENSAGEM_GENERICA = "Não foi possível carregar seus dados agora. Tente de novo em instantes.";
 
@@ -1261,19 +2025,15 @@
       };
     }
 
-    function saudacaoPorHora(hora) {
-      if (hora >= 5 && hora < 12) return "Bom dia";
-      if (hora >= 12 && hora < 18) return "Boa tarde";
-      return "Boa noite";
-    }
+    // saudacaoPorHora e primeiroNome ficam no bloco de funções puras (PRO-97: o tour também usa).
 
     // ---------- Cabeçalho: data e saudação ----------
     function mostrarDataESaudacao(nome) {
       const agora = agoraEmBrasilia();
       $("data").textContent = maiuscula(agora.diaSemana) + ", " + agora.dia + " de " + agora.mes.toLowerCase();
-      const primeiroNome = nome ? String(nome).trim().split(/\s+/)[0] : "";
+      const primeiro = primeiroNome(nome);
       const saudacao = saudacaoPorHora(agora.hora);
-      $("saudacao").textContent = primeiroNome ? saudacao + ", " + primeiroNome : saudacao;
+      $("saudacao").textContent = primeiro ? saudacao + ", " + primeiro : saudacao;
     }
 
     // Valor grande em três partes: "R$ ", inteiro com milhar e ",centavos".
@@ -1297,16 +2057,14 @@
       $("sobra-valor").textContent = temSobra ? formatarDinheiro(resumo.sobra_mes) : "—";
 
       // O "de R$ ..." é a renda mais as receitas avulsas (PRO-86/PRO-89, D8): Sobra + gasto = o "de".
-      // Sem renda nem receita, a barra e o "de R$ ..." ficam escondidos; a sobra continua.
+      // Sem renda nem receita (painel vazio, PRO-97 D5): trilho vazio e "Sem receitas ainda".
       const base = baseDaBarra(resumo.renda, resumo.total_receitas);
       const proporcao = proporcaoDaBarra(resumo.total_gasto, base);
-      const mostrarBarra = temSobra && proporcao !== null;
-      $("trilho").hidden = !mostrarBarra;
-      $("renda-texto").hidden = !mostrarBarra;
-      if (mostrarBarra) {
-        $("preenchimento").style.width = (proporcao * 100) + "%";
-        $("renda-texto").textContent = "de " + formatarDinheiro(base);
-      }
+      const barra = estadoDaBarra(temSobra, base, proporcao);
+      $("trilho").hidden = !barra.trilho;
+      $("preenchimento").style.width = (barra.preenchimento * 100) + "%";
+      $("renda-texto").hidden = barra.textoDireita === null;
+      $("renda-texto").textContent = barra.textoDireita || "";
 
       $("carregando").hidden = true;
       $("numeros").hidden = false;
@@ -1316,7 +2074,17 @@
     function mostrarGrafico(meses) {
       const serie = $("serie");
       serie.replaceChildren(criar("div", "linha-base"));
-      if (!meses.length) return;
+
+      // Painel vazio (PRO-97): sem gasto em mês nenhum, a caixa tracejada no lugar das colunas.
+      const vazio = graficoVazio(meses);
+      $("grafico-subtitulo").textContent = vazio ? "Ainda sem histórico" : "Arraste para ver outros meses";
+      $("grafico-vazio").hidden = !vazio;
+      $("grafico-area").hidden = vazio;
+      if (vazio) {
+        $("legenda").hidden = true;
+        $("grafico").hidden = false;
+        return;
+      }
 
       const maior = Math.max(...meses.map((m) => m.total_gasto));
       let indiceAtual = -1;
@@ -1356,9 +2124,10 @@
       const lista = $("extrato-lista");
       lista.replaceChildren();
 
-      if (!movimentacoes.length) {
-        lista.append(criar("p", "extrato-vazio", "Suas movimentações aparecem aqui"));
-      } else {
+      // Lista vazia (PRO-97): a caixa cinza do quadro e o cartão do salário.
+      $("extrato-vazio").hidden = movimentacoes.length > 0;
+      $("cartao-salario").hidden = !mostrarCartaoDoSalario(movimentacoes);
+      if (movimentacoes.length) {
         let dataAtual = null;
         let grupo = null;
         movimentacoes.forEach((m) => {
@@ -1451,6 +2220,7 @@
     }
 
     function voltarParaCarregando() {
+      esconderBoasVindas();
       $("aviso").hidden = true;
       $("tela").hidden = false;
       $("numeros").hidden = true;
@@ -1465,7 +2235,13 @@
       const resultados = await Promise.all([
         chamar("/me"), chamar("/resumo"), chamar("/historico"), chamar("/movimentacoes/recentes"),
       ]);
-      if (resultados.some((r) => r.erro !== undefined)) {
+      // Sem cadastro (404 usuario_nao_cadastrado do /me): a escolha inicial (PRO-97, D1), no lugar do aviso.
+      const destino = destinoDaCarga(resultados);
+      if (destino === "escolha") {
+        abrirEscolhaInicial();
+        return;
+      }
+      if (destino === "aviso") {
         const erro = mensagemDeErro(resultados);
         mostrarAviso(erro.texto, erro.tentarDeNovo);
         return;
@@ -1613,6 +2389,7 @@
       versao: 0,             // sobe ao sair/zerar: descarta resposta atrasada
     };
     let temporizadorAviso = null;
+    let registroDireto = false; // aberto pelo cartão do salário (PRO-97): o Voltar vai direto para a home
 
     const esperar = (ms) => new Promise((resolver) => setTimeout(resolver, ms));
 
@@ -1669,6 +2446,7 @@
 
     function abrirRegistro(tipo) {
       zerarRegistro();
+      registroDireto = false;
       const gasto = tipo === "gasto";
       registroEstado.tipo = tipo;
       $("registro-titulo").textContent = gasto ? "Registrar Gasto" : "Registrar Receita";
@@ -1703,10 +2481,39 @@
       window.scrollTo(0, 0);
     }
 
+    // Cartão do salário do painel vazio (PRO-97): abre o registro direto na Receita, sem a tela de opções.
+    function abrirReceitaDireto() {
+      rolagemHome = window.scrollY;
+      rolagemGrafico = $("grafico-area").scrollLeft;
+      $("tela").hidden = true;
+      mostrarBackButton(true);
+      abrirRegistro("receita");
+      registroDireto = true;
+    }
+
+    // Volta do chat aberto pelo cartão do salário direto para a home (nada foi gravado).
+    function voltarDoRegistroParaHome() {
+      zerarRegistro();
+      registroDireto = false;
+      $("campo").blur();
+      $("registro").hidden = true;
+      document.body.classList.remove("modo-chat");
+      $("tela").hidden = false;
+      $("grafico-area").scrollLeft = rolagemGrafico;
+      window.scrollTo(0, rolagemHome);
+      mostrarBackButton(false);
+    }
+
     // Seta do cabeçalho e BackButton do Telegram: sobem UM nível por vez.
     function voltarUmNivel() {
-      if (!$("registro").hidden) {
-        if (!registroEstado.gravando) voltarParaOpcoes(); // gravando: espera terminar (tem tempo limite)
+      if (!$("cadastro").hidden) {
+        voltarNoCadastro();           // passo anterior; do passo 1, a escolha inicial (PRO-97)
+      } else if (!$("amigo").hidden) {
+        voltarDoAmigo();              // escolha inicial (PRO-97)
+      } else if (!$("registro").hidden) {
+        if (registroEstado.gravando) return; // gravando: espera terminar (tem tempo limite)
+        if (registroDireto) voltarDoRegistroParaHome(); // aberto pelo cartão do salário
+        else voltarParaOpcoes();
       } else if (!$("registro-opcoes").hidden) {
         voltarDasOpcoesParaHome();
       } else if (!$("detalhe").hidden) {
@@ -1902,6 +2709,7 @@
     // Gravou (201) ou já estava gravado (200): volta à home, recarrega os números e avisa.
     function concluirRegistro(tipo, dados) {
       zerarRegistro();
+      registroDireto = false;
       $("registro").hidden = true;
       document.body.classList.remove("modo-chat");
       $("tela").hidden = false;
@@ -1938,6 +2746,337 @@
       }
     }
 
+    // ---------- Boas-vindas, cadastro e tour (PRO-97) ----------
+    // Fluxo: 404 do /me -> escolha inicial -> "Sou Novo Por Aqui" (passos 1 a 3, POST /cadastro) -> tour -> home,
+    // ou "Já Sou Amigo do Adm" (/me de novo) -> home ou "Não Encontramos" -> passo 1.
+    const TELAS_BOAS_VINDAS = ["boas-vindas", "amigo", "cadastro", "tour"];
+
+    // Mostra uma tela de boas-vindas (id) e esconde as outras, a home e o aviso; com null, esconde todas.
+    // O BackButton aparece só nas telas com seta (amigo e cadastro); na escolha e no tour fica escondido.
+    function mostrarTelaBoasVindas(id) {
+      TELAS_BOAS_VINDAS.forEach((t) => { $(t).hidden = t !== id; });
+      if (id) {
+        $("aviso").hidden = true;
+        $("tela").hidden = true;
+      }
+      document.body.classList.toggle("modo-boas-vindas", !!id);
+      ajustarAlturaTela();
+      window.scrollTo(0, 0);
+      mostrarBackButton(id === "amigo" || id === "cadastro");
+    }
+
+    function esconderBoasVindas() {
+      if (TELAS_BOAS_VINDAS.some((t) => !$(t).hidden)) mostrarTelaBoasVindas(null);
+    }
+
+    function abrirEscolhaInicial() {
+      mostrarTelaBoasVindas("boas-vindas");
+    }
+
+    // --- "Já Sou Amigo do Adm" ---
+    let versaoAmigo = 0; // descarta a resposta do /me se o usuário já voltou
+
+    // estado: "carregando", "nao-encontrado" ou "erro" (com ou sem o "Tentar de novo").
+    function mostrarEstadoAmigo(estado, tentarDeNovo) {
+      $("amigo-carregando").hidden = estado !== "carregando";
+      $("amigo-nao-encontrado").hidden = estado !== "nao-encontrado";
+      $("amigo-erro").hidden = estado !== "erro";
+      $("amigo-novo").hidden = estado !== "nao-encontrado";
+      $("amigo-tentar").hidden = !(estado === "erro" && tentarDeNovo);
+      $("amigo-rodape").hidden = $("amigo-novo").hidden && $("amigo-tentar").hidden;
+    }
+
+    // 200: abre a home. 404 usuario_nao_cadastrado: "Não Encontramos". 401, rede e o resto: as mensagens de hoje.
+    async function buscarCadastroDoAmigo() {
+      const versao = ++versaoAmigo;
+      mostrarEstadoAmigo("carregando");
+      const resultado = await chamar("/me");
+      if (versao !== versaoAmigo || $("amigo").hidden) return;
+      if (resultado.erro === undefined) {
+        mostrarTelaBoasVindas(null);
+        carregar();
+        return;
+      }
+      if (resultado.erro === 404 && resultado.detalhe === "usuario_nao_cadastrado") {
+        mostrarEstadoAmigo("nao-encontrado");
+        return;
+      }
+      const erro = mensagemDeErro([resultado]);
+      $("amigo-erro-texto").textContent = erro.texto;
+      mostrarEstadoAmigo("erro", erro.tentarDeNovo);
+    }
+
+    function abrirAmigo() {
+      mostrarTelaBoasVindas("amigo");
+      buscarCadastroDoAmigo();
+    }
+
+    function voltarDoAmigo() {
+      versaoAmigo++;
+      mostrarTelaBoasVindas("boas-vindas");
+    }
+
+    // --- "Sou Novo Por Aqui": os dados ficam guardados ao voltar e avançar (só somem ao fechar o app) ---
+    const cadastroEstado = {
+      passo: 1,
+      nome: "",
+      nomeTocado: false,     // o aviso vermelho só aparece depois de o campo ter sido tocado
+      dia: null,             // começa sem dia marcado
+      categorias: CATEGORIAS_SUGERIDAS.map((nome) => ({ nome: nome, marcada: true })),
+      novaAberta: false,     // campo "Nova Categoria" aberto
+      novaTexto: "",
+      enviando: false,
+      erro: null,            // texto acima do Continuar (resposta do POST /cadastro)
+    };
+
+    function quantasMarcadas() {
+      return cadastroEstado.categorias.filter((c) => c.marcada).length;
+    }
+
+    function abrirCadastro() {
+      cadastroEstado.passo = 1;
+      cadastroEstado.erro = null;
+      mostrarTelaBoasVindas("cadastro");
+      atualizarCadastro();
+    }
+
+    function criarDias() {
+      const grade = $("cadastro-dias");
+      for (let d = 1; d <= 31; d++) {
+        const dia = criar("button", "dia", String(d));
+        dia.type = "button";
+        dia.setAttribute("role", "radio");
+        dia.setAttribute("aria-checked", "false");
+        dia.dataset.dia = String(d);
+        grade.append(dia);
+      }
+    }
+
+    // Recria as fichas (só quando a lista muda: no início e ao adicionar). O nome entra com textContent.
+    function desenharFichas() {
+      const molde = $("modelo-ficha-categoria").content.firstElementChild;
+      const fichas = cadastroEstado.categorias.map((c, i) => {
+        const ficha = molde.cloneNode(true);
+        ficha.dataset.indice = String(i);
+        ficha.querySelector("span").textContent = c.nome;
+        return ficha;
+      });
+      $("cadastro-fichas").replaceChildren(...fichas, $("cadastro-adicionar-outra"));
+    }
+
+    // Desenha o estado do cadastro (passo, erros, dia, fichas marcadas, nova categoria e rodapé).
+    function atualizarCadastro() {
+      const e = cadastroEstado;
+      [1, 2, 3].forEach((n) => { $("cadastro-passo-" + n).hidden = e.passo !== n; });
+      Array.from($("cadastro-progresso").children).forEach((s, i) => s.classList.toggle("feito", i < e.passo));
+      $("cadastro-progresso-texto").textContent = "Passo " + e.passo + " de 3";
+
+      // Passo 1
+      const erroNome = e.nomeTocado && !e.nome.trim();
+      $("cadastro-nome").classList.toggle("com-erro", erroNome);
+      $("cadastro-nome-erro").hidden = !erroNome;
+      $("cadastro-nome").disabled = e.enviando;
+
+      // Passo 2
+      const dia = textoDiaEscolhido(e.dia);
+      $("cadastro-dia-texto").replaceChildren(document.createTextNode(dia.antes));
+      if (dia.negrito) $("cadastro-dia-texto").append(criar("strong", "", dia.negrito));
+      document.querySelectorAll("#cadastro-dias .dia").forEach((b) => {
+        b.setAttribute("aria-checked", String(parseInt(b.dataset.dia, 10) === e.dia));
+      });
+
+      // Passo 3
+      const marcadas = quantasMarcadas();
+      $("cadastro-contador").textContent = textoContadorCategorias(marcadas);
+      document.querySelectorAll("#cadastro-fichas .categoria-ficha[data-indice]").forEach((b) => {
+        const c = e.categorias[parseInt(b.dataset.indice, 10)];
+        b.setAttribute("aria-checked", String(c.marcada));
+        // Com 20 marcadas (D4), as desmarcadas não marcam mais.
+        b.disabled = e.enviando || (!c.marcada && marcadas >= CADASTRO_CATEGORIAS_MAXIMAS);
+      });
+      const adicionarOutra = $("cadastro-adicionar-outra");
+      adicionarOutra.disabled = e.enviando || marcadas >= CADASTRO_CATEGORIAS_MAXIMAS;
+      if (adicionarOutra.disabled) e.novaAberta = false;
+      adicionarOutra.setAttribute("aria-expanded", String(e.novaAberta));
+      $("cadastro-nova").hidden = !e.novaAberta;
+      const repetida = categoriaRepetida(e.novaTexto, e.categorias.map((c) => c.nome));
+      $("cadastro-nova-campo").classList.toggle("com-erro", !!repetida);
+      $("cadastro-nova-erro").hidden = !repetida;
+      $("cadastro-nova-erro-texto").textContent = repetida ? "Você já tem a categoria " + repetida : "";
+      $("cadastro-nova-adicionar").disabled = !normalizarTexto(e.novaTexto) || !!repetida || adicionarOutra.disabled;
+
+      // Rodapé: Continuar, dica do passo e erro do envio
+      const pode = podeContinuarCadastro(e);
+      $("cadastro-continuar").disabled = !pode;
+      $("cadastro-continuar").textContent = e.enviando ? "Criando..." : "Continuar";
+      let dica = "";
+      if (e.passo === 2 && !pode) dica = "Escolha um dia para continuar";
+      if (e.passo === 3 && marcadas === 0) dica = "Marque pelo menos uma categoria";
+      $("cadastro-dica").textContent = dica;
+      $("cadastro-dica").hidden = !dica;
+      $("cadastro-rodape").classList.toggle("com-dica", !!dica);
+      $("cadastro-erro").textContent = e.erro || "";
+      $("cadastro-erro").hidden = !(e.erro && e.passo === 3);
+    }
+
+    function escolherDia(dia) {
+      if (cadastroEstado.enviando || !Number.isInteger(dia) || dia < 1 || dia > 31) return;
+      cadastroEstado.dia = dia; // um toque marca; tocar em outro dia troca
+      atualizarCadastro();
+    }
+
+    function alternarCategoria(indice) {
+      const e = cadastroEstado;
+      const c = e.categorias[indice];
+      if (!c || e.enviando) return;
+      if (!c.marcada && quantasMarcadas() >= CADASTRO_CATEGORIAS_MAXIMAS) return;
+      c.marcada = !c.marcada;
+      e.erro = null;
+      atualizarCadastro();
+    }
+
+    function alternarNovaCategoria() {
+      const e = cadastroEstado;
+      if (e.enviando || quantasMarcadas() >= CADASTRO_CATEGORIAS_MAXIMAS) return;
+      e.novaAberta = !e.novaAberta;
+      atualizarCadastro();
+      if (e.novaAberta) $("cadastro-nova-campo").focus();
+    }
+
+    // A nova categoria entra no fim como ficha marcada, com o nome como o servidor grava.
+    function adicionarCategoria() {
+      const e = cadastroEstado;
+      const nomes = e.categorias.map((c) => c.nome);
+      if (e.enviando || !normalizarTexto(e.novaTexto) || categoriaRepetida(e.novaTexto, nomes)) return;
+      if (quantasMarcadas() >= CADASTRO_CATEGORIAS_MAXIMAS) return;
+      e.categorias.push({ nome: nomeDaCategoria(e.novaTexto), marcada: true });
+      e.novaTexto = "";
+      $("cadastro-nova-campo").value = "";
+      e.novaAberta = false;
+      e.erro = null;
+      desenharFichas();
+      atualizarCadastro();
+    }
+
+    // Seta e BackButton: um passo para trás; do passo 1, a escolha inicial. Nunca durante o envio.
+    function voltarNoCadastro() {
+      const e = cadastroEstado;
+      if (e.enviando) return;
+      if (document.activeElement) document.activeElement.blur();
+      if (e.passo > 1) {
+        e.passo--;
+        atualizarCadastro();
+        window.scrollTo(0, 0);
+      } else {
+        mostrarTelaBoasVindas("boas-vindas");
+      }
+    }
+
+    function continuarCadastro() {
+      const e = cadastroEstado;
+      if (!podeContinuarCadastro(e)) {
+        if (e.passo === 1) { e.nomeTocado = true; atualizarCadastro(); }
+        return;
+      }
+      if (document.activeElement) document.activeElement.blur();
+      if (e.passo < 3) {
+        e.passo++;
+        atualizarCadastro();
+        window.scrollTo(0, 0);
+        return;
+      }
+      enviarCadastro();
+    }
+
+    // Continuar do passo 3: desabilita no primeiro toque e manda o POST /cadastro com as marcadas.
+    // 503 banco_ocupado e falha de rede: até 3 tentativas (1 s e 2 s), as mesmas do Registrar. É seguro
+    // repetir: o servidor recusa um segundo cadastro (409), e o 409 também segue para o tour.
+    async function enviarCadastro() {
+      const e = cadastroEstado;
+      if (e.passo !== 3 || !podeContinuarCadastro(e)) return;
+      e.enviando = true;
+      e.erro = null;
+      atualizarCadastro();
+      const corpo = montarCorpoCadastro(e.nome, e.dia, e.categorias);
+      const resultado = await gravarComTentativas((c) => enviarJson("/cadastro", c, 15000), corpo, esperar);
+      e.enviando = false;
+      const decisao = decisaoDoCadastro(resultado);
+      if (decisao.seguir) {
+        abrirTour(e.nome);
+        return;
+      }
+      e.erro = decisao.mensagem;
+      atualizarCadastro();
+    }
+
+    // --- Tour: só logo depois do cadastro feito aqui; sem seta e sem BackButton ---
+    function mostrarPassoDoTour(n) {
+      $("tour-passo-1").hidden = n !== 1;
+      $("tour-passo-2").hidden = n !== 2;
+      $("tour-sub").hidden = n !== 1;
+      window.scrollTo(0, 0);
+    }
+
+    function abrirTour(nome) {
+      $("tour-saudacao").textContent = saudacaoDoTour(nome, agoraEmBrasilia().hora);
+      mostrarTelaBoasVindas("tour");
+      mostrarPassoDoTour(1);
+    }
+
+    // "Pular" e "Começar": a home (o painel vazio, para quem acabou de se cadastrar).
+    function terminarTour() {
+      mostrarTelaBoasVindas(null);
+      carregar();
+    }
+
+    function iniciarBoasVindas() {
+      criarDias();
+      desenharFichas();
+      $("escolha-novo").addEventListener("click", abrirCadastro);
+      $("escolha-amigo").addEventListener("click", abrirAmigo);
+      $("amigo-voltar").addEventListener("click", voltarUmNivel);
+      $("amigo-novo").addEventListener("click", abrirCadastro);
+      $("amigo-tentar").addEventListener("click", buscarCadastroDoAmigo);
+
+      $("cadastro-voltar").addEventListener("click", voltarUmNivel);
+      // "Tocado" = já digitou algo: apagar tudo mostra o aviso vermelho (só espaços conta como vazio).
+      $("cadastro-nome").addEventListener("input", () => {
+        cadastroEstado.nome = $("cadastro-nome").value;
+        cadastroEstado.nomeTocado = true;
+        atualizarCadastro();
+      });
+      $("cadastro-nome").addEventListener("keydown", (evento) => {
+        if (evento.key === "Enter") { evento.preventDefault(); continuarCadastro(); }
+      });
+      $("cadastro-dias").addEventListener("click", (evento) => {
+        const dia = evento.target.closest(".dia");
+        if (dia) escolherDia(parseInt(dia.dataset.dia, 10));
+      });
+      $("cadastro-fichas").addEventListener("click", (evento) => {
+        const ficha = evento.target.closest(".categoria-ficha");
+        if (!ficha || ficha.disabled) return;
+        if (ficha.id === "cadastro-adicionar-outra") alternarNovaCategoria();
+        else alternarCategoria(parseInt(ficha.dataset.indice, 10));
+      });
+      $("cadastro-nova-campo").addEventListener("input", () => {
+        cadastroEstado.novaTexto = $("cadastro-nova-campo").value;
+        atualizarCadastro();
+      });
+      $("cadastro-nova-campo").addEventListener("keydown", (evento) => {
+        if (evento.key === "Enter") { evento.preventDefault(); adicionarCategoria(); }
+      });
+      $("cadastro-nova-adicionar").addEventListener("click", adicionarCategoria);
+      $("cadastro-continuar").addEventListener("click", continuarCadastro);
+
+      $("tour-proximo").addEventListener("click", () => mostrarPassoDoTour(2));
+      $("tour-voltar").addEventListener("click", () => mostrarPassoDoTour(1));
+      $("tour-pular").addEventListener("click", terminarTour);
+      $("tour-comecar").addEventListener("click", terminarTour);
+
+      // Painel vazio: o cartão do salário abre o Registrar direto na Receita.
+      $("cartao-salario").addEventListener("click", abrirReceitaDireto);
+    }
+
     function iniciar() {
       if (tg) {
         try { tg.ready(); } catch (e) { /* versão antiga */ }
@@ -1956,6 +3095,7 @@
       // Só o "Registrar" abre o fluxo (PRO-89); "Categorias" e "Recorrentes" seguem com o "Em breve".
       document.querySelectorAll(".atalho:not(#atalho-registrar)").forEach((b) => b.addEventListener("click", avisarEmBreve));
       iniciarRegistro();
+      iniciarBoasVindas();
       $("aviso-botao").addEventListener("click", carregar);
 
       // Detalhe do gasto: toque na linha, voltar (cabeçalho, erro ou BackButton do Telegram) e ações "Em breve".
@@ -1971,7 +3111,8 @@
       $("detalhe-erro-tentar").addEventListener("click", carregarDetalhe);
       document.querySelectorAll(".acao, .cartao-icone").forEach((b) => b.addEventListener("click", avisarEmBreve));
       if (tg) {
-        // O BackButton sobe um nível por vez: registro -> opções -> home, ou detalhe -> home.
+        // O BackButton sobe um nível por vez: registro -> opções -> home, ou detalhe -> home;
+        // no cadastro, um passo para trás; em "Já Sou Amigo do Adm", a escolha inicial (PRO-97).
         try { tg.BackButton.onClick(voltarUmNivel); } catch (e) { /* versão antiga */ }
       }
       carregar();

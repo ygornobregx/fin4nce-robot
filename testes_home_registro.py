@@ -16,6 +16,13 @@ Se o `node` não estiver instalado, a parte 2 é pulada (skipTest).
 Desde a PRO-92, também a lista "Últimas Movimentações" da home: título, rota
 /movimentacoes/recentes, texto da lista vazia, receita sem detalhe ("Em breve"),
 --cor-receita e as funções puras do valor e do nome de cada linha.
+
+Desde a PRO-97, as telas de boas-vindas (escolha inicial, "Já Sou Amigo do Adm",
+cadastro em 3 passos, tour) e o painel vazio: blocos e textos dos quadros, o 404
+do /me levando à escolha, nenhum "/start" na home, e no node a comparação de
+categorias repetidas contra a normalizar_texto() de verdade do cadastro.py, o
+contador, a saudação do tour, a decisão por status do POST /cadastro, a barra
+vazia, o gráfico vazio e o cartão do salário.
 """
 import json
 import os
@@ -23,10 +30,13 @@ import random
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 RAIZ = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, RAIZ)
+import cadastro  # noqa: E402  (só a biblioteca padrão e o registro.py: sem .env, rede nem banco)
 CAMINHO_HOME = os.path.join(RAIZ, 'mini-apps', 'home', 'index.html')
 NODE = shutil.which('node')
 
@@ -137,7 +147,12 @@ class TestEstruturaDaHome(unittest.TestCase):
 
     def test_texto_do_chat_vazio_da_receita_e_o_do_quadro_v2(self):
         self.assertIn('Registre Aqui as Suas Receitas Avulsas', HOME)
-        self.assertNotIn('seu salário', HOME)
+        # O chat da receita não fala em salário. Desde a PRO-97, o tour e o cartão do painel vazio falam
+        # ("O seu salário entra como Receita"), então a conferência ficou só no chat (abrirRegistro e o bloco).
+        abrir = corpo_da_funcao(codigo_principal(HOME), 'function abrirRegistro')
+        bloco_registro = HOME[HOME.index('<main id="registro"'):HOME.index('</main>', HOME.index('<main id="registro"'))]
+        for trecho in (abrir, bloco_registro):
+            self.assertNotIn('salário', trecho)
         self.assertNotIn('valor avulso para somar', HOME)
 
     def test_texto_do_chat_vazio_do_gasto_e_selo_do_microfone(self):
@@ -218,8 +233,13 @@ class TestEstruturaDaHome(unittest.TestCase):
         self.assertNotIn('/gastos/recentes', HOME)
 
     def test_texto_da_lista_vazia(self):
+        # Desde a PRO-97 a lista vazia é a caixa cinza do quadro PAINEL VAZIO (no HTML), que o
+        # mostrarExtrato mostra ou esconde, junto com o cartão do salário.
+        self.assertRegex(HOME, r'<div class="extrato-vazio" id="extrato-vazio" hidden>\s*<svg[^>]*>.*?</svg>\s*'
+                               r'<p>Suas movimentações aparecem aqui</p>')
         corpo = corpo_da_funcao(codigo_principal(HOME), 'function mostrarExtrato')
-        self.assertIn('"Suas movimentações aparecem aqui"', corpo)
+        self.assertIn('$("extrato-vazio").hidden = movimentacoes.length > 0;', corpo)
+        self.assertIn('$("cartao-salario").hidden = !mostrarCartaoDoSalario(movimentacoes);', corpo)
         self.assertNotIn('Seus próximos gastos aparecem aqui', HOME)
 
     def test_linha_usa_as_funcoes_puras_e_so_o_gasto_guarda_o_id(self):
@@ -407,7 +427,7 @@ class TestTextosEMensagens(unittest.TestCase):
             [{'erro': 500, 'detalhe': 'erro_interno'}, 'interpretar', 'gasto'],
             [{'erro': 422, 'detalhe': 'texto_invalido'}, 'interpretar', 'gasto'],
             [{'erro': 422, 'detalhe': [{'msg': 'corpo cru do FastAPI'}]}, 'interpretar', 'gasto'],
-            [{'erro': 404, 'detalhe': 'usuario_nao_cadastrado'}, 'interpretar', 'gasto'],
+            [{'erro': 404, 'detalhe': 'usuario_nao_cadastrado'}, 'interpretar', 'gasto'],   # texto novo (PRO-97)
             [{'erro': 409, 'detalhe': 'cadastro_incompleto'}, 'gravar', 'gasto'],
             [{'erro': 503, 'detalhe': 'banco_ocupado'}, 'gravar', 'gasto'],
             [{'erro': 500, 'detalhe': 'erro_interno'}, 'gravar', 'receita'],
@@ -432,7 +452,7 @@ class TestTextosEMensagens(unittest.TestCase):
             'Muitas tentativas seguidas. Espere 1 segundo.',
             'Muitas tentativas seguidas. Espere alguns segundos.',
             nao_entendi, nao_entendi, nao_entendi, nao_entendi, nao_entendi,
-            'Você ainda não tem cadastro. Mande /start no bot para começar.',
+            'Não encontramos o seu cadastro. Feche e abra o app de novo.',
             'Seu cadastro está incompleto. Volte ao bot e informe o dia de fechamento da fatura.',
             nao_registrou, nao_registrou,
             'Não consegui registrar isso. Volte e escreva de novo.',
@@ -622,7 +642,9 @@ class TestBarraDaSobra(unittest.TestCase):
         self.assertEqual(obtido['receitasAusentes'], 3014)
         self.assertEqual(obtido['semRenda'], 0)
         self.assertEqual(obtido['soReceita'], 650)
-        self.assertIsNone(obtido['proporcaoSemBase'])             # sem renda e sem receita: barra escondida
+        # Sem renda e sem receita: sem proporção. Até a PRO-96 a barra sumia; desde a PRO-97 (D5) o trilho
+        # aparece vazio com "Sem receitas ainda" (estadoDaBarra, testado em TestPainelVazio).
+        self.assertIsNone(obtido['proporcaoSemBase'])
         self.assertEqual(obtido['estourou'], 1)
         self.assertEqual(obtido['negativa'], 0)
         self.assertEqual(obtido['soma'], 0.3)
@@ -652,6 +674,415 @@ class TestUltimasMovimentacoes(unittest.TestCase):
             [{'texto': '+ R$ 53,90', 'parcelas': None, 'classe': 'gasto-valor receita'}, 'Reembolso'],
             [{'texto': '+ R$ 1.234,56', 'parcelas': None, 'classe': 'gasto-valor receita'}, 'Receita'],
         ])
+
+
+# ----------------------------------------------------------------------------
+# 3. Boas-vindas, cadastro, tour e painel vazio (PRO-97)
+# ----------------------------------------------------------------------------
+
+def bloco_main(identificador):
+    """Texto do <main id="..."> até o </main> que o fecha (os blocos não se aninham)."""
+    inicio = HOME.index('<main id="%s"' % identificador)
+    return HOME[inicio:HOME.index('</main>', inicio)]
+
+
+class TestEstruturaDasBoasVindas(unittest.TestCase):
+    def test_blocos_main_novos_e_ids(self):
+        for identificador in ('boas-vindas', 'amigo', 'cadastro', 'tour'):
+            with self.subTest(main=identificador):
+                self.assertRegex(HOME, r'<main id="%s" class="tela-cheia" hidden>' % identificador)
+        for trecho in ('id="escolha-novo"', 'id="escolha-amigo"', 'id="amigo-voltar"', 'id="amigo-carregando"',
+                       'id="amigo-nao-encontrado"', 'id="amigo-erro"', 'id="amigo-novo"', 'id="amigo-tentar"',
+                       'id="cadastro-voltar"', 'id="cadastro-passo-1"', 'id="cadastro-passo-2"', 'id="cadastro-passo-3"',
+                       'id="cadastro-nome"', 'id="cadastro-nome-erro"', 'id="cadastro-dias"', 'id="cadastro-dia-texto"',
+                       'id="cadastro-fichas"', 'id="cadastro-contador"', 'id="cadastro-adicionar-outra"',
+                       'id="cadastro-nova"', 'id="cadastro-nova-campo"', 'id="cadastro-nova-adicionar"',
+                       'id="cadastro-nova-erro"', 'id="cadastro-erro"', 'id="cadastro-continuar"', 'id="cadastro-dica"',
+                       'id="tour-saudacao"', 'id="tour-passo-1"', 'id="tour-passo-2"', 'id="tour-proximo"',
+                       'id="tour-pular"', 'id="tour-comecar"', 'id="tour-voltar"',
+                       'id="grafico-vazio"', 'id="grafico-subtitulo"', 'id="extrato-vazio"', 'id="cartao-salario"'):
+            with self.subTest(trecho=trecho):
+                self.assertEqual(HOME.count(trecho), 1, trecho)
+
+    def test_textos_dos_quadros(self):
+        for texto in ('Boas-vindas ao', '>L1d3r<', 'O seu gerenciador de gastos, direto no Telegram.',
+                      'Como Você Chegou Aqui?', 'Sou Novo Por Aqui', 'Configure tudo em 1 minuto',
+                      'Já Sou Amigo do Adm', 'Entre com o seu Telegram',
+                      'Buscando o Seu Cadastro...', 'Estamos te reconhecendo pelo Telegram. Não precisa digitar nada.',
+                      'Não Encontramos o Seu Cadastro', 'Sem problema! Criar um cadastro novo leva menos de 1 minuto.',
+                      'Criar Cadastro', 'Como Devemos Chamar Você?', 'É assim que o L1d3r vai te cumprimentar.',
+                      'Seu Nome', 'Digite o seu nome', 'Preencha o seu nome para continuar',
+                      'Qual o Melhor Dia Para o Seu Mês Virar?', 'Dia do Mês', 'Nos meses mais curtos, usamos o último dia',
+                      '"Escolha um dia para continuar"', 'Escolha as Suas Categorias', 'Sugeridas', 'Adicionar Outra',
+                      'Nova Categoria', '>Adicionar<', '"Você já tem a categoria "', '"Marque pelo menos uma categoria"',
+                      'Como Registro um Gasto ou uma Receita Nova?',
+                      'Na Tela Inicial, toque em <strong>Registrar</strong> e escolha entre Gasto ou Receita.',
+                      'Escreva do Seu Jeito, o L1d3r Organiza', 'Últimas Movimentações', '+ R$ 3.000,00',
+                      'O seu salário entra como Receita, por exemplo: <strong>"Recebi 3000 de salário"</strong>.',
+                      '>Próximo<', '>Pular<', '>Começar<', '>Voltar<',
+                      '"Ainda sem histórico"', 'O gráfico aparece com o seu primeiro gasto',
+                      'Comece registrando o seu salário como <strong>Receita</strong>'):
+            with self.subTest(texto=texto):
+                self.assertIn(texto, HOME)
+        # O nome exibido é L1d3r; "Fin4nce" não aparece em nenhuma tela nova.
+        for identificador in ('boas-vindas', 'amigo', 'cadastro', 'tour'):
+            self.assertNotIn('Fin4nce', bloco_main(identificador))
+
+    def test_404_do_me_leva_a_escolha_inicial(self):
+        carregar = corpo_da_funcao(codigo_principal(HOME), 'async function carregar')
+        self.assertIn('const destino = destinoDaCarga(resultados);', carregar)
+        self.assertIn('if (destino === "escolha") {\n        abrirEscolhaInicial();',
+                      carregar.replace('\r\n', '\n'))
+        # 401, 409 (cadastro_incompleto) e o resto continuam com o aviso de hoje.
+        self.assertIn('mensagemDeErro(resultados)', carregar)
+        self.assertIn('const MENSAGEM_409 = "Seu cadastro está incompleto. Volte ao bot e informe o dia de fechamento da fatura.";',
+                      HOME)
+
+    def test_home_nao_fala_mais_em_start(self):
+        self.assertNotIn('/start', HOME)
+        self.assertNotIn('Mande', HOME)
+
+    def test_nome_digitado_e_dados_da_api_so_com_textcontent(self):
+        principal = codigo_principal(HOME)
+        self.assertIn('$("tour-saudacao").textContent = saudacaoDoTour(nome, agoraEmBrasilia().hora);',
+                      corpo_da_funcao(principal, 'function abrirTour'))
+        self.assertIn('ficha.querySelector("span").textContent = c.nome;', corpo_da_funcao(principal, 'function desenharFichas'))
+        self.assertIn('$("amigo-erro-texto").textContent = erro.texto;',
+                      corpo_da_funcao(principal, 'async function buscarCadastroDoAmigo'))
+        self.assertIn('$("cadastro-nova-erro-texto").textContent =', corpo_da_funcao(principal, 'function atualizarCadastro'))
+        # A ficha nasce de um <template> clonado (nada de HTML montado em texto).
+        self.assertIn('<template id="modelo-ficha-categoria">', HOME)
+        for padrao in (r'\.innerHTML\s*[+]?=', r'\.outerHTML\s*[+]?=', r'insertAdjacentHTML', r'document\.write'):
+            self.assertIsNone(re.search(padrao, principal + codigo_puro(HOME)), padrao)
+
+    def test_limites_do_d4_iguais_aos_do_cadastro_py(self):
+        self.assertRegex(HOME, r'<input class="campo-texto" id="cadastro-nome" type="text" maxlength="%d"' % cadastro.NOME_MAXIMO)
+        self.assertRegex(HOME, r'<input class="campo-texto compacto" id="cadastro-nova-campo" type="text" maxlength="%d"'
+                         % cadastro.CATEGORIA_MAXIMA)
+        obtido = rodar_node(com_funcoes_puras(
+            "console.log(JSON.stringify([CADASTRO_NOME_MAXIMO, CADASTRO_CATEGORIA_MAXIMA, CADASTRO_CATEGORIAS_MAXIMAS,"
+            " CATEGORIAS_SUGERIDAS]));"
+        )) if NODE else None
+        if obtido:
+            self.assertEqual(obtido[:3], [cadastro.NOME_MAXIMO, cadastro.CATEGORIA_MAXIMA, cadastro.CATEGORIAS_MAXIMAS])
+            self.assertEqual(obtido[3], ['Alimentação', 'Casa', 'Lazer', 'Transporte', 'Saúde', 'Roupas', 'Academia', 'Viagens'])
+
+    def test_cadastro_manda_post_com_as_novas_tentativas_do_registrar(self):
+        enviar = corpo_da_funcao(codigo_principal(HOME), 'async function enviarCadastro')
+        self.assertIn('montarCorpoCadastro(e.nome, e.dia, e.categorias)', enviar)
+        self.assertIn('gravarComTentativas((c) => enviarJson("/cadastro", c, 15000), corpo, esperar)', enviar)
+        self.assertIn('decisaoDoCadastro(resultado)', enviar)
+        self.assertIn('abrirTour(e.nome)', enviar)
+        # Desabilita no primeiro toque: 'enviando' liga antes da chamada e o Continuar depende dele.
+        self.assertLess(enviar.index('e.enviando = true;'), enviar.index('gravarComTentativas('))
+        self.assertIn('if (e.enviando) return false;', corpo_da_funcao(codigo_puro(HOME), 'function podeContinuarCadastro'))
+        self.assertEqual(HOME.count('"/cadastro"'), 1)
+
+    def test_backbutton_e_setas_das_telas_novas(self):
+        principal = codigo_principal(HOME)
+        voltar = corpo_da_funcao(principal, 'function voltarUmNivel')
+        for trecho in ('voltarNoCadastro()', 'voltarDoAmigo()', 'voltarDoRegistroParaHome()'):
+            self.assertIn(trecho, voltar)
+        self.assertIn('mostrarBackButton(id === "amigo" || id === "cadastro");',
+                      corpo_da_funcao(principal, 'function mostrarTelaBoasVindas'))
+        self.assertIn('$("amigo-voltar").addEventListener("click", voltarUmNivel);', principal)
+        self.assertIn('$("cadastro-voltar").addEventListener("click", voltarUmNivel);', principal)
+        # O tour não tem seta de voltar; a escolha inicial também não.
+        self.assertNotIn('botao-menu', bloco_main('tour'))
+        self.assertNotIn('botao-menu', bloco_main('boas-vindas'))
+        # Do passo 1, a seta volta à escolha inicial.
+        self.assertIn('mostrarTelaBoasVindas("boas-vindas");', corpo_da_funcao(principal, 'function voltarNoCadastro'))
+
+    def test_cartao_do_salario_abre_o_registrar_direto_na_receita(self):
+        principal = codigo_principal(HOME)
+        self.assertIn('$("cartao-salario").addEventListener("click", abrirReceitaDireto);', principal)
+        abrir = corpo_da_funcao(principal, 'function abrirReceitaDireto')
+        self.assertIn('abrirRegistro("receita");', abrir)
+        self.assertIn('registroDireto = true;', abrir)
+        self.assertNotIn('registro-opcoes', abrir)  # pula a tela de opções
+        # O Voltar do chat aberto pelo cartão volta para a home.
+        self.assertIn('if (registroDireto) voltarDoRegistroParaHome();', corpo_da_funcao(principal, 'function voltarUmNivel'))
+        self.assertIn('$("tela").hidden = false;', corpo_da_funcao(principal, 'function voltarDoRegistroParaHome'))
+        # O cartão é um botão, fora da lista (o clique da lista só abre linhas .gasto).
+        self.assertIn('<button class="cartao-salario" id="cartao-salario" type="button" hidden>', HOME)
+
+    def test_saudacao_do_tour_usa_a_hora_de_brasilia(self):
+        principal = codigo_principal(HOME)
+        self.assertIn('agoraEmBrasilia().hora', corpo_da_funcao(principal, 'function abrirTour'))
+        self.assertIn('timeZone: FUSO', corpo_da_funcao(principal, 'function agoraEmBrasilia'))
+        self.assertIn('const FUSO = "America/Sao_Paulo";', principal)
+
+    def test_paleta_nova_no_root_e_logo_animada_so_com_css(self):
+        raiz = HOME[HOME.index(':root {'):HOME.index('}', HOME.index(':root {'))]
+        for token in ('--cor-erro: #D93025;', '--cor-erro-fundo: #FFF5F4;', '--cor-receita-fundo: #15803D14;'):
+            self.assertIn(token, raiz)
+        self.assertEqual(HOME.count('pathLength="1"'), 3)
+        for quadro in ('@keyframes tracar-1', '@keyframes tracar-2', '@keyframes tracar-3', 'prefers-reduced-motion'):
+            self.assertIn(quadro, HOME)
+
+    def test_fichas_de_categoria_nao_usam_a_classe_das_parcelas(self):
+        # O Registrar marca/desmarca todo ".ficha"; as fichas do cadastro têm classe própria.
+        self.assertNotRegex(bloco_main('cadastro'), r'class="ficha[ "]')
+        self.assertNotRegex(bloco_main('tour'), r'class="atalho[ "]')  # o seletor .atalho liga os atalhos da home
+
+    def test_saudacao_por_hora_movida_sem_duplicar(self):
+        self.assertIn('function saudacaoPorHora(hora)', codigo_puro(HOME))
+        self.assertNotIn('function saudacaoPorHora', codigo_principal(HOME))
+
+
+def casos_de_normalizacao():
+    """Textos para comparar normalizarTexto (JS) com normalizar_texto (Python)."""
+    casos = ['Alimentação', 'alimentacao', 'ALIMENTAÇÃO', '  Alimentação ', 'Alimen  tação', 'Saúde', 'saude', 'SAÚDE',
+             'Lazer', 'lazer', ' LAZER ', 'Transporte', 'Pão de Açúcar', 'pao de acucar', 'Ônibus', 'ônibus', 'Café',
+             'cafe', 'Ação', 'acao', 'Maçã', 'Crédito', 'Débito/Pix', 'Viagens', 'Educação Física', 'educacao  fisica',
+             'Ñandú', 'Straße', 'STRASSE', 'Ångström', 'ﬁnanças', 'Ｃａｓａ', 'Casa' + chr(0xA0) + 'Nova',
+             'Casa' + chr(0x2003) + 'Nova', 'Casa\tNova', 'Casa\nNova', 'Casa' + chr(0x85) + 'Nova',
+             'Casa' + chr(0x1F) + 'Nova', 'Casa' + chr(0xFEFF) + 'Nova', 'Casa' + chr(0x3000) + 'Nova',
+             'a' + chr(0x301), 'e' + chr(0x302) + chr(0x323), chr(0x345), 'x' + chr(0x345) + 'y', 'İstanbul', 'ΣΟΦΟΣ',
+             'σοφος', 'λόγος', 'Ǆemal', 'Ⅻ', '½ porção', 'Pet 🐶', '', '   ', chr(0x301) + chr(0x302), '1º lugar',
+             'Saúde ' + chr(0x200A) + ' e  Bem-Estar']
+    # Todos os caracteres latinos de U+0020 a U+024F, os acentos combinantes (U+0300 a U+036F), os latinos
+    # estendidos adicionais (U+1E00 a U+1EFF), o grego e o cirílico básicos, sozinhos e no meio de uma palavra.
+    for faixa in (range(0x20, 0x250), range(0x300, 0x370), range(0x1E00, 0x1F00), range(0x370, 0x400),
+                  range(0x400, 0x500)):
+        for codigo in faixa:
+            casos.append(chr(codigo))
+            casos.append('Ca' + chr(codigo) + 'sa')
+    return casos
+
+
+@unittest.skipUnless(NODE, 'node não encontrado no PATH')
+class TestCadastroFuncoesPuras(unittest.TestCase):
+    def test_normalizar_texto_igual_ao_do_cadastro_py(self):
+        casos = casos_de_normalizacao()
+        esperado = [cadastro.normalizar_texto(t) for t in casos]
+        obtido = rodar_node(com_funcoes_puras("console.log(JSON.stringify(ENTRADA.map(normalizarTexto)));"), casos)
+        diferentes = [(ascii(t), o, e) for t, o, e in zip(casos, obtido, esperado) if o != e]
+        self.assertEqual(diferentes[:10], [], 'diferentes do normalizar_texto(): %d' % len(diferentes))
+        self.assertGreater(len(casos), 2000)
+        # Os casos que importam na tela, explícitos:
+        self.assertEqual(esperado[:4], ['alimentacao'] * 4)
+        self.assertEqual(cadastro.normalizar_texto('Alimen  tação'), 'alimen tacao')
+
+    def test_o_teste_tem_forca_um_lowercase_ingenuo_erraria(self):
+        # Sem o NFKD, sem tirar as marcas ou só com toLowerCase e \\s, o JavaScript erra casos desta lista.
+        casos = casos_de_normalizacao()
+        esperado = [cadastro.normalizar_texto(t) for t in casos]
+        obtido = rodar_node(com_funcoes_puras(
+            "console.log(JSON.stringify(ENTRADA.map((t) => String(t).normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')"
+            ".toLowerCase().trim().split(/\\s+/).filter(Boolean).join(' '))));"
+        ), casos)
+        self.assertGreater(sum(1 for o, e in zip(obtido, esperado) if o != e), 10)
+
+    def test_categoria_repetida_pela_mesma_comparacao_do_servidor(self):
+        nomes = ['Alimentação', 'Casa', 'Lazer', 'Transporte', 'Saúde', 'Roupas', 'Academia', 'Viagens']
+        entradas = ['lazer', ' LAZER ', 'Lazer', 'alimentacao', 'ALIMENTAÇÃO', 'saude', 'Saúde  ', 'Pet', '', '   ',
+                    chr(0x301), 'Casa nova', 'Via gens']
+        obtido = rodar_node(com_funcoes_puras(
+            "const [nomes, entradas] = ENTRADA;"
+            " console.log(JSON.stringify(entradas.map((t) => categoriaRepetida(t, nomes))));"
+        ), [nomes, entradas])
+        self.assertEqual(obtido, ['Lazer', 'Lazer', 'Lazer', 'Alimentação', 'Alimentação', 'Saúde', 'Saúde',
+                                  None, None, None, None, None, None])
+        # A mesma decisão do servidor: repetida na tela <=> montar_lista_categorias juntaria as duas.
+        # (Sem nada que sobre na comparação, como só espaços ou só um acento, o Adicionar fica desabilitado.)
+        for entrada, repetida in zip(entradas, obtido):
+            if not cadastro.normalizar_texto(entrada):
+                continue
+            juntou = len(cadastro.montar_lista_categorias(nomes + [entrada])) == len(nomes)
+            with self.subTest(entrada=ascii(entrada)):
+                self.assertEqual(repetida is not None, juntou)
+
+    def test_nome_da_categoria_igual_ao_strip_capitalize(self):
+        casos = ['pet', '  pet  ', 'PET', 'iFood', 'educação física', 'ÁGUA', 'água', 'Ônibus urbano', '1º lugar',
+                 'casa  Nova', 'é', 'x']
+        obtido = rodar_node(com_funcoes_puras("console.log(JSON.stringify(ENTRADA.map(nomeDaCategoria)));"), casos)
+        self.assertEqual(obtido, [t.strip().capitalize() for t in casos])
+
+    def test_contador_de_marcadas(self):
+        obtido = rodar_node(com_funcoes_puras(
+            "console.log(JSON.stringify([0, 1, 2, 8, 20].map(textoContadorCategorias)));"))
+        self.assertEqual(obtido, ['Nenhuma marcada', '1 marcada', '2 marcadas', '8 marcadas', '20 marcadas'])
+
+    def test_texto_do_dia(self):
+        obtido = rodar_node(com_funcoes_puras(
+            "console.log(JSON.stringify([textoDiaEscolhido(5), textoDiaEscolhido(31), textoDiaEscolhido(null)]));"))
+        self.assertEqual(obtido, [{'antes': 'Todo dia ', 'negrito': '5'}, {'antes': 'Todo dia ', 'negrito': '31'},
+                                  {'antes': 'Nenhum dia escolhido', 'negrito': ''}])
+
+    def test_saudacao_do_tour_nas_tres_faixas(self):
+        # A hora vem de agoraEmBrasilia() (só a hora cheia): 4h59 -> 4, 11h59 -> 11, 17h59 -> 17.
+        horas = [4, 5, 11, 12, 17, 18, 0, 23]
+        obtido = rodar_node(com_funcoes_puras(
+            "console.log(JSON.stringify(ENTRADA.map((h) => saudacaoDoTour('Ygor Nóbrega', h))"
+            ".concat([saudacaoDoTour('  Ana  ', 12), saudacaoDoTour('', 9), saudacaoDoTour(null, 20)])));"
+        ), horas)
+        self.assertEqual(obtido, [
+            'Olá, Ygor! Boa Noite', 'Olá, Ygor! Bom Dia', 'Olá, Ygor! Bom Dia', 'Olá, Ygor! Boa Tarde',
+            'Olá, Ygor! Boa Tarde', 'Olá, Ygor! Boa Noite', 'Olá, Ygor! Boa Noite', 'Olá, Ygor! Boa Noite',
+            'Olá, Ana! Boa Tarde', 'Bom Dia', 'Boa Noite',
+        ])
+
+    def test_continuar_de_cada_passo(self):
+        sugeridas = [{'nome': n, 'marcada': True} for n in ('Casa', 'Lazer')]
+        nenhuma = [{'nome': n, 'marcada': False} for n in ('Casa', 'Lazer')]
+        vinte = [{'nome': 'C%d' % i, 'marcada': True} for i in range(20)]
+        vinte_e_uma = vinte + [{'nome': 'C20', 'marcada': True}]
+        casos = [
+            [{'passo': 1, 'nome': 'Ygor'}, True], [{'passo': 1, 'nome': ''}, False], [{'passo': 1, 'nome': '   '}, False],
+            [{'passo': 1, 'nome': 'Ygor', 'enviando': True}, False],
+            [{'passo': 2, 'dia': 5}, True], [{'passo': 2, 'dia': None}, False], [{'passo': 2, 'dia': 31}, True],
+            [{'passo': 2, 'dia': 0}, False], [{'passo': 2, 'dia': 32}, False],
+            [{'passo': 3, 'categorias': sugeridas}, True], [{'passo': 3, 'categorias': nenhuma}, False],
+            [{'passo': 3, 'categorias': vinte}, True], [{'passo': 3, 'categorias': vinte_e_uma}, False],
+            [{'passo': 3, 'categorias': sugeridas, 'enviando': True}, False],
+        ]
+        obtido = rodar_node(com_funcoes_puras(
+            "console.log(JSON.stringify(ENTRADA.map(([e]) => podeContinuarCadastro(e))));"), casos)
+        self.assertEqual(obtido, [c[1] for c in casos])
+
+    def test_corpo_do_post_cadastro_so_com_as_marcadas_na_ordem(self):
+        categorias = [{'nome': 'Alimentação', 'marcada': True}, {'nome': 'Casa', 'marcada': False},
+                      {'nome': 'Lazer', 'marcada': True}, {'nome': 'Pet', 'marcada': True}]
+        obtido = rodar_node(com_funcoes_puras(
+            "console.log(JSON.stringify(montarCorpoCadastro('  Ygor  ', 5, ENTRADA)));"), categorias)
+        self.assertEqual(obtido, {'nome': 'Ygor', 'dia_fechamento': 5, 'categorias': ['Alimentação', 'Lazer', 'Pet']})
+        # O formato do contrato da PRO-96: o cadastro.py aceita este corpo como veio.
+        self.assertEqual(cadastro.validar_nome(obtido['nome']), 'Ygor')
+        self.assertEqual(cadastro.validar_dia(obtido['dia_fechamento']), 5)
+        self.assertEqual(cadastro.validar_categorias(obtido['categorias']), ['Alimentação', 'Lazer', 'Pet'])
+
+    def test_decisao_do_cadastro_por_status(self):
+        casos = [
+            {'dados': {'user_id': 1}, 'status': 201},
+            {'erro': 409, 'detalhe': 'usuario_ja_cadastrado'},
+            {'erro': 409, 'detalhe': 'outro'},
+            {'erro': 422, 'detalhe': 'nome_invalido'},
+            {'erro': 422, 'detalhe': 'dia_invalido'},
+            {'erro': 422, 'detalhe': 'categorias_invalidas'},
+            {'erro': 401, 'detalhe': 'nao_autorizado'},
+            {'erro': 500, 'detalhe': 'erro_interno'},
+            {'erro': 503, 'detalhe': 'banco_ocupado'},
+            {'erro': 0},
+            {'erro': 500, 'detalhe': 'SEGREDO sql=SELECT'},
+        ]
+        obtido = rodar_node(com_funcoes_puras("console.log(JSON.stringify(ENTRADA.map(decisaoDoCadastro)));"), casos)
+        seguir = {'seguir': True, 'mensagem': None}
+        dados = {'seguir': False, 'mensagem': 'Confira os dados e tente de novo.'}
+        falhou = {'seguir': False, 'mensagem': 'Não foi possível criar o seu cadastro. Tente de novo.'}
+        sessao = {'seguir': False, 'mensagem': 'Sua sessão expirou. Feche e abra o app de novo.'}
+        self.assertEqual(obtido, [seguir, seguir, falhou, dados, dados, dados, sessao, falhou, falhou, falhou, falhou])
+
+    def test_cadastro_repete_so_em_503_e_rede_com_o_mesmo_corpo(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            const cenarios = {
+              ocupadoDepoisCriado: [{ erro: 503, detalhe: 'banco_ocupado' }, { erro: 0 }, { dados: { user_id: 1 }, status: 201 }],
+              redeEsgotada: [{ erro: 0 }, { erro: 0 }, { erro: 0 }, { dados: {}, status: 201 }],
+              toqueDuplo: [{ erro: 409, detalhe: 'usuario_ja_cadastrado' }],
+              recusado: [{ erro: 422, detalhe: 'nome_invalido' }, { dados: {}, status: 201 }],
+              interno: [{ erro: 500, detalhe: 'erro_interno' }, { dados: {}, status: 201 }],
+            };
+            (async () => {
+              const saida = {};
+              for (const [nome, respostas] of Object.entries(cenarios)) {
+                const chamadas = [];
+                const esperas = [];
+                const corpo = montarCorpoCadastro('Ygor', 5, [{ nome: 'Casa', marcada: true }]);
+                const resultado = await gravarComTentativas(
+                  async (c) => { chamadas.push(c); return respostas[chamadas.length - 1]; }, corpo,
+                  async (ms) => { esperas.push(ms); });
+                saida[nome] = { chamadas: chamadas.length, esperas, mesmo: chamadas.every((c) => c === corpo),
+                                decisao: decisaoDoCadastro(resultado) };
+              }
+              console.log(JSON.stringify(saida));
+            })();
+        """))
+        self.assertEqual(obtido['ocupadoDepoisCriado']['chamadas'], 3)
+        self.assertEqual(obtido['ocupadoDepoisCriado']['esperas'], [1000, 2000])
+        self.assertTrue(obtido['ocupadoDepoisCriado']['decisao']['seguir'])
+        self.assertEqual(obtido['redeEsgotada']['chamadas'], 3)
+        self.assertEqual(obtido['redeEsgotada']['decisao']['mensagem'], 'Não foi possível criar o seu cadastro. Tente de novo.')
+        self.assertEqual(obtido['toqueDuplo']['chamadas'], 1)
+        self.assertTrue(obtido['toqueDuplo']['decisao']['seguir'])
+        self.assertEqual(obtido['recusado']['chamadas'], 1)
+        self.assertEqual(obtido['interno']['chamadas'], 1)
+        for nome, dados in obtido.items():
+            with self.subTest(cenario=nome):
+                self.assertTrue(dados['mesmo'])
+
+    def test_destino_da_primeira_carga(self):
+        ok = {'dados': {}}
+        nao_cadastrado = {'erro': 404, 'detalhe': 'usuario_nao_cadastrado'}
+        casos = [
+            [[ok, ok, ok, ok], 'home'],
+            [[nao_cadastrado, nao_cadastrado, nao_cadastrado, nao_cadastrado], 'escolha'],
+            [[nao_cadastrado, {'erro': 0}, nao_cadastrado, nao_cadastrado], 'escolha'],
+            [[{'erro': 401}, {'erro': 401}, {'erro': 401}, {'erro': 401}], 'aviso'],
+            [[nao_cadastrado, {'erro': 401}, ok, ok], 'aviso'],
+            [[ok, {'erro': 409, 'detalhe': 'cadastro_incompleto'}, {'erro': 409, 'detalhe': 'cadastro_incompleto'}, ok], 'aviso'],
+            [[{'erro': 0}, ok, ok, ok], 'aviso'],
+            [[ok, {'erro': 404, 'detalhe': 'usuario_nao_cadastrado'}, ok, ok], 'aviso'],   # só o /me decide
+            [[{'erro': 404, 'detalhe': 'outro'}, ok, ok, ok], 'aviso'],
+        ]
+        obtido = rodar_node(com_funcoes_puras(
+            "console.log(JSON.stringify(ENTRADA.map(([r]) => destinoDaCarga(r))));"), casos)
+        self.assertEqual(obtido, [c[1] for c in casos])
+
+
+@unittest.skipUnless(NODE, 'node não encontrado no PATH')
+class TestPainelVazio(unittest.TestCase):
+    """D5: barra vazia com "Sem receitas ainda", gráfico vazio e cartão do salário, pelo estado dos dados."""
+
+    def test_estado_da_barra(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            const caso = (renda, receitas, gasto, temSobra) => {
+              const base = baseDaBarra(renda, receitas);
+              return estadoDaBarra(temSobra, base, proporcaoDaBarra(gasto, base));
+            };
+            console.log(JSON.stringify({
+              vazio: caso(0, 0, 0, true),
+              vazioComGasto: caso(0, 0, 120, true),
+              comRenda: caso(3014, 650, 2029.66, true),
+              soReceita: caso(0, 650, 100, true),
+              semSobra: caso(3014, 0, 10, false),
+              semSobraEVazio: caso(0, 0, 0, false),
+            }));
+        """))
+        self.assertEqual(obtido['vazio'], {'trilho': True, 'preenchimento': 0, 'textoDireita': 'Sem receitas ainda'})
+        self.assertEqual(obtido['vazioComGasto'], {'trilho': True, 'preenchimento': 0, 'textoDireita': 'Sem receitas ainda'})
+        self.assertTrue(obtido['comRenda']['trilho'])
+        self.assertAlmostEqual(obtido['comRenda']['preenchimento'], 2029.66 / 3664, places=12)
+        self.assertEqual(obtido['comRenda']['textoDireita'], 'de R$ 3.664,00')
+        self.assertEqual(obtido['soReceita']['textoDireita'], 'de R$ 650,00')
+        self.assertEqual(obtido['semSobra'], {'trilho': False, 'preenchimento': 0, 'textoDireita': None})
+        self.assertEqual(obtido['semSobraEVazio'], {'trilho': False, 'preenchimento': 0, 'textoDireita': None})
+
+    def test_mostrar_cabecalho_usa_o_estado_da_barra(self):
+        corpo = corpo_da_funcao(codigo_principal(HOME), 'function mostrarCabecalho')
+        self.assertIn('const barra = estadoDaBarra(temSobra, base, proporcao);', corpo)
+        self.assertIn('$("trilho").hidden = !barra.trilho;', corpo)
+        self.assertIn('$("renda-texto").hidden = barra.textoDireita === null;', corpo)
+
+    def test_grafico_vazio_e_cartao_do_salario(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            console.log(JSON.stringify({
+              semMeses: graficoVazio([]),
+              tudoZero: graficoVazio([{ total_gasto: 0, situacao: 'atual' }, { total_gasto: 0, situacao: 'previsto' }]),
+              umGasto: graficoVazio([{ total_gasto: 0, situacao: 'fechado' }, { total_gasto: 12.5, situacao: 'atual' }]),
+              soPrevisto: graficoVazio([{ total_gasto: 0, situacao: 'atual' }, { total_gasto: 200, situacao: 'previsto' }]),
+              nulo: graficoVazio(undefined),
+              listaVazia: mostrarCartaoDoSalario([]),
+              listaComReceita: mostrarCartaoDoSalario([{ tipo: 'receita', valor: 3000 }]),
+            }));
+        """))
+        self.assertEqual(obtido, {'semMeses': True, 'tudoZero': True, 'umGasto': False, 'soPrevisto': False,
+                                  'nulo': True, 'listaVazia': True, 'listaComReceita': False})
+
+    def test_mostrar_grafico_usa_o_estado_vazio(self):
+        corpo = corpo_da_funcao(codigo_principal(HOME), 'function mostrarGrafico')
+        self.assertIn('const vazio = graficoVazio(meses);', corpo)
+        self.assertIn('vazio ? "Ainda sem histórico" : "Arraste para ver outros meses"', corpo)
+        self.assertIn('$("grafico-vazio").hidden = !vazio;', corpo)
 
 
 if __name__ == '__main__':
