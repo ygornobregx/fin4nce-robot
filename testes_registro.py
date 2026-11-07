@@ -360,15 +360,34 @@ class TestInterpretarGasto(ComIAFalsa):
         self.assertEqual(gasto.categoria, 'Transporte')
         self.assertFalse(gasto.categoria_valida)
 
-    def test_keyerror_sobe_sem_embrulho(self):
-        with self.assertRaises(KeyError) as erro:
-            self.interpretar(json.dumps({"tipo": "despesa", "categoria": "Roupas"}))
-        self.assertEqual(str(erro.exception), "'valor'")
+    def test_despesa_sem_valor_vira_none_sem_excecao(self):
+        # PRO-93: o valor da despesa é lido como o da receita (antes, KeyError).
+        gasto, _ = self.interpretar(json.dumps({"tipo": "despesa", "categoria": "Roupas"}))
+        self.assertIsNone(gasto.valor)
+        self.assertEqual(gasto.categoria, 'Roupas')
+        self.assertTrue(gasto.categoria_valida)
 
-    def test_valor_invalido_sobe_antes_da_categoria(self):
-        with self.assertRaises(ValueError) as erro:
-            self.interpretar(json.dumps({"tipo": "despesa", "valor": "doze", "categoria": "Inexistente"}))
-        self.assertEqual(str(erro.exception), "could not convert string to float: 'doze'")
+    def test_despesa_valor_invalido_vira_none_e_a_categoria_ainda_e_lida(self):
+        # PRO-93: "doze" não levanta mais ValueError; a checagem do valor é do
+        # bot (validar_valor), que roda antes da checagem de categoria.
+        gasto, _ = self.interpretar(json.dumps({"tipo": "despesa", "valor": "doze", "categoria": "Inexistente"}))
+        self.assertIsNone(gasto.valor)
+        self.assertEqual(gasto.categoria, 'Inexistente')
+        self.assertFalse(gasto.categoria_valida)
+
+    def test_despesa_valores_lidos_sem_validar(self):
+        # Só lê: zero, negativo e acima do teto passam; o que não é número vira None.
+        casos = [(0, 0.0), (-50, -50.0), ("12,5", None), ("12.5", 12.5), (1000000.01, 1000000.01),
+                 (12.345, 12.345), (None, None), (True, None), ([10], None), (10 ** 400, None)]
+        for valor, esperado in casos:
+            with self.subTest(valor=valor):
+                gasto, _ = self.interpretar(json.dumps({"tipo": "despesa", "valor": valor, "categoria": "Roupas"}))
+                self.assertEqual(gasto.valor, esperado)
+
+    def test_despesa_sem_categoria_ainda_levanta_keyerror(self):
+        with self.assertRaises(KeyError) as erro:
+            self.interpretar(json.dumps({"tipo": "despesa", "valor": 10}))
+        self.assertEqual(str(erro.exception), "'categoria'")
 
 
 # --- GRAVAÇÃO ---

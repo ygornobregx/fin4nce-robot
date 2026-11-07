@@ -35,6 +35,8 @@ from registro import (
     buscar_lancamento,
     debitar_categoria,
     formatar_lista_categorias,
+    VALOR_MAXIMO,
+    _ler_valor_receita,
     gerar_conteudo_com_retry,
     interpretar_gasto,
     limpar_json_ia,
@@ -44,7 +46,7 @@ from registro import (
     registrar_gasto_avulso,
     registrar_gasto_parcelado,
     registrar_receita,
-    validar_valor_receita,
+    validar_valor,
 )
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.error import BadRequest, NetworkError
@@ -219,6 +221,16 @@ def parse_valor(texto):
     elif ',' in limpo:
         limpo = limpo.replace(',', '.')
     return float(limpo)
+
+def ler_valor_digitado(texto):
+    """Valor digitado pelo usuário já conferido (PRO-93): parse_valor + a
+    validar_valor do registro.py (a mesma regra da API: número finito, maior
+    que zero, até VALOR_MAXIMO, arredondado a 2 casas). Devolve o float, ou
+    None quando o texto não vira número ou o número não serve."""
+    try:
+        return validar_valor(parse_valor(texto))
+    except ValueError:
+        return None
 
 def formatar_estabelecimento(estabelecimento):
     """Texto da linha 'Estabelecimento:' das confirmações (a mensagem usa HTML,
@@ -794,10 +806,11 @@ async def salvar_gasto_livre(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         # Receita (PRO-86): vem antes da checagem de categoria, porque a
         # receita não tem categoria (a que a IA devolver é ignorada). Valor
-        # zero, negativo ou que não é número é recusado sem gravar (D6); o
-        # válido vai para a prévia, e só o "Confirmar" grava (D4).
+        # zero, negativo, acima do teto ou que não é número é recusado sem
+        # gravar (D6; teto desde a PRO-93); o válido vai para a prévia, e só
+        # o "Confirmar" grava (D4).
         if gasto.tipo == 'receita':
-            valor_receita = validar_valor_receita(gasto.valor)
+            valor_receita = validar_valor(gasto.valor)
             if valor_receita is None:
                 await enviar_fluxo(context, user_id, MENSAGEM_VALOR_RECEITA_INVALIDO,
                                    reply_markup=obter_teclado_menu())
@@ -818,6 +831,14 @@ async def salvar_gasto_livre(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await enviar_fluxo(context, user_id, MENSAGEM_TIPO_DESCONHECIDO, reply_markup=obter_teclado_menu())
             return ConversationHandler.END
 
+        # Valor da despesa (PRO-93): a mesma validar_valor da API. Fica antes
+        # da checagem de categoria; recusado, nada fica pendente (D3).
+        valor_gasto = validar_valor(gasto.valor)
+        if valor_gasto is None:
+            await enviar_fluxo(context, user_id, MENSAGEM_VALOR_GASTO_INVALIDO,
+                               reply_markup=obter_teclado_menu())
+            return ConversationHandler.END
+
         # Validação do retorno: mesmo com o prompt restringindo as opções,
         # confirmamos em Python se a categoria escolhida pela IA está de fato
         # na lista do usuário antes de gravar a transação.
@@ -835,7 +856,7 @@ async def salvar_gasto_livre(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # sabermos se é parcelado, pois o valor gravado muda em cada caso.
         context.user_data['gasto_pendente'] = {
             'categoria': gasto.categoria,
-            'valor': gasto.valor,
+            'valor': valor_gasto,
             'descricao': gasto.descricao,
             'estabelecimento': gasto.estabelecimento,
             'momento_envio': momento_envio,
@@ -850,9 +871,22 @@ async def salvar_gasto_livre(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await enviar_fluxo(context, user_id, mensagem_erro_ia(e), reply_markup=obter_teclado_menu())
         return ConversationHandler.END
 
+# --- MENSAGENS DE VALOR INVÁLIDO (PRO-93) ---
+# O teto vem de VALOR_MAXIMO (registro.py), nunca escrito à mão.
+MENSAGEM_VALOR_GASTO_INVALIDO = (
+    "Não entendi o valor desse gasto. O valor precisa ser maior que zero e de "
+    f"no máximo {formatar_real(VALOR_MAXIMO)}. Envie de novo, por exemplo: "
+    "\"Gastei 45,90 no mercado\"."
+)
+MENSAGEM_VALOR_DIGITADO_INVALIDO = (
+    "Valor inválido. Digite um valor maior que zero e de no máximo "
+    f"{formatar_real(VALOR_MAXIMO)} (ex: <code>45,90</code>):"
+)
+
 # --- RECEITA AVULSA (PRO-86) ---
 MENSAGEM_VALOR_RECEITA_INVALIDO = (
-    "Não entendi o valor dessa receita. Envie de novo com o valor, por exemplo: "
+    "Não entendi o valor dessa receita. O valor precisa ser maior que zero e de "
+    f"no máximo {formatar_real(VALOR_MAXIMO)}. Envie de novo, por exemplo: "
     "\"Recebi 200 de reembolso\"."
 )
 MENSAGEM_TIPO_DESCONHECIDO = (
@@ -1119,10 +1153,9 @@ async def salvar_valor_editado_gasto(update: Update, context: ContextTypes.DEFAU
         await enviar_fluxo(context, user_id, "Sessão expirada. Registre o gasto novamente.", reply_markup=obter_teclado_menu())
         return ConversationHandler.END
 
-    try:
-        novo_valor = parse_valor(texto)
-    except ValueError:
-        await enviar_fluxo(context, user_id, "Valor inválido. Digite no formato correto (ex: <code>45,90</code>):", reply_markup=TECLADO_VOLTAR)
+    novo_valor = ler_valor_digitado(texto)
+    if novo_valor is None:
+        await enviar_fluxo(context, user_id, MENSAGEM_VALOR_DIGITADO_INVALIDO, reply_markup=TECLADO_VOLTAR)
         return EDITAR_ULTIMO_GASTO
 
     transacao_id = ultimo_gasto['transacao_id']
@@ -1862,13 +1895,11 @@ Retorne APENAS o JSON puro.
     if isinstance(descricao, str) and descricao.strip():
         pendente['descricao'] = descricao.strip()
 
-    if valor_bruto is not None:
-        try:
-            valor = float(valor_bruto)
-            if valor > 0:
-                pendente['valor'] = valor
-        except (TypeError, ValueError):
-            pass
+    # Valor recusado pela validar_valor (zero, negativo, acima do teto, NaN,
+    # infinito, texto) fica vazio e o bot pergunta o valor (PRO-93).
+    valor_validado = validar_valor(_ler_valor_receita(valor_bruto))
+    if valor_validado is not None:
+        pendente['valor'] = valor_validado
 
     if dia_bruto is not None:
         try:
@@ -1906,12 +1937,9 @@ async def receber_campo_faltante_recorrente(update: Update, context: ContextType
         pendente['descricao'] = texto
 
     elif campo_atual == 'valor':
-        try:
-            valor = parse_valor(texto)
-            if valor <= 0:
-                raise ValueError
-        except ValueError:
-            await enviar_fluxo(context, user_id, "Valor inválido. Digite no formato correto (ex: <code>12,90</code>):", reply_markup=teclado_erro)
+        valor = ler_valor_digitado(texto)
+        if valor is None:
+            await enviar_fluxo(context, user_id, MENSAGEM_VALOR_DIGITADO_INVALIDO, reply_markup=teclado_erro)
             return RECORRENTE_COMPLETAR
         pendente['valor'] = valor
 
@@ -2105,12 +2133,9 @@ async def salvar_novo_valor_recorrente(update: Update, context: ContextTypes.DEF
         await enviar_fluxo(context, user_id, "Sessão expirada. Volte ao menu.", reply_markup=obter_teclado_menu())
         return ConversationHandler.END
 
-    try:
-        valor = parse_valor(texto)
-        if valor <= 0:
-            raise ValueError
-    except ValueError:
-        await enviar_fluxo(context, user_id, "Valor inválido. Digite no formato correto (ex: <code>12,90</code>):", reply_markup=teclado_erro)
+    valor = ler_valor_digitado(texto)
+    if valor is None:
+        await enviar_fluxo(context, user_id, MENSAGEM_VALOR_DIGITADO_INVALIDO, reply_markup=teclado_erro)
         return RECORRENTE_EDITAR_VALOR
 
     item = _buscar_item_recorrente(user_id, gr_id)

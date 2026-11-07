@@ -889,6 +889,97 @@ def g30_resumo_mensal_com_receita():
     c.fim()
 
 
+# --- G31 A G36 (PRO-93): VALOR ZERO, NEGATIVO, ACIMA DO TETO, NaN E INFINITO ---
+# Acrescentados no fim para não mexer na ordem dos cenários antigos. Contra o
+# código sem a PRO-93, mostram o defeito (grava zero, negativo, infinito...);
+# depois dela, mostram a recusa.
+def g31_despesa_da_ia_com_valor_fora_da_regra():
+    casos = [
+        ("G31a", "0", 0),
+        ("G31b", "-50", -50),
+        ("G31c", "1000000.01 (acima do teto)", 1000000.01),
+        ("G31d", "1000000 (no teto: aceito)", 1000000),
+        ("G31e", "12.345 (arredondado para 12.35)", 12.345),
+        ("G31f", "NaN", float('nan')),
+        ("G31g", "Infinity", float('inf')),
+        ("G31h", "-Infinity", float('-inf')),
+    ]
+    for codigo, titulo, valor in casos:
+        resposta = resposta_json(tipo="despesa", valor=valor, categoria="Mercado", descricao="Compras",
+                                 estabelecimento=None)
+        c = Cenario(codigo, f"Despesa da IA com valor {titulo}", [resposta])
+        c.texto('salvar_gasto_livre', "mercado 10")
+        c.botao('responder_metodo_pagamento', 'metodo_debito_pix')
+        c.fim()
+
+
+def g32_editar_valor_com_valor_fora_da_regra():
+    casos = [
+        ("G32a", "inf"),
+        ("G32b", "nan"),
+        ("G32c", "1.000.000,01"),
+        ("G32d", "12,345"),
+        ("G32e", "1.000.000,00"),
+    ]
+    for codigo, valor in casos:
+        c = Cenario(codigo, f"Editar Valor com {valor!r}", [IA_PAO])
+        c.texto('salvar_gasto_livre', "pão na padaria cisne branco 12")
+        c.botao('responder_metodo_pagamento', 'metodo_debito_pix')
+        c.botao('iniciar_editar_ultimo_gasto', 'editar_ultimo_gasto')
+        c.botao('iniciar_editar_valor_ultimo_gasto', 'editar_gasto_valor')
+        c.texto('salvar_valor_editado_gasto', valor)
+        c.fim()
+
+
+def g33_receita_acima_do_teto():
+    for codigo, valor in (("G33a", 2000000), ("G33b", 1000000), ("G33c", 1000000.01)):
+        resposta = resposta_json(tipo="receita", valor=valor, categoria=None, descricao="Herança",
+                                 estabelecimento=None)
+        c = Cenario(codigo, f"Receita com valor {valor}", [resposta], com_receitas=True)
+        c.texto('salvar_gasto_livre', f"recebi {valor} de herança")
+        c.fim()
+
+
+def g34_recorrente_pela_ia_com_valor_fora_da_regra():
+    for codigo, valor in (("G34a", float('inf')), ("G34b", 1000000.01), ("G34c", float('nan')),
+                          ("G34d", 12.345)):
+        resposta = resposta_json(descricao="Spotify", valor=valor, dia_cobranca=14)
+        c = Cenario(codigo, f"Recorrente pela IA com valor {valor}", [resposta])
+        c.botao('iniciar_criar_recorrente', 'rec_criar_4')
+        c.texto('receber_texto_recorrente', "Spotify todo dia 14")
+        c.fim()
+
+
+def g35_recorrente_campo_faltante_com_valor_fora_da_regra():
+    resposta = resposta_json(descricao="Spotify", valor=None, dia_cobranca=14)
+    for codigo, valor in (("G35a", "nan"), ("G35b", "0"), ("G35c", "1.000.000,01"), ("G35d", "inf"),
+                          ("G35e", "-5"), ("G35f", "12,345")):
+        c = Cenario(codigo, f"Recorrente, campo que faltou (valor) com {valor!r}", [resposta])
+        c.botao('iniciar_criar_recorrente', 'rec_criar_4')
+        c.texto('receber_texto_recorrente', "Spotify todo dia 14")
+        c.texto('receber_campo_faltante_recorrente', valor)
+        c.fim()
+
+
+def g36_editar_valor_do_recorrente_com_valor_fora_da_regra():
+    for codigo, valor in (("G36a", "nan"), ("G36b", "0"), ("G36c", "1.000.000,01"), ("G36d", "inf"),
+                          ("G36e", "-5"), ("G36f", "12,345")):
+        c = Cenario(codigo, f"Editar Valor do recorrente com {valor!r}")
+        c.preparar("INSERT INTO gastos_recorrentes (user_id, categoria_nome, descricao, valor, dia_cobranca, "
+                   "criado_em) VALUES (?, 'Mercado', 'Academia', 99.9, 5, '2026-10-01 08:00:00')", (UID,))
+        c.botao('iniciar_editar_valor_recorrente', 'rec_editvalor_1')
+        c.texto('salvar_novo_valor_recorrente', valor)
+        c.fim()
+
+
+def g37_ler_valor_digitado():
+    c = Cenario("G37", "ler_valor_digitado (parse_valor + validar_valor), chamada direta")
+    for texto in ("45,90", "R$ 1.234,56", "12,345", "1.000.000,00", "1.000.000,01", "0", "-5", "abc", "inf",
+                  "nan", "-inf", "1e999", ""):
+        c.chamar('ler_valor_digitado', texto)
+    c.fim()
+
+
 def main():
     print("TESTE DE CARACTERIZAÇÃO DO REGISTRO DE GASTO (PRO-85)")
     g01_debito_pix_com_estabelecimento()
@@ -922,6 +1013,13 @@ def main():
     g28_painel_com_receita()
     g29_resumo_diario_com_receita()
     g30_resumo_mensal_com_receita()
+    g31_despesa_da_ia_com_valor_fora_da_regra()
+    g32_editar_valor_com_valor_fora_da_regra()
+    g33_receita_acima_do_teto()
+    g34_recorrente_pela_ia_com_valor_fora_da_regra()
+    g35_recorrente_campo_faltante_com_valor_fora_da_regra()
+    g36_editar_valor_do_recorrente_com_valor_fora_da_regra()
+    g37_ler_valor_digitado()
     print()
     print("FIM")
 

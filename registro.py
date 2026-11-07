@@ -21,7 +21,7 @@ As exceções não são embrulhadas: a mensagem de erro do bot mostra str(e)
 A parte da API (PRO-88, no fim do arquivo) é outra: prévia com o mesmo prompt,
 validação de tudo de novo na gravação, chave de toque duplo gravada na mesma
 transação do lançamento, e os erros viram ErroRegistro com um código (nunca
-str(e) da IA). O bot não usa essa parte.
+str(e) da IA). O bot usa só a validar_valor desta parte (PRO-93).
 """
 import asyncio
 import json
@@ -183,7 +183,7 @@ class GastoInterpretado(NamedTuple):
     None se vazia); a categoria e o estabelecimento nem são lidos. Em outro
     'tipo' qualquer, só 'tipo' vem preenchido."""
     tipo: str                         # dados['tipo'].strip().lower()
-    valor: Optional[float]            # despesa: float(dados['valor']); receita: _ler_valor_receita
+    valor: Optional[float]            # _ler_valor_receita(dados.get('valor')): float, ou None se não for número
     categoria: Optional[str]          # dados['categoria'].capitalize(); None fora da despesa
     descricao: Optional[str]          # despesa: dados.get('descricao', ''), como veio; receita: aparada
     estabelecimento: Optional[str]    # já limpo por normalizar_estabelecimento; None fora da despesa
@@ -222,9 +222,12 @@ async def interpretar_gasto(texto_usuario, categorias):
     5.000 de salário" nunca dar erro de categoria. Outro 'tipo' qualquer
     devolve cedo, sem ler nada além do tipo.
 
-    Na despesa, não valida o valor (zero ou negativo passam, como antes) e
-    não embrulha exceções: KeyError, ValueError, JSONDecodeError e os erros
-    da IA sobem iguais, porque a mensagem de erro do bot mostra str(e). A
+    Na despesa (PRO-93), o valor é lido como o da receita, sem exceção:
+    número ou texto numérico vira float; o resto (sem 'valor', 'doze', nulo)
+    vira None. Quem chama (o bot) confere com validar_valor e mostra a
+    mensagem de valor inválido. As demais leituras não embrulham exceções:
+    KeyError (sem 'tipo' ou sem 'categoria'), JSONDecodeError e os erros da
+    IA sobem iguais, porque a mensagem de erro do bot mostra str(e). A
     checagem "a categoria está na lista" vira o campo 'categoria_valida'; a
     mensagem de categoria não encontrada fica com quem chama."""
     prompt = montar_prompt_gasto(categorias, texto_usuario)
@@ -234,8 +237,10 @@ async def interpretar_gasto(texto_usuario, categorias):
 
 def ler_resposta_gasto(texto_resposta, categorias):
     """Lê o texto devolvido pela IA como o bot sempre leu (ver
-    interpretar_gasto): separado da chamada à IA na PRO-88, sem mudar as
-    leituras nem as exceções."""
+    interpretar_gasto): separado da chamada à IA na PRO-88. Desde a PRO-93, o
+    valor da despesa não levanta mais KeyError nem ValueError: vem como float
+    ou None (_ler_valor_receita); as outras leituras e exceções são as de
+    sempre."""
     dados = limpar_json_ia(texto_resposta)
 
     tipo = dados['tipo'].strip().lower()
@@ -247,7 +252,7 @@ def ler_resposta_gasto(texto_resposta, categorias):
     if tipo != 'despesa':
         return GastoInterpretado(tipo, None, None, None, None, False)
 
-    valor = float(dados['valor'])
+    valor = _ler_valor_receita(dados.get('valor'))
     categoria = dados['categoria'].capitalize()
     descricao = dados.get('descricao', '')
     estabelecimento = normalizar_estabelecimento(dados.get('estabelecimento'))
@@ -469,8 +474,8 @@ def momento_agora(agora=None):
 
 # --- REGISTRO PELA API DO MINI APP (PRO-88) ---
 # Regras das rotas POST /registro/interpretar, POST /gastos e POST /receitas.
-# A API só traduz ErroRegistro.codigo em status HTTP e monta o JSON. O bot não
-# usa esta parte (D12: a validar_valor entra no bot numa tarefa própria).
+# A API só traduz ErroRegistro.codigo em status HTTP e monta o JSON. O bot usa
+# a validar_valor e a VALOR_MAXIMO desta parte (PRO-93); o resto é só da API.
 VALOR_MAXIMO = 1_000_000.0          # D9: teto do valor (gasto e receita)
 TEXTO_MAXIMO = 200                  # D8: tamanho máximo do texto livre
 DESCRICAO_MAXIMA = 100              # D9
