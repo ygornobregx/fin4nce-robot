@@ -816,7 +816,8 @@ class TestEstruturaDasBoasVindas(unittest.TestCase):
         raiz = HOME[HOME.index(':root {'):HOME.index('}', HOME.index(':root {'))]
         for token in ('--cor-erro: #D93025;', '--cor-erro-fundo: #FFF5F4;', '--cor-receita-fundo: #15803D14;'):
             self.assertIn(token, raiz)
-        self.assertEqual(HOME.count('pathLength="1"'), 3)
+        # 6 = os 3 traços do "Buscando o Seu Cadastro..." + os 3 da tela da logo (PRO-100).
+        self.assertEqual(HOME.count('pathLength="1"'), 6)
         for quadro in ('@keyframes tracar-1', '@keyframes tracar-2', '@keyframes tracar-3', 'prefers-reduced-motion'):
             self.assertIn(quadro, HOME)
 
@@ -1181,6 +1182,268 @@ class TestRotuloDoGrafico(unittest.TestCase):
         self.assertIn('font-size: 12px', regra)
         self.assertIn('line-height: 16px', regra)
         self.assertNotIn('10.5px', regra)
+
+
+# ----------------------------------------------------------------------------
+# PRO-100: tela da logo com tempo mínimo (abertura e salvamento do cadastro)
+# ----------------------------------------------------------------------------
+
+def bloco_tela_logo():
+    """Texto do <div id="tela-logo"> até o comentário que abre o aviso de tela cheia (que vem logo depois)."""
+    inicio = HOME.index('<div id="tela-logo"')
+    return HOME[inicio:HOME.index('<!-- Aviso de tela cheia', inicio)]
+
+
+@unittest.skipUnless(NODE, 'node não encontrado no PATH')
+class TestTempoMinimoNoNode(unittest.TestCase):
+    def test_tempo_que_falta_nas_bordas(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            console.log(JSON.stringify({
+              minimo: TEMPO_MINIMO_LOGO_MS,
+              falta_total: tempoQueFalta(1000, 1000, 1800),
+              um_antes: tempoQueFalta(1000, 1000 + 1799, 1800),
+              no_minimo: tempoQueFalta(1000, 1000 + 1800, 1800),
+              um_depois: tempoQueFalta(1000, 1000 + 1801, 1800),
+              bem_depois: tempoQueFalta(1000, 1000 + 60000, 1800),
+              meio: tempoQueFalta(0, 500, 1800),
+              relogio_voltando: tempoQueFalta(1000, 400, 1800),
+              relogio_voltando_muito: tempoQueFalta(1000, -50000, 1800),
+            }));
+        """))
+        self.assertEqual(obtido, {
+            'minimo': 1800,
+            'falta_total': 1800,
+            'um_antes': 1,
+            'no_minimo': 0,
+            'um_depois': 0,
+            'bem_depois': 0,
+            'meio': 1300,
+            'relogio_voltando': 1800,        # nunca maior que o mínimo
+            'relogio_voltando_muito': 1800,
+        })
+
+    def test_com_tempo_minimo_rapido_com_sucesso_espera_o_que_falta_uma_vez(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            (async () => {
+              const saida = {};
+              // Relógio de mentira: 1ª leitura (início) = 100 ms; 2ª (resposta) = 100 + 300 ms.
+              const leituras = [100, 400];
+              const esperas = [];
+              const resposta = { dados: { id: 1 }, status: 201 };
+              saida.resultado = await comTempoMinimo(
+                Promise.resolve(resposta), 1800, (r) => r.erro === undefined,
+                () => leituras.shift(), async (ms) => { esperas.push(ms); }
+              );
+              saida.mesmoObjeto = saida.resultado === resposta;
+              saida.esperas = esperas;
+              console.log(JSON.stringify(saida));
+            })();
+        """))
+        self.assertEqual(obtido['esperas'], [1500])
+        self.assertTrue(obtido['mesmoObjeto'])
+        self.assertEqual(obtido['resultado'], {'dados': {'id': 1}, 'status': 201})
+
+    def test_com_tempo_minimo_o_inicio_anotado_antes_de_aguardar_a_promessa(self):
+        # A promessa só resolve DEPOIS de o relógio avançar: o início tem de ser a leitura anterior ao await.
+        obtido = rodar_node(com_funcoes_puras("""
+            (async () => {
+              let agora = 0;
+              const esperas = [];
+              const promessa = new Promise((resolver) => setTimeout(() => { agora = 700; resolver('ok'); }, 5));
+              const r = await comTempoMinimo(promessa, 1800, () => true, () => agora, async (ms) => { esperas.push(ms); });
+              console.log(JSON.stringify({ r, esperas }));
+            })();
+        """))
+        self.assertEqual(obtido, {'r': 'ok', 'esperas': [1100]})
+
+    def test_com_tempo_minimo_inicio_de_fora_conta_desde_o_comeco_da_pagina(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            (async () => {
+              const saida = {};
+              for (const [nome, agora] of Object.entries({ cedo: 600, tarde: 1800, muito_tarde: 5000 })) {
+                const esperas = [];
+                await comTempoMinimo(Promise.resolve('ok'), 1800, () => true, () => agora, async (ms) => { esperas.push(ms); }, 0);
+                saida[nome] = esperas;
+              }
+              console.log(JSON.stringify(saida));
+            })();
+        """))
+        self.assertEqual(obtido, {'cedo': [1200], 'tarde': [], 'muito_tarde': []})
+
+    def test_com_tempo_minimo_lento_nao_espera(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            (async () => {
+              const leituras = [0, 2500];
+              const esperas = [];
+              const r = await comTempoMinimo(Promise.resolve('ok'), 1800, () => true,
+                () => leituras.shift(), async (ms) => { esperas.push(ms); });
+              console.log(JSON.stringify({ r, esperas }));
+            })();
+        """))
+        self.assertEqual(obtido, {'r': 'ok', 'esperas': []})
+
+    def test_com_tempo_minimo_erro_nao_espera_mesmo_rapido(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            (async () => {
+              const erro = { erro: 422, detalhe: 'dados_invalidos' };
+              let leituras = 0;
+              const esperas = [];
+              const r = await comTempoMinimo(Promise.resolve(erro), 1800, (x) => x.erro === undefined,
+                () => { leituras++; return 0; }, async (ms) => { esperas.push(ms); });
+              // Pela regra da abertura: o aviso (erro) sai na hora; home e escolha esperam.
+              const deve = (x) => destinoDaCarga(x) !== 'aviso';
+              const destinos = {
+                home: deve([{ dados: {} }, { dados: {} }, { dados: {} }, { dados: {} }]),
+                escolha: deve([{ erro: 404, detalhe: 'usuario_nao_cadastrado' }, { erro: 404 }, { erro: 404 }, { erro: 404 }]),
+                aviso401: deve([{ erro: 401 }, { erro: 401 }, { erro: 401 }, { erro: 401 }]),
+                aviso409: deve([{ erro: 409, detalhe: 'cadastro_incompleto' }, { dados: {} }, { dados: {} }, { dados: {} }]),
+                avisoRede: deve([{ erro: 0 }, { erro: 0 }, { erro: 0 }, { erro: 0 }]),
+              };
+              // E pela regra do cadastro: 201 e 409 usuario_ja_cadastrado esperam; o resto não.
+              const cad = (x) => decisaoDoCadastro(x).seguir;
+              const cadastro = {
+                c201: cad({ dados: {}, status: 201 }),
+                c409: cad({ erro: 409, detalhe: 'usuario_ja_cadastrado' }),
+                c422: cad({ erro: 422 }),
+                c401: cad({ erro: 401 }),
+                c500: cad({ erro: 500 }),
+                c503: cad({ erro: 503, detalhe: 'banco_ocupado' }),
+                rede: cad({ erro: 0 }),
+              };
+              console.log(JSON.stringify({ r, esperas, leituras, destinos, cadastro }));
+            })();
+        """))
+        self.assertEqual(obtido['r'], {'erro': 422, 'detalhe': 'dados_invalidos'})
+        self.assertEqual(obtido['esperas'], [])
+        self.assertEqual(obtido['destinos'], {'home': True, 'escolha': True, 'aviso401': False, 'aviso409': False, 'avisoRede': False})
+        self.assertEqual(obtido['cadastro'], {'c201': True, 'c409': True, 'c422': False, 'c401': False,
+                                              'c500': False, 'c503': False, 'rede': False})
+
+
+class TestEstruturaDaTelaDaLogo(unittest.TestCase):
+    def test_nenhum_setinterval_no_arquivo(self):
+        self.assertNotIn('setInterval', HOME)
+
+    def test_constante_declarada_uma_vez_no_bloco_puro_e_vale_1800(self):
+        self.assertEqual(len(re.findall(r'\bconst\s+TEMPO_MINIMO_LOGO_MS\b', HOME)), 1)
+        self.assertIn('const TEMPO_MINIMO_LOGO_MS = 1800;', codigo_puro(HOME))
+        self.assertNotIn('TEMPO_MINIMO_LOGO_MS =', codigo_principal(HOME))
+        # Nenhum 1800 solto no código principal: quem precisa do mínimo usa a constante.
+        self.assertNotRegex(codigo_principal(HOME), r'\b1800\b')
+        for funcao in ('function tempoQueFalta', 'async function comTempoMinimo'):
+            with self.subTest(funcao=funcao):
+                self.assertEqual(HOME.count(funcao), 1)
+                self.assertIn(funcao, codigo_puro(HOME))
+
+    def test_tela_da_logo_visivel_no_html_com_a_logo_animada(self):
+        self.assertEqual(HOME.count('id="tela-logo"'), 1)
+        self.assertRegex(HOME, r'<div id="tela-logo" class="tela-logo">')
+        bloco = bloco_tela_logo()
+        self.assertNotRegex(bloco, r'(?<!aria-)hidden')
+        self.assertEqual(bloco.count('class="logo-animada"'), 1)
+        for traco in ('traco-1', 'traco-2', 'traco-3'):
+            with self.subTest(traco=traco):
+                self.assertEqual(bloco.count('class="traco %s" pathLength="1"' % traco), 1)
+        self.assertEqual(bloco.count('class="base"'), 3)
+        for classe in ('cabecalho cabecalho-registro', 'cabecalho-linha cabecalho-titulo', 'titulo-tela',
+                       'estado-central', 'estado-icone', 'estado-textos', 'estado-titulo', 'estado-texto'):
+            with self.subTest(classe=classe):
+                self.assertIn('class="%s' % classe, bloco)
+        # Sem seta de voltar na tela da logo.
+        self.assertNotIn('<button', bloco)
+        # Os 3 textos têm id (trocados só por textContent) e começam com os da abertura.
+        self.assertIn('id="tela-logo-cabecalho">L1d3r<', bloco)
+        self.assertIn('id="tela-logo-titulo">Abrindo o Seu Painel...<', bloco)
+        self.assertIn('id="tela-logo-texto">Só um instante.<', bloco)
+        # É o primeiro bloco do <body>, para a logo estar no primeiro desenho.
+        self.assertLess(HOME.index('<div id="tela-logo"'), HOME.index('<main id="tela"'))
+
+    def test_css_da_tela_da_logo_cobre_tudo_e_usa_so_variaveis(self):
+        regra = re.search(r'(?m)^\s*\.tela-logo\s*\{([^}]*)\}', HOME).group(1)
+        self.assertIn('position: fixed', regra)
+        self.assertIn('background: var(--cor-branco)', regra)
+        self.assertNotRegex(regra, r'#[0-9A-Fa-f]{3,8}\b')
+        z_logo = int(re.search(r'z-index:\s*(\d+)', regra).group(1))
+        regra_aviso = re.search(r'(?m)^\s*\.aviso-topo\s*\{([^}]*)\}', HOME).group(1)
+        z_aviso = int(re.search(r'z-index:\s*(\d+)', regra_aviso).group(1))
+        self.assertGreater(z_logo, z_aviso)
+        # A regra do movimento reduzido já cobre a logo (.logo-animada .traco).
+        reduzido = HOME[HOME.index('@media (prefers-reduced-motion: reduce)'):]
+        self.assertIn('.logo-animada .traco { animation: none; stroke-dashoffset: 0; opacity: 1; }', reduzido[:200])
+
+    def test_com_tempo_minimo_so_na_abertura_e_no_cadastro(self):
+        principal = codigo_principal(HOME)
+        self.assertIn('comTempoMinimo(', corpo_da_funcao(principal, 'async function carregar'))
+        self.assertIn('comTempoMinimo(', corpo_da_funcao(principal, 'async function enviarCadastro'))
+        for assinatura in ('async function interpretar', 'async function confirmar', 'function concluirRegistro',
+                           'async function buscarCadastroDoAmigo', 'async function carregarDetalhe',
+                           'function terminarTour'):
+            with self.subTest(funcao=assinatura):
+                corpo = corpo_da_funcao(principal, assinatura)
+                self.assertNotIn('comTempoMinimo', corpo)
+                self.assertNotIn('mostrarTelaLogo', corpo)
+        # Fora das duas funções, ninguém chama o tempo mínimo.
+        chamadas = principal.count('comTempoMinimo(')
+        self.assertEqual(chamadas, 2)
+
+    def test_abertura_so_na_primeira_carga(self):
+        principal = codigo_principal(HOME)
+        iniciar = corpo_da_funcao(principal, 'function iniciar()')
+        self.assertIn('carregar(true);', iniciar)
+        self.assertEqual(principal.count('carregar(true)'), 1)
+        # "Tentar de novo" não passa o evento do clique como 'abertura'; as outras chamadas ficam sem argumento.
+        self.assertIn('$("aviso-botao").addEventListener("click", () => carregar());', iniciar)
+        self.assertNotIn('addEventListener("click", carregar)', principal)
+        for assinatura in ('function concluirRegistro', 'async function buscarCadastroDoAmigo', 'function terminarTour'):
+            with self.subTest(funcao=assinatura):
+                self.assertIn('carregar();', corpo_da_funcao(principal, assinatura))
+        carregar = corpo_da_funcao(principal, 'async function carregar')
+        self.assertIn('async function carregar(abertura = false)', carregar)
+        self.assertIn('(r) => destinoDaCarga(r) !== "aviso"', carregar)
+        self.assertIn('TEMPO_MINIMO_LOGO_MS', carregar)
+        self.assertIn('() => performance.now(), esperar, 0)', carregar)
+        self.assertIn('if (abertura) esconderTelaLogo();', carregar)
+        # Fora do Telegram: esconde a logo e mostra o aviso, sem esperar.
+        sem_telegram = iniciar[iniciar.index('if (!initData)'):]
+        sem_telegram = sem_telegram[:sem_telegram.index('return;')]
+        self.assertIn('esconderTelaLogo();', sem_telegram)
+        self.assertIn('mostrarAviso(MENSAGEM_FORA_DO_TELEGRAM, false);', sem_telegram)
+        self.assertNotIn('comTempoMinimo', sem_telegram)
+
+    def test_cadastro_mostra_a_logo_com_o_post_na_hora(self):
+        enviar = corpo_da_funcao(codigo_principal(HOME), 'async function enviarCadastro').replace('\r\n', '\n')
+        self.assertIn('mostrarTelaLogo("Criar Cadastro", "Criando o Seu Cadastro...", '
+                      '"Guardando o seu nome, o dia e as categorias.");', enviar)
+        self.assertIn('gravarComTentativas((c) => enviarJson("/cadastro", c, 15000), corpo, esperar),\n', enviar)
+        self.assertIn('TEMPO_MINIMO_LOGO_MS, (r) => decisaoDoCadastro(r).seguir, () => performance.now(), esperar', enviar)
+        # A logo entra depois de travar o botão e antes do POST; sai no seguir (junto do tour) e no erro (na hora).
+        self.assertLess(enviar.index('e.enviando = true;'), enviar.index('mostrarTelaLogo('))
+        self.assertLess(enviar.index('mostrarTelaLogo('), enviar.index('gravarComTentativas('))
+        # 'enviando' só volta a falso depois da espera.
+        self.assertLess(enviar.index('comTempoMinimo('), enviar.index('e.enviando = false;'))
+        self.assertEqual(enviar.count('esconderTelaLogo();'), 2)
+        self.assertLess(enviar.index('abrirTour(e.nome);'), enviar.index('esconderTelaLogo();'))
+
+    def test_seta_e_backbutton_nao_fazem_nada_com_a_logo_na_tela(self):
+        voltar = corpo_da_funcao(codigo_principal(HOME), 'function voltarUmNivel')
+        primeira = voltar.split('\n')[1].strip()
+        self.assertEqual(primeira, 'if (!$("tela-logo").hidden) return; // a tela da logo está por cima: nada embaixo recebe comando (PRO-100)')
+
+    def test_textos_da_logo_so_por_textcontent_e_sem_innerhtml_novo(self):
+        principal = codigo_principal(HOME)
+        mostrar = corpo_da_funcao(principal, 'function mostrarTelaLogo')
+        for trecho in ('$("tela-logo-cabecalho").textContent = cabecalho;', '$("tela-logo-titulo").textContent = titulo;',
+                       '$("tela-logo-texto").textContent = texto;', '$("tela-logo").hidden = false;'):
+            self.assertIn(trecho, mostrar)
+        self.assertIn('$("tela-logo").hidden = true;', corpo_da_funcao(principal, 'function esconderTelaLogo'))
+        for padrao in (r'\.innerHTML\s*[+]?=', r'\.outerHTML\s*[+]?=', r'insertAdjacentHTML', r'document\.write'):
+            self.assertIsNone(re.search(padrao, HOME), padrao)
+
+    def test_textos_da_d5(self):
+        for texto in ('Abrindo o Seu Painel...', 'Só um instante.', 'Criar Cadastro', 'Criando o Seu Cadastro...',
+                      'Guardando o seu nome, o dia e as categorias.'):
+            with self.subTest(texto=texto):
+                self.assertIn(texto, HOME)
 
 
 if __name__ == '__main__':

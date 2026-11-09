@@ -830,6 +830,20 @@
       .logo-animada .traco { animation: none; stroke-dashoffset: 0; opacity: 1; }
     }
 
+    /* Tela da logo (PRO-100): por cima de tudo (z-index acima do aviso no topo), no padrão do quadro
+       AMIGO CARREGANDO. Fica visível no HTML para a logo aparecer no primeiro desenho da página; a camada
+       fixa com fundo branco bloqueia o toque no que está embaixo. */
+    .tela-logo {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      background: var(--cor-branco);
+    }
+    .tela-logo > .cabecalho { flex-shrink: 0; }
+
     /* Criar Cadastro: barra de 3 passos no cabeçalho */
     .progresso { padding: 20px 24px 0; display: flex; flex-direction: column; gap: 8px; }
     .progresso-barras { display: flex; gap: 6px; }
@@ -994,6 +1008,33 @@
   </style>
 </head>
 <body>
+  <!-- Tela da logo (PRO-100): visível desde o primeiro desenho (abertura do app); o script a esconde quando a
+       primeira carga termina. Os 3 textos são trocados por textContent a cada uso (abertura, salvar cadastro). -->
+  <div id="tela-logo" class="tela-logo">
+    <header class="cabecalho cabecalho-registro">
+      <div class="cabecalho-linha cabecalho-titulo">
+        <h1 class="titulo-tela" id="tela-logo-cabecalho">L1d3r</h1>
+      </div>
+    </header>
+
+    <div class="estado-central" role="status">
+      <span class="estado-icone">
+        <svg class="logo-animada" viewBox="0 0 32 32" aria-hidden="true">
+          <path class="base" d="M8 8L11.5 5"/>
+          <path class="base" d="M11.5 5V22.5C11.5 25.3 10 26.8 8 26.8C6.2 26.8 5.3 25.4 6.3 24.4C7.4 23.3 10.2 24 13 24H24.5L27.5 21.2L24.5 18.4H20.5"/>
+          <path class="base" d="M24.5 18.4L27.5 15.6L24.5 12.8H19.5"/>
+          <path class="traco traco-1" pathLength="1" d="M8 8L11.5 5"/>
+          <path class="traco traco-2" pathLength="1" d="M11.5 5V22.5C11.5 25.3 10 26.8 8 26.8C6.2 26.8 5.3 25.4 6.3 24.4C7.4 23.3 10.2 24 13 24H24.5L27.5 21.2L24.5 18.4H20.5"/>
+          <path class="traco traco-3" pathLength="1" d="M24.5 18.4L27.5 15.6L24.5 12.8H19.5"/>
+        </svg>
+      </span>
+      <div class="estado-textos">
+        <p class="estado-titulo" id="tela-logo-titulo">Abrindo o Seu Painel...</p>
+        <p class="estado-texto" id="tela-logo-texto">Só um instante.</p>
+      </div>
+    </div>
+  </div>
+
   <!-- Aviso de tela cheia: fora do Telegram e mensagens de erro -->
   <div id="aviso" class="aviso" hidden>
     <p id="aviso-texto"></p>
@@ -1862,6 +1903,34 @@
       return !Array.isArray(movimentacoes) || movimentacoes.length === 0;
     }
 
+    // ---------- Tempo mínimo da tela da logo (PRO-100) ----------
+    // 1800 ms = o tempo de a logo se desenhar inteira uma vez: no ciclo de 2,4 s da animação (.logo-animada),
+    // o traço 3 termina em 75% (0,75 x 2400 = 1800 ms). Com a API rápida, a tela sai com a logo completa,
+    // nunca cortada no meio do traço. Uma constante só, para a abertura e para os salvamentos.
+    const TEMPO_MINIMO_LOGO_MS = 1800;
+
+    // Quanto ainda falta (ms) para completar o mínimo: minimo - (agora - inicio), entre 0 e o mínimo
+    // (um relógio que volta não aumenta a espera, e depois do mínimo não falta nada).
+    function tempoQueFalta(inicioMs, agoraMs, minimoMs) {
+      const falta = minimoMs - (agoraMs - inicioMs);
+      return Math.min(Math.max(falta, 0), minimoMs);
+    }
+
+    // Espera a 'promessa' (a chamada à API já saiu quando o chamador a criou). Se deveEsperar(resultado)
+    // for falso (erro), devolve o resultado na hora. Se for verdadeiro, espera SÓ o que falta para o mínimo
+    // (uma única chamada a esperar(ms), e só se faltar algo) e devolve o mesmo resultado.
+    // 'relogio' e 'esperar' vêm de fora para o teste poder trocá-los. O início conta do 'inicioMs', se vier
+    // (na abertura, 0 no relógio performance.now(): a logo já estava na tela desde o começo da página);
+    // senão, de relogio() no instante da chamada (o cadastro: a logo aparece junto com o POST).
+    async function comTempoMinimo(promessa, minimoMs, deveEsperar, relogio, esperar, inicioMs) {
+      const inicio = inicioMs === undefined ? relogio() : inicioMs;
+      const resultado = await promessa;
+      if (!deveEsperar(resultado)) return resultado;
+      const falta = tempoQueFalta(inicio, relogio(), minimoMs);
+      if (falta > 0) await esperar(falta);
+      return resultado;
+    }
+
     // ---------- Entrada (PRO-97, D1): para onde vai a primeira carga ----------
     // 'resultados' = [me, resumo, historico, recentes] no formato do 'chamar'.
     // "home": tudo certo; "escolha": o /me respondeu 404 usuario_nao_cadastrado (sem cadastro);
@@ -2243,12 +2312,34 @@
       $("extrato").hidden = true;
     }
 
-    async function carregar() {
+    // ---------- Tela da logo (PRO-100) ----------
+    // Mostra a tela da logo com os 3 textos (sair de hidden reinicia a animação do começo) / esconde.
+    function mostrarTelaLogo(cabecalho, titulo, texto) {
+      $("tela-logo-cabecalho").textContent = cabecalho;
+      $("tela-logo-titulo").textContent = titulo;
+      $("tela-logo-texto").textContent = texto;
+      $("tela-logo").hidden = false;
+    }
+
+    function esconderTelaLogo() {
+      $("tela-logo").hidden = true;
+    }
+
+    // 'abertura' = a primeira carga (a chamada do iniciar): a tela da logo, já visível no HTML, fica até o
+    // mínimo de TEMPO_MINIMO_LOGO_MS contado desde o começo da página; o aviso (erro) sai na hora.
+    // As outras chamadas (Registrar, tour, "Já Sou Amigo do Adm", "Tentar de novo") seguem com "Carregando..."
+    // no cabeçalho e sem tempo mínimo.
+    async function carregar(abertura = false) {
       voltarParaCarregando();
       mostrarDataESaudacao("");
-      const resultados = await Promise.all([
+      const chamadas = Promise.all([
         chamar("/me"), chamar("/resumo"), chamar("/historico"), chamar("/movimentacoes/recentes"),
       ]);
+      const resultados = abertura
+        ? await comTempoMinimo(chamadas, TEMPO_MINIMO_LOGO_MS, (r) => destinoDaCarga(r) !== "aviso", () => performance.now(), esperar, 0)
+        : await chamadas;
+      // O destino é mostrado logo abaixo, na mesma tarefa: a logo some sem um desenho no meio.
+      if (abertura) esconderTelaLogo();
       // Sem cadastro (404 usuario_nao_cadastrado do /me): a escolha inicial (PRO-97, D1), no lugar do aviso.
       const destino = destinoDaCarga(resultados);
       if (destino === "escolha") {
@@ -2520,6 +2611,7 @@
 
     // Seta do cabeçalho e BackButton do Telegram: sobem UM nível por vez.
     function voltarUmNivel() {
+      if (!$("tela-logo").hidden) return; // a tela da logo está por cima: nada embaixo recebe comando (PRO-100)
       if (!$("cadastro").hidden) {
         voltarNoCadastro();           // passo anterior; do passo 1, a escolha inicial (PRO-97)
       } else if (!$("amigo").hidden) {
@@ -3005,20 +3097,29 @@
     // Continuar do passo 3: desabilita no primeiro toque e manda o POST /cadastro com as marcadas.
     // 503 banco_ocupado e falha de rede: até 3 tentativas (1 s e 2 s), as mesmas do Registrar. É seguro
     // repetir: o servidor recusa um segundo cadastro (409), e o 409 também segue para o tour.
+    // PRO-100: a tela da logo cobre tudo enquanto o POST (com as novas tentativas) corre. Seguir (201 ou 409
+    // usuario_ja_cadastrado) espera o mínimo de TEMPO_MINIMO_LOGO_MS contado do toque e abre o tour; o erro
+    // tira a logo na hora e mostra a mensagem acima do Continuar. 'enviando' só desliga depois da espera.
     async function enviarCadastro() {
       const e = cadastroEstado;
       if (e.passo !== 3 || !podeContinuarCadastro(e)) return;
       e.enviando = true;
       e.erro = null;
       atualizarCadastro();
+      mostrarTelaLogo("Criar Cadastro", "Criando o Seu Cadastro...", "Guardando o seu nome, o dia e as categorias.");
       const corpo = montarCorpoCadastro(e.nome, e.dia, e.categorias);
-      const resultado = await gravarComTentativas((c) => enviarJson("/cadastro", c, 15000), corpo, esperar);
+      const resultado = await comTempoMinimo(
+        gravarComTentativas((c) => enviarJson("/cadastro", c, 15000), corpo, esperar),
+        TEMPO_MINIMO_LOGO_MS, (r) => decisaoDoCadastro(r).seguir, () => performance.now(), esperar
+      );
       e.enviando = false;
       const decisao = decisaoDoCadastro(resultado);
       if (decisao.seguir) {
         abrirTour(e.nome);
+        esconderTelaLogo(); // na mesma tarefa do abrirTour: sem um desenho no meio
         return;
       }
+      esconderTelaLogo();
       e.erro = decisao.mensagem;
       atualizarCadastro();
     }
@@ -3099,8 +3200,9 @@
         try { tg.setBackgroundColor("#FFFFFF"); } catch (e) { /* versão antiga */ }
       }
 
-      // Fora do Telegram (initData vazio): só o aviso, nenhuma chamada à API.
+      // Fora do Telegram (initData vazio): só o aviso, nenhuma chamada à API e nenhuma espera (PRO-100).
       if (!initData) {
+        esconderTelaLogo();
         mostrarAviso(MENSAGEM_FORA_DO_TELEGRAM, false);
         return;
       }
@@ -3110,7 +3212,7 @@
       document.querySelectorAll(".atalho:not(#atalho-registrar)").forEach((b) => b.addEventListener("click", avisarEmBreve));
       iniciarRegistro();
       iniciarBoasVindas();
-      $("aviso-botao").addEventListener("click", carregar);
+      $("aviso-botao").addEventListener("click", () => carregar()); // sem o evento no lugar do 'abertura'
 
       // Detalhe do gasto: toque na linha, voltar (cabeçalho, erro ou BackButton do Telegram) e ações "Em breve".
       // Só a linha com data-id-gasto abre o detalhe; a receita ainda não tem tela (PRO-92, D2): "Em breve".
@@ -3129,7 +3231,7 @@
         // no cadastro, um passo para trás; em "Já Sou Amigo do Adm", a escolha inicial (PRO-97).
         try { tg.BackButton.onClick(voltarUmNivel); } catch (e) { /* versão antiga */ }
       }
-      carregar();
+      carregar(true); // primeira carga: tela da logo com tempo mínimo (PRO-100)
     }
 
     iniciar();
