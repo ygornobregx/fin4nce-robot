@@ -121,6 +121,11 @@ COLUNAS_ESPERADAS = {
     'parcelamentos': [
         ('ciclo_referencia', 'TEXT'),
     ],
+    # PRO-87: estabelecimento do recorrente criado pela API do Mini App (NULL nos
+    # criados pelo chat); o job passa para o gasto lançado.
+    'gastos_recorrentes': [
+        ('estabelecimento', 'TEXT'),
+    ],
 }
 
 def migrar_colunas_faltantes(cursor):
@@ -193,8 +198,9 @@ def iniciar_banco():
     )''')
     # Chave de idempotência das gravações pela API (PRO-88): uma linha por
     # chave e por usuário, gravada na mesma transação do lançamento. tipo é
-    # 'gasto' ou 'receita'; lancamento_id = transacoes.id (parcela 1 no
-    # parcelado) ou receitas.id; criado_em em Brasília.
+    # 'gasto', 'receita' ou, desde a PRO-87, 'recorrente'; lancamento_id =
+    # transacoes.id (parcela 1 no parcelado), receitas.id ou
+    # gastos_recorrentes.id; criado_em em Brasília.
     cursor.execute('''CREATE TABLE IF NOT EXISTS chaves_registro (
         user_id INTEGER NOT NULL,
         chave TEXT NOT NULL,
@@ -2753,22 +2759,24 @@ def _lancar_item_recorrente(conn, user_id, gr_id, ciclo):
     cobrança não foi lançada.
     """
     item = conn.execute(
-        'SELECT categoria_nome, descricao, valor, ultimo_ciclo_cobrado FROM gastos_recorrentes WHERE id = ?',
+        'SELECT categoria_nome, descricao, valor, ultimo_ciclo_cobrado, estabelecimento FROM gastos_recorrentes WHERE id = ?',
         (gr_id,)
     ).fetchone()
 
     if not item:
         return None
 
-    categoria_nome, descricao, valor, ultimo_ciclo_cobrado = item
+    categoria_nome, descricao, valor, ultimo_ciclo_cobrado, estabelecimento = item
     if ultimo_ciclo_cobrado == ciclo:
         return None
 
     momento = datetime.now(FUSO_BRASILIA).strftime('%Y-%m-%d %H:%M:%S')
     cursor = conn.cursor()
     # Mesmo lançamento de um gasto comum: o gasto da categoria e a Sobra do
-    # Mês saem da fonte única (calculos.py), sem cálculo próprio aqui.
-    if not debitar_categoria(cursor, user_id, categoria_nome, valor, momento, descricao=descricao):
+    # Mês saem da fonte única (calculos.py), sem cálculo próprio aqui. O
+    # estabelecimento (PRO-87) vai para o gasto lançado; NULL se não houver.
+    if not debitar_categoria(cursor, user_id, categoria_nome, valor, momento, descricao=descricao,
+                             estabelecimento=estabelecimento):
         print(f"⚠️ Gasto recorrente {gr_id} não lançado: categoria '{categoria_nome}' não existe mais para o usuário {user_id}.")
         return None
 

@@ -2,7 +2,9 @@
 formatar_estabelecimento e a gravação em debitar_categoria. Desde a PRO-83,
 também o lançamento de um gasto recorrente (_lancar_item_recorrente), que só
 dispara às 05:00 e por isso é coberto aqui, e não no teste manual, e a etapa
-dos nomes do cadastro (receber_nomes_categorias), sem nomes repetidos.
+dos nomes do cadastro (receber_nomes_categorias), sem nomes repetidos. Desde a
+PRO-87 (D4), o recorrente com estabelecimento grava o estabelecimento no gasto
+lançado; sem, continua NULL.
 
 Roda com `python testes_estabelecimento.py`. Não usa .env nem rede: desde a
 PRO-85, normalizar_estabelecimento e debitar_categoria vêm do registro.py
@@ -69,7 +71,8 @@ def novo_banco():
             valor REAL, data_transacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP, metodo_pagamento TEXT,
             descricao TEXT, parcelamento_id INTEGER, estabelecimento TEXT);
         CREATE TABLE gastos_recorrentes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, categoria_nome TEXT,
-            descricao TEXT, valor REAL, dia_cobranca INTEGER, criado_em TEXT, ultimo_ciclo_cobrado TEXT);
+            descricao TEXT, valor REAL, dia_cobranca INTEGER, criado_em TEXT, ultimo_ciclo_cobrado TEXT,
+            estabelecimento TEXT);
     ''')
     conn.execute("INSERT INTO categorias (user_id, nome, orcamento_mensal, saldo_atual) VALUES (?, 'Roupas', 1000, 1000)",
                  (UID,))
@@ -217,6 +220,33 @@ class TestLancarItemRecorrente(unittest.TestCase):
     def test_recorrente_inexistente_devolve_none(self):
         self.assertIsNone(lancar_item_recorrente(self.conn, UID, 99, self.CICLO))
         self.assertEqual(self.transacoes(), [])
+
+    def mudar_estabelecimento(self, valor):
+        self.conn.execute("UPDATE gastos_recorrentes SET estabelecimento = ? WHERE id = 1", (valor,))
+        self.conn.commit()
+
+    def test_com_estabelecimento_grava_o_estabelecimento_no_gasto_lancado(self):
+        # PRO-87 (D4): o recorrente criado pelo Mini App leva o estabelecimento ao gasto.
+        self.mudar_estabelecimento('Smart Fit')
+        corpo = lancar_item_recorrente(self.conn, UID, 1, self.CICLO)
+        self.assertEqual(self.transacoes(), [('Roupas', 99.9, 'Academia & Cia', None, None, 'Smart Fit')])
+        self.assertEqual(self.ciclo_cobrado(), self.CICLO)
+        # A mensagem do job não muda (não mostra o estabelecimento).
+        self.assertEqual(corpo,
+                         "Descrição: <b>Academia &amp; Cia</b>\n"
+                         "Categoria: <b>Roupas</b>\n"
+                         "Valor: <b>R$ 99,90</b>")
+
+    def test_estabelecimento_so_com_espacos_grava_null_no_gasto(self):
+        # Passa pela mesma limpeza do debitar_categoria (normalizar_estabelecimento).
+        self.mudar_estabelecimento('   ')
+        lancar_item_recorrente(self.conn, UID, 1, self.CICLO)
+        self.assertEqual(self.transacoes(), [('Roupas', 99.9, 'Academia & Cia', None, None, None)])
+
+    def test_estabelecimento_com_espacos_nas_pontas_grava_aparado(self):
+        self.mudar_estabelecimento('  Smart Fit ')
+        lancar_item_recorrente(self.conn, UID, 1, self.CICLO)
+        self.assertEqual(self.transacoes()[0][5], 'Smart Fit')
 
 
 def carregar_cadastro():

@@ -15,6 +15,10 @@ Rota de cadastro (PRO-96): POST /cadastro cria o cadastro de quem ainda não tem
 (renda 0, sem alerta diário, categorias sem repetição) e recusa quem já tem
 (409). As regras ficam no cadastro.py, o mesmo módulo que o bot usa.
 
+Rotas dos gastos recorrentes (PRO-87): GET /categorias, GET /recorrentes,
+POST /recorrentes (uma vez só por chave), PUT /recorrentes/{id} e
+DELETE /recorrentes/{id}. As regras ficam no recorrentes.py.
+
 Também serve, na mesma origem, a home do Mini App em /app (mini-apps/home, PRO-77)
 e a página de diagnóstico das rotas em /teste (mini-apps/teste-initdata).
 
@@ -38,6 +42,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import cadastro
+import recorrentes
 import registro
 from api.initdata import InitDataError, validate_init_data
 from calculos import (
@@ -312,7 +317,8 @@ def obter_limite_interpretacao() -> LimiteDeChamadas:
 
 
 # Códigos do registro.ErroRegistro que não são 422.
-STATUS_ERRO_REGISTRO = {"resposta_ia_invalida": 502, "ia_indisponivel": 503, "banco_ocupado": 503}
+STATUS_ERRO_REGISTRO = {"resposta_ia_invalida": 502, "ia_indisponivel": 503, "banco_ocupado": 503,
+                        "recorrente_nao_encontrado": 404}  # PRO-87
 
 
 def erro_registro(erro: registro.ErroRegistro) -> HTTPException:
@@ -326,7 +332,8 @@ def erro_interno(erro: Exception, rotulo: str = "Registro") -> HTTPException:
     """Erro inesperado nas rotas que gravam: 500 {"detail": "erro_interno"}.
     Nem a resposta nem o log levam a mensagem (a do banco pode trazer SQL ou
     dados) nem o traceback; o log leva só o código e o nome da classe.
-    'rotulo' diz de que rota veio ("Registro" ou, desde a PRO-96, "Cadastro")."""
+    'rotulo' diz de que rota veio ("Registro", desde a PRO-96 "Cadastro" e,
+    desde a PRO-87, "Recorrentes")."""
     logger.error("%s falhou: erro_interno (%s)", rotulo, type(erro).__name__)
     return HTTPException(status_code=500, detail="erro_interno")
 
@@ -504,6 +511,142 @@ def cadastrar(pedido: PedidoCadastro, usuario: dict = Depends(usuario_autenticad
         "dia_fechamento": criado.dia_fechamento,
         "categorias": criado.categorias,
     }
+
+
+# --- GASTOS RECORRENTES (PRO-87) ---
+# Contrato na nota da PRO-87 (base das telas da PRO-101). Os erros do
+# recorrentes.py são registro.ErroRegistro: 404 recorrente_nao_encontrado,
+# 503 banco_ocupado e 422 nos demais (STATUS_ERRO_REGISTRO). O id da URL vai
+# sempre junto com o user_id do initData na consulta.
+class PedidoRecorrente(BaseModel):
+    """Corpo do PUT. Campos soltos (Any): quem confere é o recorrentes.py, com
+    os códigos do contrato (ex.: o dia tem de ser inteiro de verdade, não 12.0
+    nem "12"). O estabelecimento é texto ou null, como no /gastos. Campos a
+    mais (user_id, criado_em, ultimo_ciclo_cobrado...) são ignorados."""
+    dia_cobranca: Any = None
+    valor: Any = None
+    descricao: Any = None
+    estabelecimento: Optional[str] = None
+    categoria: Any = None
+
+
+class PedidoNovoRecorrente(PedidoRecorrente):
+    """Corpo do POST: o do PUT mais a chave de toque duplo (UUID v4)."""
+    chave: Any = None
+
+
+def recorrente_json(recorrente: recorrentes.Recorrente) -> dict:
+    """Formato de um recorrente, o mesmo em todas as rotas."""
+    return {
+        "id": recorrente.id,
+        "descricao": recorrente.descricao,
+        "estabelecimento": recorrente.estabelecimento,
+        "categoria": recorrente.categoria,
+        "valor": em_reais(recorrente.valor),
+        "dia_cobranca": recorrente.dia_cobranca,
+    }
+
+
+@app.get("/categorias")
+def listar_categorias(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db)):
+    """Nomes das categorias do usuário, na ordem da registro.listar_categorias
+    (a mesma do prompt da IA e da checagem da categoria)."""
+    user_id = usuario["id"]
+    try:
+        carregar_cadastro(conn, user_id)
+        categorias = registro.listar_categorias(conn, user_id)
+    except HTTPException:
+        raise
+    except Exception as erro:
+        raise erro_interno(erro, "Recorrentes") from None
+    return {"categorias": categorias}
+
+
+@app.get("/recorrentes")
+def listar_recorrentes(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db)):
+    """Os gastos recorrentes do usuário, por dia de cobrança (e id), e o total
+    mensal (soma dos valores; 0.0 sem nenhum)."""
+    user_id = usuario["id"]
+    try:
+        carregar_cadastro(conn, user_id)
+        lista = recorrentes.listar_recorrentes(conn, user_id)
+    except HTTPException:
+        raise
+    except Exception as erro:
+        raise erro_interno(erro, "Recorrentes") from None
+    return {
+        "recorrentes": [recorrente_json(recorrente) for recorrente in lista.recorrentes],
+        "total_mensal": em_reais(lista.total_mensal),
+    }
+
+
+@app.post("/recorrentes", status_code=201)
+def criar_recorrente(pedido: PedidoNovoRecorrente, response: Response, usuario: dict = Depends(usuario_autenticado),
+                     conn=Depends(obter_conexao_db), agora: datetime = Depends(obter_agora)):
+    """Cria o gasto recorrente (sem IA). 201 se gravou; 200 com repetido=true
+    se a mesma chave já tinha sido gravada (o recorrente original, como está
+    agora). criado_em do servidor, em Brasília; nada é lançado na hora (o job
+    das 05:00 lança no próximo dia de cobrança). Banco ocupado depois das
+    novas tentativas: 503 banco_ocupado (a tela reenvia o MESMO corpo, com a
+    MESMA chave). Erro inesperado: 500 erro_interno, sem detalhes."""
+    user_id = usuario["id"]
+    try:
+        carregar_cadastro(conn, user_id)
+        recorrente = recorrentes.criar_recorrente_api(
+            conn, user_id, pedido.chave, pedido.dia_cobranca, pedido.valor, pedido.descricao,
+            pedido.estabelecimento, pedido.categoria, registro.momento_agora(agora)
+        )
+    except HTTPException:
+        raise
+    except registro.ErroRegistro as erro:
+        raise erro_registro(erro) from None
+    except Exception as erro:
+        raise erro_interno(erro, "Recorrentes") from None
+    if recorrente.repetido:
+        response.status_code = 200
+    return dict(recorrente_json(recorrente), repetido=recorrente.repetido)
+
+
+@app.put("/recorrentes/{recorrente_id}")
+def editar_recorrente(recorrente_id: int, pedido: PedidoRecorrente, usuario: dict = Depends(usuario_autenticado),
+                      conn=Depends(obter_conexao_db)):
+    """Edita os 5 campos do recorrente do usuário: 422 dos campos antes da
+    existência; depois 404 recorrente_nao_encontrado (inexistente ou de outro
+    usuário, sem dizer qual); depois 422 descricao_repetida. Não mexe no
+    ciclo já cobrado nem na data de criação. 200 com o recorrente como ficou."""
+    user_id = usuario["id"]
+    try:
+        carregar_cadastro(conn, user_id)
+        recorrente = recorrentes.editar_recorrente(
+            conn, user_id, recorrente_id, pedido.dia_cobranca, pedido.valor, pedido.descricao,
+            pedido.estabelecimento, pedido.categoria
+        )
+    except HTTPException:
+        raise
+    except registro.ErroRegistro as erro:
+        raise erro_registro(erro) from None
+    except Exception as erro:
+        raise erro_interno(erro, "Recorrentes") from None
+    return recorrente_json(recorrente)
+
+
+@app.delete("/recorrentes/{recorrente_id}")
+def apagar_recorrente(recorrente_id: int, usuario: dict = Depends(usuario_autenticado),
+                      conn=Depends(obter_conexao_db)):
+    """Apaga o recorrente do usuário (as transações já lançadas ficam). 404
+    recorrente_nao_encontrado se não existe, é de outro usuário ou já foi
+    apagado (a tela trata o 404 repetido como "já apagado")."""
+    user_id = usuario["id"]
+    try:
+        carregar_cadastro(conn, user_id)
+        apagado = recorrentes.apagar_recorrente(conn, user_id, recorrente_id)
+    except HTTPException:
+        raise
+    except registro.ErroRegistro as erro:
+        raise erro_registro(erro) from None
+    except Exception as erro:
+        raise erro_interno(erro, "Recorrentes") from None
+    return {"id": apagado, "apagado": True}
 
 
 class ArquivosSemCache(StaticFiles):

@@ -41,7 +41,8 @@ ESQUEMA = '''
         descricao TEXT, valor_total REAL, valor_parcela REAL, total_parcelas INTEGER,
         parcelas_pagas INTEGER DEFAULT 1, data_criacao TEXT, ativo INTEGER DEFAULT 1, ciclo_referencia TEXT);
     CREATE TABLE gastos_recorrentes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, categoria_nome TEXT,
-        descricao TEXT, valor REAL, dia_cobranca INTEGER, criado_em TEXT, ultimo_ciclo_cobrado TEXT);
+        descricao TEXT, valor REAL, dia_cobranca INTEGER, criado_em TEXT, ultimo_ciclo_cobrado TEXT,
+        estabelecimento TEXT);
     CREATE TABLE transferencias (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, categoria_origem TEXT,
         categoria_destino TEXT, valor REAL, data_transferencia TEXT);
     CREATE TABLE receitas (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,

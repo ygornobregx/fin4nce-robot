@@ -13,6 +13,10 @@
     #registro label { display: block; margin: 8px 0 2px; font-size: .9rem; }
     #registro input, #registro select, #registro textarea { width: 100%; box-sizing: border-box; padding: 6px; font-size: 1rem; }
     #registro button { margin: 10px 8px 0 0; padding: 8px 14px; font-size: 1rem; }
+    #recorrentes { margin-top: 28px; padding-top: 8px; border-top: 1px solid rgba(127,127,127,.4); }
+    #recorrentes label { display: block; margin: 8px 0 2px; font-size: .9rem; }
+    #recorrentes input { width: 100%; box-sizing: border-box; padding: 6px; font-size: 1rem; }
+    #recorrentes button { margin: 10px 8px 0 0; padding: 8px 14px; font-size: 1rem; }
   </style>
 </head>
 <body>
@@ -45,6 +49,29 @@
     <button id="reg-gravar" type="button">Gravar (2 pedidos juntos)</button>
     <h2 id="reg-gravar-titulo">Gravação: ainda não pedida</h2>
     <pre id="reg-gravar-respostas"></pre>
+  </div>
+  <div id="recorrentes">
+    <h1>Recorrentes (diagnóstico)</h1>
+    <p>PRO-87. "Categorias" e "Listar" só leem. "Criar" gera uma chave nova e manda o MESMO pedido duas vezes ao mesmo tempo, com essa chave: uma resposta deve vir 201 e a outra 200 com "repetido": true, com o mesmo id. "Editar" e "Apagar" usam o id do campo abaixo.</p>
+    <button id="rec-categorias" type="button">Categorias (GET /categorias)</button>
+    <button id="rec-listar" type="button">Listar (GET /recorrentes)</button>
+    <label for="rec-dia">Dia da cobrança (1 a 31)</label>
+    <input id="rec-dia" type="number" min="1" max="31" step="1" inputmode="numeric">
+    <label for="rec-valor">Valor</label>
+    <input id="rec-valor" type="number" step="0.01" inputmode="decimal">
+    <label for="rec-descricao">Descrição (até 30 caracteres)</label>
+    <input id="rec-descricao" type="text">
+    <label for="rec-estabelecimento">Estabelecimento (opcional, até 60)</label>
+    <input id="rec-estabelecimento" type="text">
+    <label for="rec-categoria">Categoria (nome exato)</label>
+    <input id="rec-categoria" type="text">
+    <button id="rec-criar" type="button">Criar (2 pedidos juntos, mesma chave)</button>
+    <label for="rec-id">Id do recorrente (Editar e Apagar)</label>
+    <input id="rec-id" type="number" min="1" step="1" inputmode="numeric">
+    <button id="rec-editar" type="button">Editar (PUT)</button>
+    <button id="rec-apagar" type="button">Apagar (DELETE)</button>
+    <h2 id="rec-titulo">Recorrentes: nada pedido ainda</h2>
+    <pre id="rec-respostas"></pre>
   </div>
   <script>
     const status = document.getElementById("status");
@@ -167,6 +194,79 @@
       } catch (e) {
         $("reg-gravar-titulo").textContent = "Gravação: falha ao chamar a API";
       }
+    });
+
+    // --- Recorrentes (diagnóstico, PRO-87) ---
+    // Qualquer método; o texto da API só entra na página por textContent.
+    async function chamarRota(metodo, rota, corpo) {
+      const opcoes = {
+        method: metodo,
+        headers: { "Authorization": "tma " + (tg ? tg.initData : ""), "ngrok-skip-browser-warning": "1" }
+      };
+      if (corpo !== undefined) {
+        opcoes.headers["Content-Type"] = "application/json";
+        opcoes.body = JSON.stringify(corpo);
+      }
+      const r = await fetch(rota, opcoes);
+      const texto = await r.text();
+      let json = null;
+      try { json = JSON.parse(texto); } catch (e) { /* resposta sem JSON (ex.: 500) */ }
+      return { status: r.status, json, texto };
+    }
+
+    function numeroOuNulo(id) {
+      return $(id).value === "" ? null : Number($(id).value);
+    }
+
+    // Os 5 campos do formulário (corpo do PUT; o POST leva também a chave).
+    function camposRecorrente() {
+      return {
+        dia_cobranca: numeroOuNulo("rec-dia"),
+        valor: numeroOuNulo("rec-valor"),
+        descricao: $("rec-descricao").value,
+        estabelecimento: $("rec-estabelecimento").value || null,
+        categoria: $("rec-categoria").value
+      };
+    }
+
+    async function executarRecorrente(rotulo, acao) {
+      $("rec-titulo").textContent = rotulo + ": aguardando...";
+      $("rec-respostas").textContent = "";
+      try {
+        const texto = await acao();
+        $("rec-titulo").textContent = rotulo;
+        $("rec-respostas").textContent = texto;
+      } catch (e) {
+        $("rec-titulo").textContent = rotulo + ": falha ao chamar a API";
+      }
+    }
+
+    $("rec-categorias").addEventListener("click", () =>
+      executarRecorrente("GET /categorias", async () => mostrar(await chamarRota("GET", "/categorias"))));
+
+    $("rec-listar").addEventListener("click", () =>
+      executarRecorrente("GET /recorrentes", async () => mostrar(await chamarRota("GET", "/recorrentes"))));
+
+    $("rec-criar").addEventListener("click", () => {
+      const chave = crypto.randomUUID();
+      const corpo = Object.assign({ chave }, camposRecorrente());
+      executarRecorrente("POST /recorrentes (chave " + chave + ")", async () => {
+        // De propósito: o mesmo pedido, com a mesma chave, duas vezes ao mesmo tempo.
+        const [primeira, segunda] = await Promise.all([
+          chamarRota("POST", "/recorrentes", corpo), chamarRota("POST", "/recorrentes", corpo)
+        ]);
+        return "Pedido 1 - " + mostrar(primeira) + "\n\nPedido 2 - " + mostrar(segunda);
+      });
+    });
+
+    $("rec-editar").addEventListener("click", () => {
+      const rota = "/recorrentes/" + encodeURIComponent($("rec-id").value);
+      executarRecorrente("PUT " + rota, async () => mostrar(await chamarRota("PUT", rota, camposRecorrente())));
+    });
+
+    $("rec-apagar").addEventListener("click", () => {
+      const rota = "/recorrentes/" + encodeURIComponent($("rec-id").value);
+      executarRecorrente("DELETE " + rota, async () => mostrar(await chamarRota("DELETE", rota)));
     });
   </script>
 </body>

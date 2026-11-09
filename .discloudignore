@@ -16,3 +16,4 @@ testes_sem_transferencia.py
 testes_rotas_registro.py
 testes_home_registro.py
 testes_cadastro.py
+testes_recorrentes.py

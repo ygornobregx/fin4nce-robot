@@ -271,8 +271,10 @@ def debitar_categoria(cursor, user_id, categoria, valor_armazenado, momento, met
     só é informado na parcela 1 de uma compra parcelada e aponta para a linha
     correspondente em 'parcelamentos'; os demais lançamentos gravam NULL.
     'estabelecimento' é o local/app citado na mensagem (extraído pela IA) e só
-    vem preenchido em gasto avulso e na parcela 1 de compra parcelada; é limpo
-    por normalizar_estabelecimento (recorrentes gravam NULL). Retorna
+    vem preenchido em gasto avulso, na parcela 1 de compra parcelada e, desde a
+    PRO-87, no lançamento de um recorrente que tenha estabelecimento (o job do
+    bot passa o da tabela gastos_recorrentes; NULL nos criados pelo chat); é
+    limpo por normalizar_estabelecimento. Retorna
     (cat_id, transacao_id), ou None se a categoria não existir."""
     cat = cursor.execute('SELECT id FROM categorias WHERE user_id = ? AND nome = ?', (user_id, categoria)).fetchone()
     if not cat:
