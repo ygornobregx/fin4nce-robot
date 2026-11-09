@@ -1085,5 +1085,103 @@ class TestPainelVazio(unittest.TestCase):
         self.assertIn('$("grafico-vazio").hidden = !vazio;', corpo)
 
 
+# ----------------------------------------------------------------------------
+# PRO-99: rótulo do gráfico "Gastos por mês"
+# ----------------------------------------------------------------------------
+
+CASOS_ROTULO = [
+    (0, '0'), (0.004, '0'), (13.5, '13,50'), (820, '820'), (820.05, '820,05'),
+    (999.99, '999,99'), (999.995, '1 mil'), (1000, '1 mil'), (1049.99, '1 mil'),
+    (1050, '1,1 mil'), (1500, '1,5 mil'), (1949.99, '1,9 mil'), (1950, '2 mil'),
+    (2050, '2,1 mil'), (4287.9, '4,3 mil'),
+]
+
+# Corpo ANTIGO da função (antes da PRO-99), guardado para provar que o teste tem força.
+ROTULO_ANTIGO = """function formatarRotuloValor(total) {
+  if (total >= 1000) {
+    return (total / 1000).toFixed(1).replace(".", ",").replace(/,0$/, "") + " mil";
+  }
+  return String(Math.round(total));
+}"""
+
+
+@unittest.skipUnless(NODE, 'node não encontrado no PATH')
+class TestRotuloDoGrafico(unittest.TestCase):
+    def test_tabela_de_casos_no_node(self):
+        entradas = [c[0] for c in CASOS_ROTULO]
+        obtido = rodar_node(com_funcoes_puras("""
+            console.log(JSON.stringify(ENTRADA.map((v) => formatarRotuloValor(v))));
+        """), entradas)
+        esperado = [c[1] for c in CASOS_ROTULO]
+        for entrada, saida, certo in zip(entradas, obtido, esperado):
+            with self.subTest(entrada=entrada):
+                self.assertEqual(saida, certo)
+
+    def test_rotulo_nao_tem_simbolo_de_moeda(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            console.log(JSON.stringify(ENTRADA.map((v) => formatarRotuloValor(v))));
+        """), [c[0] for c in CASOS_ROTULO])
+        for texto in obtido:
+            self.assertNotIn('R$', texto)
+
+    def test_o_teste_tem_forca_a_funcao_antiga_erra(self):
+        # A função antiga, nos mesmos casos, erra pelo menos 13,5 ("14") e 999,99 ("1000").
+        entradas = [c[0] for c in CASOS_ROTULO]
+        programa = (
+            "const fs = require('fs');\n"
+            "const ENTRADA = JSON.parse(fs.readFileSync(process.argv[2], 'utf-8'));\n"
+            + ROTULO_ANTIGO + "\n"
+            "console.log(JSON.stringify(ENTRADA.map((v) => formatarRotuloValor(v))));\n"
+        )
+        obtido = dict(zip(entradas, rodar_node(programa, entradas)))
+        esperado = dict(CASOS_ROTULO)
+        self.assertEqual(obtido[13.5], '14')
+        self.assertEqual(obtido[999.99], '1000')
+        erradas = [e for e in entradas if obtido[e] != esperado[e]]
+        self.assertIn(13.5, erradas)
+        self.assertIn(999.99, erradas)
+
+    def test_formatar_rotulo_valor_esta_no_bloco_de_funcoes_puras(self):
+        self.assertIn('function formatarRotuloValor(', codigo_puro(HOME))
+        self.assertNotIn('function formatarRotuloValor(', codigo_principal(HOME))
+        self.assertEqual(HOME.count('function formatarRotuloValor('), 1)
+
+    def test_formatador_numero_e_declarado_uma_unica_vez(self):
+        self.assertEqual(HOME.count('const formatadorNumero '), 1)
+        self.assertIn('const formatadorNumero', codigo_puro(HOME))
+        # O valor grande do topo continua usando o mesmo formatador.
+        self.assertIn('formatadorNumero.format(Math.abs(valor))', codigo_principal(HOME))
+
+    def test_mostrar_grafico_chama_formatar_rotulo_valor(self):
+        corpo = corpo_da_funcao(codigo_principal(HOME), 'function mostrarGrafico')
+        self.assertIn('const rotulo = formatarRotuloValor(total);', corpo)
+        self.assertIn('criar("div", classeDoRotulo(rotulo), rotulo)', corpo)
+
+    def test_classe_do_rotulo_no_node(self):
+        entradas = [c[0] for c in CASOS_ROTULO]
+        obtido = rodar_node(com_funcoes_puras("""
+            console.log(JSON.stringify(ENTRADA.map((v) => classeDoRotulo(formatarRotuloValor(v)))));
+        """), entradas)
+        for entrada, classe, (_, texto) in zip(entradas, obtido, CASOS_ROTULO):
+            with self.subTest(entrada=entrada):
+                esperado = 'coluna-valor' if texto.endswith(' mil') else 'coluna-valor valor-exato'
+                self.assertEqual(classe, esperado)
+        self.assertEqual(obtido[entradas.index(0)], 'coluna-valor valor-exato')
+        self.assertEqual(obtido[entradas.index(0.004)], 'coluna-valor valor-exato')
+        self.assertEqual(obtido[entradas.index(999.99)], 'coluna-valor valor-exato')
+        self.assertEqual(obtido[entradas.index(999.995)], 'coluna-valor')
+
+    def test_classe_do_rotulo_esta_no_bloco_de_funcoes_puras(self):
+        self.assertIn('function classeDoRotulo(', codigo_puro(HOME))
+        self.assertEqual(HOME.count('function classeDoRotulo('), 1)
+
+    def test_css_do_rotulo_valor_exato_em_10_5px(self):
+        self.assertRegex(HOME, r'\.coluna-valor\.valor-exato\s*\{\s*font-size:\s*10\.5px;\s*\}')
+        regra = re.search(r'(?m)^\s*\.coluna-valor\s*\{([^}]*)\}', HOME).group(1)
+        self.assertIn('font-size: 12px', regra)
+        self.assertIn('line-height: 16px', regra)
+        self.assertNotIn('10.5px', regra)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

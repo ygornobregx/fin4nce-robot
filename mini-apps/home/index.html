@@ -238,6 +238,8 @@
     }
 
     .coluna-valor { padding-bottom: 6px; font-size: 12px; line-height: 16px; font-weight: 600; white-space: nowrap; }
+    /* PRO-99: número puro em 10.5px (decisão do Ygor no teste no celular; 9px ficou pequeno); rótulos com "mil" ficam em 12px. */
+    .coluna-valor.valor-exato { font-size: 10.5px; }
 
     .coluna-barra { width: 32px; flex-shrink: 0; border-radius: 8px 8px 2px 2px; }
 
@@ -1611,11 +1613,30 @@
   <script id="funcoes-puras">
     // ---------- Dinheiro ----------
     const formatadorDinheiro = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+    // Mesmo formatador do valor grande do topo e do rótulo do gráfico: "4.287,90".
+    const formatadorNumero = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
     // "R$ 1.234,56"; negativo vira "−R$ 120,00" (sinal de menos de verdade).
     function formatarDinheiro(valor) {
       const texto = formatadorDinheiro.format(Math.abs(valor)).replace(/\s/g, " ");
       return (valor < 0 && texto !== "R$ 0,00" ? "−" : "") + texto;
+    }
+
+    // Rótulo acima da barra do gráfico "Gastos por mês" (sem "R$"). A faixa é decidida DEPOIS de
+    // arredondar para 2 casas (o mesmo texto do valor grande do topo):
+    //   - abaixo de 1.000,00: o próprio texto, sem o ",00" do fim ("820", "13,50", "999,99");
+    //   - de 1.000,00 para cima: milhares com 1 casa, arredondando pela centena, meio para cima,
+    //     sem ",0" ("1 mil", "1,5 mil", "4,3 mil"). 999,995 já vira "1 mil".
+    function formatarRotuloValor(total) {
+      const texto = formatadorNumero.format(total); // "13,50", "999,99" ou "1.000,00"
+      if (!texto.includes(".")) return texto.replace(/,00$/, "");
+      const milhares = Math.round(total / 100) / 10;
+      return String(milhares).replace(".", ",") + " mil";
+    }
+
+    // Classe do rótulo da coluna: com "mil" fica no tamanho normal; número puro usa .valor-exato (9px).
+    function classeDoRotulo(texto) {
+      return texto.endsWith(" mil") ? "coluna-valor" : "coluna-valor valor-exato";
     }
 
     // Imita o round(x, 2) do Python (usado pelo servidor na parcela): arredonda o valor EXATO do
@@ -1991,19 +2012,11 @@
     }
 
     // ---------- Formatação ----------
-    // formatadorDinheiro e formatarDinheiro ficam no bloco de funções puras (acima).
-    const formatadorNumero = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    // formatadorDinheiro, formatadorNumero, formatarDinheiro e formatarRotuloValor ficam no bloco
+    // de funções puras (acima).
 
     function maiuscula(texto) {
       return texto.charAt(0).toUpperCase() + texto.slice(1);
-    }
-
-    // Rótulo acima da barra: "4,3 mil", "5 mil" ou o inteiro arredondado ("820").
-    function formatarRotuloValor(total) {
-      if (total >= 1000) {
-        return (total / 1000).toFixed(1).replace(".", ",").replace(/,0$/, "") + " mil";
-      }
-      return String(Math.round(total));
     }
 
     // "2026-10" -> índice do mês (0 a 11)
@@ -2091,6 +2104,7 @@
 
       meses.forEach((m, i) => {
         const total = m.total_gasto;
+        const rotulo = formatarRotuloValor(total);
         // Altura proporcional ao maior total (120px); mínimo de 8px quando há gasto.
         let altura = 0;
         if (total > 0 && maior > 0) altura = Math.max(8, Math.round(120 * total / maior));
@@ -2100,7 +2114,7 @@
         const barra = criar("div", "coluna-barra" + (altura === 0 ? " zerada" : ""));
         barra.style.height = altura + "px";
         coluna.append(
-          criar("div", "coluna-valor", formatarRotuloValor(total)),
+          criar("div", classeDoRotulo(rotulo), rotulo),
           barra,
           criar("div", "coluna-mes", MESES_CURTOS[indiceMes(m.ano_mes)])
         );
