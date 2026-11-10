@@ -30,6 +30,13 @@ segue em "Em breve"), a chave nascendo só no formulário Novo, a tela da logo c
 no editar e ausente no apagar, o guia "já visto" sempre em try, e no node a máscara de centavos, a
 validação do valor contra o registro.validar_valor, a dica do Salvar, o corpo dos pedidos, os textos da
 lista e a decisão por status das três gravações.
+
+Desde a PRO-103, a receita recorrente no Mini App: o guia em 2 passos (Próximo, voltar ao passo 1 e Começar),
+a Receita ativa na escolha (sem o "Em Breve"), o formulário da receita como MODO do mesmo bloco (só dia, valor
+e descrição, sem aviso de renda), a folha do dia com os textos da receita, os botões Gasto/Receita da lista
+(com o total em verde e o vazio da receita), a gravação pelas rotas /receitas-recorrentes (chave só no Novo,
+tela da logo no criar e no editar, nenhuma no apagar), o cartão do salário abrindo direto a Nova Receita e,
+no node, as funções puras novas (dica e corpo sem categoria, textos, rota, aba e decisão por status da receita).
 """
 import json
 import os
@@ -734,10 +741,10 @@ class TestEstruturaDasBoasVindas(unittest.TestCase):
                       'Como Registro um Gasto ou uma Receita Nova?',
                       'Na Tela Inicial, toque em <strong>Registrar</strong> e escolha entre Gasto ou Receita.',
                       'Escreva do Seu Jeito, o L1d3r Organiza', 'Últimas Movimentações', '+ R$ 3.000,00',
-                      'O seu salário entra como Receita, por exemplo: <strong>"Recebi 3000 de salário"</strong>.',
+                      'Cadastre o seu salário em <strong>Recorrentes</strong>, como Receita, e ele entra sozinho todo mês.',
                       '>Próximo<', '>Pular<', '>Começar<', '>Voltar<',
                       '"Ainda sem histórico"', 'O gráfico aparece com o seu primeiro gasto',
-                      'Comece registrando o seu salário como <strong>Receita</strong>'):
+                      'Cadastre o seu salário como <strong>Receita Recorrente</strong>'):
             with self.subTest(texto=texto):
                 self.assertIn(texto, HOME)
         # O nome exibido é L1d3r; "Fin4nce" não aparece em nenhuma tela nova.
@@ -797,7 +804,7 @@ class TestEstruturaDasBoasVindas(unittest.TestCase):
     def test_backbutton_e_setas_das_telas_novas(self):
         principal = codigo_principal(HOME)
         voltar = corpo_da_funcao(principal, 'function voltarUmNivel')
-        for trecho in ('voltarNoCadastro()', 'voltarDoAmigo()', 'voltarDoRegistroParaHome()'):
+        for trecho in ('voltarNoCadastro()', 'voltarDoAmigo()'):
             self.assertIn(trecho, voltar)
         self.assertIn('mostrarBackButton(id === "amigo" || id === "cadastro");',
                       corpo_da_funcao(principal, 'function mostrarTelaBoasVindas'))
@@ -809,16 +816,23 @@ class TestEstruturaDasBoasVindas(unittest.TestCase):
         # Do passo 1, a seta volta à escolha inicial.
         self.assertIn('mostrarTelaBoasVindas("boas-vindas");', corpo_da_funcao(principal, 'function voltarNoCadastro'))
 
-    def test_cartao_do_salario_abre_o_registrar_direto_na_receita(self):
+    def test_cartao_do_salario_abre_direto_a_nova_receita_recorrente(self):
+        # PRO-103 (D14): o cartão deixa de abrir o chat da Receita avulsa e abre o formulário Nova Receita recorrente.
         principal = codigo_principal(HOME)
-        self.assertIn('$("cartao-salario").addEventListener("click", abrirReceitaDireto);', principal)
-        abrir = corpo_da_funcao(principal, 'function abrirReceitaDireto')
-        self.assertIn('abrirRegistro("receita");', abrir)
-        self.assertIn('registroDireto = true;', abrir)
-        self.assertNotIn('registro-opcoes', abrir)  # pula a tela de opções
-        # O Voltar do chat aberto pelo cartão volta para a home.
-        self.assertIn('if (registroDireto) voltarDoRegistroParaHome();', corpo_da_funcao(principal, 'function voltarUmNivel'))
-        self.assertIn('$("tela").hidden = false;', corpo_da_funcao(principal, 'function voltarDoRegistroParaHome'))
+        self.assertIn('$("cartao-salario").addEventListener("click", abrirSalarioRecorrente);', principal)
+        self.assertNotIn('abrirReceitaDireto', HOME)
+        self.assertNotIn('registroDireto', HOME)
+        self.assertNotIn('voltarDoRegistroParaHome', HOME)
+        abrir = corpo_da_funcao(principal, 'function abrirSalarioRecorrente')
+        self.assertIn('abrirFormNovo("receita", "salario");', abrir)   # sem guia nem escolha
+        for proibido in ('abrirEscolha', 'mostrarPassoGuia', 'abrirRecorrentes', 'abrirRegistro'):
+            self.assertNotIn(proibido, abrir)
+        # A posição da home é guardada, e o voltar do formulário aberto pelo cartão vai à home.
+        self.assertIn('rolagemHome = window.scrollY;', abrir)
+        self.assertIn('origemFormNovo = origem === "salario" ? "salario" : "escolha";',
+                      corpo_da_funcao(principal, 'function abrirFormNovo'))
+        # O chat vazio da Receita avulsa não muda.
+        self.assertIn('Registre Aqui as Suas Receitas Avulsas', corpo_da_funcao(principal, 'function abrirRegistro'))
         # O cartão é um botão, fora da lista (o clique da lista só abre linhas .gasto).
         self.assertIn('<button class="cartao-salario" id="cartao-salario" type="button" hidden>', HOME)
 
@@ -1489,7 +1503,10 @@ class TestEstruturaDosRecorrentes(unittest.TestCase):
                 self.assertGreater(HOME.index('id="%s"' % identificador), ultimo_main)
 
     def test_ids_unicos(self):
-        ids = ('atalho-recorrentes', 'guia-voltar', 'guia-comecar', 'escolha-rec-voltar', 'escolha-rec-titulo',
+        ids = ('atalho-recorrentes', 'guia-voltar', 'guia-comecar', 'guia-proximo', 'guia-passo-1', 'guia-passo-2',
+               'rec-aba-gasto', 'rec-aba-receita', 'rec-vazio-receita', 'rf-rotulo-dia', 'rf-rotulo-valor',
+               'rf-bloco-estabelecimento', 'rf-bloco-categoria', 'folha-dia-titulo', 'folha-dia-apoio',
+               'escolha-rec-voltar', 'escolha-rec-titulo',
                'escolha-rec-gasto', 'escolha-rec-receita', 'lista-rec-voltar', 'rec-carregando', 'rec-erro',
                'rec-erro-texto', 'rec-erro-tentar', 'rec-conteudo', 'rec-total', 'rec-contagem', 'rec-itens',
                'rec-vazio', 'rec-rodape', 'rec-adicionar', 'rf-cabecalho', 'rf-voltar', 'rf-titulo', 'rf-corpo',
@@ -1506,7 +1523,7 @@ class TestEstruturaDosRecorrentes(unittest.TestCase):
     def test_textos_dos_quadros(self):
         for texto in ('Como Funciona?', 'Use Essa Aba Para Assinaturas e Pagamentos Recorrentes no Cartão.', 'Exemplo:',
                       'Abre um calendário para selecionar o dia', 'Abre uma seleção das categorias existentes',
-                      'Começar', 'Assinaturas do cartão', 'Salário e entradas', 'Em Breve',
+                      'Começar', 'Assinaturas do cartão', 'Salário e entradas',
                       'Total por Mês', 'Adicionar Recorrente', 'Seus recorrentes aparecem aqui',
                       'Comece pelas assinaturas do cartão, como <strong>Streaming</strong> e <strong>Academia</strong>',
                       'Dia da Cobrança', 'Valor da Cobrança', 'Descrição', 'Estabelecimento', '(Opcional)', 'Categoria',
@@ -1539,15 +1556,22 @@ class TestEstruturaDosRecorrentes(unittest.TestCase):
             with self.subTest(proibido=proibido):
                 self.assertNotIn(proibido, exemplo)
         self.assertIn('pointer-events: none', HOME[HOME.index('.guia-exemplo .campo-form'):][:120])
-        for valor in ('>12<', '>117,80<', '>Assinatura Spotify<', '>Spotify<', '>Lazer<'):
+        for valor in ('>12<', '>117,80<', '>Assinatura Spotify<', '>Spotify<', '>Lazer<',
+                      '>5<', '>4.500,00<', '>Salário<'):   # os dois passos (PRO-103)
             self.assertIn(valor, exemplo)
 
-    def test_receita_so_avisa_em_breve_e_gasto_abre_o_formulario(self):
+    def test_escolha_com_a_receita_ativa_e_cada_cartao_abre_o_seu_formulario(self):
         principal = codigo_principal(HOME)
-        self.assertIn('$("escolha-rec-receita").addEventListener("click", avisarEmBreve);', principal)
-        self.assertIn('$("escolha-rec-gasto").addEventListener("click", abrirFormNovo);', principal)
+        # PRO-103: a Receita deixa de ser "Em Breve" (sem selo, sem o aviso nativo) e abre a Nova Receita.
+        self.assertIn('$("escolha-rec-receita").addEventListener("click", () => abrirFormNovo("receita"));', principal)
+        self.assertIn('$("escolha-rec-gasto").addEventListener("click", () => abrirFormNovo("gasto"));', principal)
         escolha = bloco_main('recorrentes-escolha')
-        self.assertIn('<span class="selo-opcao">Em Breve</span>', escolha)
+        self.assertNotIn('Em Breve', escolha)
+        self.assertNotIn('selo-opcao', HOME)
+        self.assertNotIn('opcao apagada', HOME)
+        self.assertNotIn('.opcao.apagada', HOME)
+        self.assertIn('<button class="opcao" id="escolha-rec-receita" type="button">', escolha)
+        self.assertEqual(escolha.count('class="opcao-seta"'), 2)   # os dois cartões têm a seta
         self.assertIn('id="escolha-rec-titulo"', escolha)
         self.assertIn('$("escolha-rec-titulo").textContent = tituloDaEscolha(nomeDoUsuario);',
                       corpo_da_funcao(principal, 'function abrirEscolha(origem)'))
@@ -1565,7 +1589,7 @@ class TestEstruturaDosRecorrentes(unittest.TestCase):
                 self.assertNotIn(proibido, desenhar)
         linha = corpo_da_funcao(principal, 'function criarLinhaRecorrente')
         for trecho in ('criar("span", "rec-linha-nome", r.descricao)', 'subtituloRecorrente(r)',
-                       'formatarDinheiro(r.valor)', 'textoDiaCobranca(r.dia_cobranca)'):
+                       'formatarDinheiro(r.valor)', 'textoDiaCobranca(diaDoRecorrente(r, tipo))'):
             self.assertIn(trecho, linha)
         # Categorias e fichas também só por textContent (criar).
         self.assertIn('criar("span", "", nome)', corpo_da_funcao(principal, 'function criarLinhaCategoria'))
@@ -1581,7 +1605,7 @@ class TestEstruturaDosRecorrentes(unittest.TestCase):
         # Carregar a lista não usa a tela da logo (só os salvamentos).
         carregar = corpo_da_funcao(principal, 'async function carregarRecorrentes')
         self.assertNotIn('mostrarTelaLogo', carregar)
-        self.assertIn('chamar("/recorrentes")', carregar)
+        self.assertIn('chamar(rotaRecorrentes(listaRecorrentes.aba))', carregar)
 
     def test_categorias_buscadas_ao_abrir_o_formulario(self):
         principal = codigo_principal(HOME)
@@ -1604,9 +1628,9 @@ class TestEstruturaDosRecorrentes(unittest.TestCase):
 
     def test_salvar_usa_a_tela_da_logo_com_tempo_minimo(self):
         salvar = corpo_da_funcao(codigo_principal(HOME), 'async function salvarRecorrente').replace('\r\n', '\n')
-        self.assertIn('TEMPO_MINIMO_LOGO_MS, (x) => decisaoDaGravacaoRecorrente(operacao, x.r).acao === "sucesso", () => performance.now(), esperar', salvar)
+        self.assertIn('TEMPO_MINIMO_LOGO_MS, (x) => decisaoDaGravacaoRecorrente(operacao, x.r, tipo).acao === "sucesso", () => performance.now(), esperar', salvar)
         self.assertIn('mostrarTelaLogo(logo.cabecalho, logo.titulo, logo.texto);', salvar)
-        self.assertIn('textosTelaLogoRecorrente(operacao, f.dia)', salvar)
+        self.assertIn('textosTelaLogoRecorrente(operacao, f.dia, tipo)', salvar)
         # Trava no primeiro toque (antes de qualquer chamada), logo antes do POST/PUT, sai no erro na hora.
         self.assertLess(salvar.index('f.salvando = true;'), salvar.index('mostrarTelaLogo('))
         self.assertLess(salvar.index('mostrarTelaLogo('), salvar.index('gravarComTentativas('))
@@ -1616,10 +1640,10 @@ class TestEstruturaDosRecorrentes(unittest.TestCase):
         # Sucesso: a lista e o aviso entram na mesma tarefa em que a logo sai.
         sucesso = salvar[salvar.index('if (decisao.acao === "sucesso")'):]
         self.assertLess(sucesso.index('mostrarTelaRecorrentes("recorrentes-lista");'), sucesso.index('esconderTelaLogo();'))
-        self.assertIn('mostrarAvisoTopo(avisoDeRecorrente(operacao, resultado.r.dados));', sucesso)
+        self.assertIn('mostrarAvisoTopo(avisoDeRecorrente(operacao, resultado.r.dados, tipo));', sucesso)
         # PUT no editar e POST no criar.
         self.assertIn('const metodo = novo ? "POST" : "PUT";', salvar)
-        self.assertIn('"/recorrentes/" + encodeURIComponent(f.id)', salvar)
+        self.assertIn('rotaRecorrentes(tipo) + "/" + encodeURIComponent(f.id)', salvar)
 
     def test_apagar_nao_usa_a_logo_e_trata_o_404_como_sucesso(self):
         principal = codigo_principal(HOME)
@@ -1628,8 +1652,8 @@ class TestEstruturaDosRecorrentes(unittest.TestCase):
             self.assertNotIn(proibido, apagar)
         self.assertIn('"Apagando..."', apagar)
         self.assertIn('gravarComTentativas(() => enviarComMetodo("DELETE", rota, undefined, 15000), null, esperar)', apagar)
-        self.assertIn('decisaoDaGravacaoRecorrente("apagar", resultado)', apagar)
-        self.assertIn('mostrarAvisoTopo(avisoDeRecorrente("apagar", resultado.dados));', apagar)
+        self.assertIn('decisaoDaGravacaoRecorrente("apagar", resultado, tipo)', apagar)
+        self.assertIn('mostrarAvisoTopo(avisoDeRecorrente("apagar", resultado.dados, tipo));', apagar)
         # O primeiro toque desabilita o botão.
         self.assertLess(apagar.index('$("folha-apagar-confirmar").disabled = true;'), apagar.index('gravarComTentativas('))
         self.assertIn('if (apagarRec.apagando) return;', apagar)
@@ -1657,7 +1681,7 @@ class TestEstruturaDosRecorrentes(unittest.TestCase):
         for trecho in ('fecharFolhaAtual();', 'voltarNasRecorrentes(telaRecorrentes);'):
             self.assertIn(trecho, voltar)
         nas_recorrentes = corpo_da_funcao(principal, 'function voltarNasRecorrentes')
-        self.assertIn('telaAoVoltarRecorrentes(atual, origemEscolha)', nas_recorrentes)
+        self.assertIn('telaAoVoltarRecorrentes(atual, origemEscolha, origemFormNovo)', nas_recorrentes)
         self.assertIn('if (formRec.salvando || apagarRec.apagando) return;', nas_recorrentes)
         for identificador in ('guia-voltar', 'escolha-rec-voltar', 'lista-rec-voltar', 'rf-voltar'):
             self.assertIn('"%s"' % identificador, corpo_da_funcao(principal, 'function iniciarRecorrentes'))
@@ -1694,10 +1718,186 @@ class TestEstruturaDosRecorrentes(unittest.TestCase):
         self.assertIn('#12121266', HOME)  # o fundo escuro do Paper
 
     def test_novas_cores_vem_de_variaveis_ou_do_paper(self):
-        # Só as cores do Paper (#12121266 e #FAFAFA) aparecem soltas nas regras novas.
+        # Só a cor do fundo escuro do Paper (#12121266) aparece solta nas regras novas. O #FAFAFA do cartão "Em Breve"
+        # saiu na PRO-103 (a Receita ficou ativa), e a sombra dos botões Gasto/Receita (#1212121A) é variável no :root.
         inicio = HOME.index('/* ---------- Gastos recorrentes (PRO-101')
         css = HOME[inicio:HOME.index('</style>')]
-        self.assertEqual(sorted(set(re.findall(r'#[0-9A-Fa-f]{3,8}\b', css))), ['#12121266', '#FAFAFA'])
+        self.assertEqual(sorted(set(re.findall(r'#[0-9A-Fa-f]{3,8}\b', css))), ['#12121266'])
+        self.assertIn('--cor-sombra-abas: #1212121A;', HOME)
+        self.assertIn('box-shadow: 0 4px 14px var(--cor-sombra-abas);', css)
+
+    # ---------------------------- PRO-103: receita recorrente ----------------------------
+
+    def test_guia_tem_dois_passos_com_proximo_voltar_e_comecar(self):
+        guia = bloco_main('recorrentes-guia')
+        for texto in ('PASSO 1 DE 2 · GASTO', 'PASSO 2 DE 2 · RECEITA', 'Como Funciona?', 'E a Receita?',
+                      'Use Para Valores Que Entram Todo Mês, Como Salário ou Aluguel Recebido.',
+                      'Dia do Recebimento', 'Valor do Recebimento', '<span>Próximo</span>', '>Começar<'):
+            with self.subTest(texto=texto):
+                self.assertIn(texto, guia)
+        # Só o passo 1 e o "Próximo" aparecem de início; o passo 2 e o "Começar" começam escondidos.
+        self.assertIn('<div class="rec-corpo" id="guia-passo-1">', guia)
+        self.assertIn('<div class="rec-corpo" id="guia-passo-2" hidden>', guia)
+        self.assertIn('id="guia-comecar" type="button" hidden>', guia)
+        self.assertNotIn('id="guia-proximo" type="button" hidden', guia)
+        # Indicador: a barra comprida marca o passo atual (passo 1 à esquerda, passo 2 à direita).
+        self.assertIn('<div class="guia-barras" aria-hidden="true"><span class="atual"></span><span></span></div>', guia)
+        self.assertIn('<div class="guia-barras" aria-hidden="true"><span></span><span class="atual"></span></div>', guia)
+        # O "Próximo" tem a seta e não tem a logo (a logo fica só no "Começar").
+        proximo = guia[guia.index('id="guia-proximo"'):guia.index('id="guia-comecar"')]
+        self.assertIn('M12 6l5 5-5 5', proximo)
+        self.assertNotIn('M11.5 5V22.5', proximo)
+        self.assertIn('M11.5 5V22.5', guia[guia.index('id="guia-comecar"'):])
+        principal = codigo_principal(HOME)
+        self.assertIn('$("guia-proximo").addEventListener("click", () => mostrarPassoGuia(2));', principal)
+        self.assertIn('$("guia-comecar").addEventListener("click", () => { marcarGuiaVisto(); abrirEscolha("home"); });', principal)
+        # O "já visto" só é gravado no "Começar" (D11: mesma marca de antes), nunca ao trocar de passo.
+        self.assertNotIn('marcarGuiaVisto', corpo_da_funcao(principal, 'function mostrarPassoGuia'))
+        self.assertIn('const CHAVE_GUIA_RECORRENTES = "guia_recorrentes_visto";', principal)
+        self.assertNotIn('guia_recorrentes_v2', HOME)
+        # O voltar do passo 2 volta ao passo 1; o atalho sempre abre o guia no passo 1.
+        self.assertIn('else if (destino === "guia-passo-1") mostrarPassoGuia(1);', corpo_da_funcao(principal, 'function voltarNasRecorrentes'))
+        self.assertIn('guiaPasso === 2 ? "guia-passo-2" : "guia"', corpo_da_funcao(principal, 'function telaRecorrentesAtual'))
+        abrir = corpo_da_funcao(principal, 'async function abrirRecorrentes')
+        self.assertLess(abrir.index('mostrarPassoGuia(1);'), abrir.index('mostrarTelaRecorrentes("recorrentes-guia");'))
+        self.assertIn('abrirLista("gasto");', abrir)   # D12: o atalho abre a lista na aba Gasto
+
+    def test_formulario_da_receita_e_o_mesmo_bloco_em_outro_modo(self):
+        principal = codigo_principal(HOME)
+        for identificador in ('recorrente-form', 'rf-salvar', 'rf-dia', 'rf-valor', 'rf-descricao'):
+            with self.subTest(id=identificador):
+                self.assertEqual(HOME.count('id="%s"' % identificador), 1)   # nada de bloco duplicado
+        desenhar = corpo_da_funcao(principal, 'function desenharForm')
+        for trecho in ('textosDoFormulario(f.tipo, f.modo)', '$("rf-rotulo-dia").textContent = textos.rotuloDia;',
+                       '$("rf-rotulo-valor").textContent = textos.rotuloValor;', '$("rf-descricao").placeholder = textos.exemplo;',
+                       '$("rf-bloco-estabelecimento").hidden = f.tipo === "receita";',
+                       '$("rf-bloco-categoria").hidden = f.tipo === "receita";'):
+            with self.subTest(trecho=trecho):
+                self.assertIn(trecho, desenhar)
+        # A receita não tem categoria: nem busca a lista de categorias.
+        abrir_form = corpo_da_funcao(principal, 'function abrirForm()')
+        self.assertIn('if (formRec.tipo !== "receita") carregarCategoriasRec();', abrir_form)
+        # D5 = C da PRO-102: a tela não lê nem mostra a renda.
+        for nome, corpo in (('bloco', bloco_main('recorrente-form')), ('desenharForm', desenhar), ('abrirForm', abrir_form),
+                            ('salvar', corpo_da_funcao(principal, 'async function salvarRecorrente'))):
+            with self.subTest(sem_renda=nome):
+                self.assertNotIn('renda', corpo.lower())
+        # Mesmo limite de 30 caracteres, a mesma máscara e os mesmos erros ao sair do campo.
+        self.assertIn('id="rf-descricao" type="text" maxlength="30"', HOME)
+        self.assertIn('formRec.valorDigitos = digitosDoValor($("rf-valor").value);', principal)
+        self.assertIn('$("rf-valor").addEventListener("blur", () => { formRec.valorTocado = true; desenharForm(); });', principal)
+        self.assertIn('$("rf-descricao").addEventListener("blur", () => { formRec.descricaoTocada = true; desenharForm(); });', principal)
+        # O Editar abre no modo da aba da lista, com o dia certo de cada tipo.
+        editar_ = corpo_da_funcao(principal, 'function abrirFormEditar')
+        self.assertIn('const tipo = listaRecorrentes.aba;', editar_)
+        self.assertIn('zerarForm("editar", tipo);', editar_)
+        self.assertIn('diaDoRecorrente(r, tipo)', editar_)
+        self.assertNotIn('gerarChave', editar_)
+        # A chave nasce só ao abrir o Novo (de gasto ou de receita) e vale para todas as tentativas.
+        self.assertEqual(corpo_da_funcao(principal, 'function abrirFormNovo').count('gerarChave()'), 1)
+        self.assertNotIn('gerarChave', corpo_da_funcao(principal, 'function abrirSalarioRecorrente'))
+
+    def test_folha_do_dia_troca_os_textos_pelo_modo(self):
+        abrir = corpo_da_funcao(codigo_principal(HOME), 'function abrirFolhaDia')
+        for trecho in ('textosFolhaDia(formRec.tipo)', '$("folha-dia-titulo").textContent = textos.titulo;',
+                       '$("folha-dia-apoio").textContent = textos.apoio;'):
+            with self.subTest(trecho=trecho):
+                self.assertIn(trecho, abrir)
+
+    def test_lista_tem_os_botoes_gasto_e_receita(self):
+        principal = codigo_principal(HOME)
+        lista = bloco_main('recorrentes-lista')
+        for trecho in ('role="tablist"', 'id="rec-aba-gasto" type="button" role="tab" aria-selected="true">Gasto</button>',
+                       'id="rec-aba-receita" type="button" role="tab" aria-selected="false">Receita</button>',
+                       'Suas receitas recorrentes aparecem aqui',
+                       'Comece pelo seu <strong>Salário</strong> e outras entradas fixas, como <strong>Aluguel Recebido</strong>'):
+            with self.subTest(trecho=trecho):
+                self.assertIn(trecho, lista)
+        # Quadro LISTA - V3: 154px de largura, a 12px da faixa, à direita (24px), com 3px de folga e botões de 30px.
+        css = HOME[:HOME.index('</style>')]
+        regra = re.search(r'(?m)^\s*\.rec-abas\s*\{([^}]*)\}', css).group(1)
+        for trecho in ('position: absolute;', 'top: 12px;', 'right: 24px;', 'width: 154px;', 'padding: 3px;', 'gap: 2px;',
+                       'border-radius: 12px;'):
+            with self.subTest(css=trecho):
+                self.assertIn(trecho, regra)
+        self.assertIn('.rec-aba { flex: 1 1 0; height: 30px;', css)
+        self.assertIn('.rec-total-valor.receita { color: var(--cor-receita); }', css)
+        # Cada aba carrega a sua rota; os botões não guardam a escolha (D12).
+        self.assertIn('$("rec-aba-gasto").addEventListener("click", () => trocarAba("gasto"));', principal)
+        self.assertIn('$("rec-aba-receita").addEventListener("click", () => trocarAba("receita"));', principal)
+        trocar = corpo_da_funcao(principal, 'function trocarAba')
+        self.assertIn('carregarRecorrentes();', trocar)
+        self.assertNotIn('localStorage', trocar)
+        self.assertNotIn('CloudStorage', trocar)
+        desenhar = corpo_da_funcao(principal, 'function desenharLista')
+        for trecho in ('itensDaResposta(dados, tipo)', 'textoContagemReceitas(itens.length)', 'dados.total_mensal',
+                       '$("rec-total").classList.toggle("receita", receita);'):
+            with self.subTest(desenhar=trecho):
+                self.assertIn(trecho, desenhar)
+        # A linha da receita não tem a linha de estabelecimento e categoria.
+        linha = corpo_da_funcao(principal, 'function criarLinhaRecorrente')
+        self.assertIn('if (tipo !== "receita") textos.append(criar("span", "rec-linha-sub", subtituloRecorrente(r)));', linha)
+        # "Adicionar Recorrente" abre a escolha nas duas abas (um único botão, sem condição de aba).
+        self.assertIn('$("rec-adicionar").addEventListener("click", () => abrirEscolha("lista"));', principal)
+
+    def test_gravacao_da_receita_usa_as_rotas_novas_e_nao_muda_a_do_gasto(self):
+        principal = codigo_principal(HOME)
+        self.assertEqual(HOME.count('"/receitas-recorrentes"'), 1)   # a rota só existe na função pura rotaRecorrentes
+        self.assertEqual(HOME.count('"/recorrentes"'), 1)
+        salvar = corpo_da_funcao(principal, 'async function salvarRecorrente')
+        self.assertIn('const tipo = f.tipo;', salvar)
+        self.assertIn('chamar(rotaRecorrentes(tipo))', salvar)
+        self.assertIn('listaRecorrentes.aba = abaDepoisDeSalvar(tipo);', salvar)   # D12
+        self.assertIn('abrirLista(tipo);', salvar)                                 # receita sumiu: volta à lista do tipo
+        self.assertIn('const rota = novo ? rotaRecorrentes(tipo) :', salvar)
+        apagar = corpo_da_funcao(principal, 'async function apagarRecorrente')
+        self.assertIn('rotaRecorrentes(tipo) + "/" + encodeURIComponent(formRec.id)', apagar)
+        self.assertIn('listaRecorrentes.aba = abaDepoisDeSalvar(tipo);', apagar)
+        self.assertIn('chamar(rotaRecorrentes(tipo))', apagar)
+        # A tela da logo e o tempo mínimo seguem só no criar/editar (um lugar), nunca no apagar nem na lista.
+        self.assertEqual(principal.count('comTempoMinimo('), 3)
+        self.assertEqual(salvar.count('comTempoMinimo('), 1)
+        # O texto do apagar da receita vem da função pura, por textContent (criar).
+        self.assertIn('textoConfirmarApagar(r, formRec.tipo)', corpo_da_funcao(principal, 'function abrirFolhaApagar'))
+
+    def test_rotas_campos_e_codigos_da_receita_sao_os_da_api(self):
+        api = open(os.path.join(RAIZ, 'api', 'main.py'), encoding='utf-8').read()
+        servidor = api + open(os.path.join(RAIZ, 'recorrentes.py'), encoding='utf-8').read()
+        for rota in ('@app.get("/receitas-recorrentes")', '@app.post("/receitas-recorrentes", status_code=201)',
+                     '@app.put("/receitas-recorrentes/{receita_recorrente_id}")',
+                     '@app.delete("/receitas-recorrentes/{receita_recorrente_id}")'):
+            with self.subTest(rota=rota):
+                self.assertIn(rota, api)
+        for campo in ('"receitas_recorrentes"', '"total_mensal"', '"dia_recebimento"', '"descricao"', '"valor"'):
+            with self.subTest(campo=campo):
+                self.assertIn(campo, api)
+        puro = codigo_puro(HOME)
+        for campo in ('receitas_recorrentes', 'dia_recebimento', 'total_mensal'):
+            self.assertIn(campo, puro + codigo_principal(HOME))
+        for codigo in ('dia_invalido', 'valor_invalido', 'descricao_invalida', 'descricao_longa', 'descricao_repetida',
+                       'receita_recorrente_nao_encontrada'):
+            with self.subTest(codigo=codigo):
+                self.assertIn("'%s'" % codigo, servidor)
+                self.assertIn(codigo, puro)
+        # A receita não tem estabelecimento nem categoria: o corpo e os 422 da receita não os citam.
+        corpo = corpo_da_funcao(puro, 'function montarCorpoReceitaRecorrente')
+        for proibido in ('estabelecimento', 'categoria'):
+            self.assertNotIn(proibido, corpo)
+        erros = puro[puro.index('const ERROS_422_RECEITA_RECORRENTE'):]
+        erros = erros[:erros.index('};')]
+        for proibido in ('estabelecimento_longo', 'categoria_nao_encontrada'):
+            self.assertNotIn(proibido, erros)
+
+    def test_voltar_da_receita_sobe_um_nivel_em_toda_tela_e_folha(self):
+        principal = codigo_principal(HOME)
+        # A seta de cada tela e o BackButton passam pelo mesmo voltarUmNivel (as folhas fecham primeiro).
+        for identificador in ('guia-voltar', 'escolha-rec-voltar', 'lista-rec-voltar', 'rf-voltar'):
+            self.assertIn('"%s"' % identificador, corpo_da_funcao(principal, 'function iniciarRecorrentes'))
+        self.assertIn('tg.BackButton.onClick(voltarUmNivel)', principal)
+        voltar = corpo_da_funcao(principal, 'function voltarUmNivel')
+        self.assertLess(voltar.index('folhaAberta()'), voltar.index('telaRecorrentesAtual()'))
+        # O formulário aberto pelo cartão do salário volta direto à home.
+        self.assertIn('origemFormNovo', corpo_da_funcao(principal, 'function voltarNasRecorrentes'))
 
 
 @unittest.skipUnless(NODE, 'node não encontrado no PATH')
@@ -1990,6 +2190,225 @@ class TestRecorrentesFuncoesPuras(unittest.TestCase):
             })();
         """))
         self.assertEqual(obtido, {'iguais': True, 'n': 3, 'status': 201, 'rejeitado': 1})  # 422 não é repetido sozinho
+
+    # ---------------------------- PRO-103: receita recorrente (funções puras) ----------------------------
+
+    def test_receita_dica_e_salvar_sem_categoria(self):
+        base = {'tipo': 'receita', 'dia': 5, 'valorDigitos': '450000', 'descricao': 'Salário', 'categoria': None, 'salvando': False}
+        casos = [
+            ({'tipo': 'receita', 'dia': None, 'valorDigitos': '', 'descricao': '', 'categoria': None}, 'Preencha o dia, o valor e a descrição', False),
+            (base, '', True),
+            (dict(base, dia=None), 'Preencha o dia', False),
+            (dict(base, valorDigitos='0'), 'Corrija o valor', False),
+            (dict(base, valorDigitos='100000001'), 'Corrija o valor', False),
+            (dict(base, valorDigitos='', descricao='  '), 'Preencha o valor e a descrição', False),
+            (dict(base, valorDigitos='0', dia=None, descricao=''), 'Corrija o valor e preencha o dia e a descrição', False),
+            (dict(base, salvando=True), '', False),                       # o primeiro toque trava
+            (dict(base, categoria='Lazer'), '', True),                    # categoria sobrando não atrapalha
+            # O mesmo formulário no modo gasto (sem tipo) continua exigindo a categoria.
+            (dict(base, tipo='gasto'), 'Preencha a categoria', False),
+            ({k: v for k, v in base.items() if k != 'tipo'}, 'Preencha a categoria', False),
+        ]
+        obtido = rodar_node(com_funcoes_puras(
+            "console.log(JSON.stringify(ENTRADA.map((f) => [dicaDoSalvar(f), podeSalvarRecorrente(f), formularioRecorrenteValido(f)])));"),
+            [c for c, _, _ in casos])
+        for (entrada, dica, pode), recebido in zip(casos, obtido):
+            with self.subTest(entrada=entrada):
+                self.assertEqual(recebido[0], dica)
+                self.assertEqual(recebido[1], pode)
+
+    def test_corpo_da_receita_so_tem_dia_valor_descricao_e_chave(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            const f = { tipo: 'receita', dia: 5, valorDigitos: '450000', descricao: '  Salário ', estabelecimento: 'x', categoria: 'Lazer' };
+            console.log(JSON.stringify({
+              put: montarCorpoRecorrente(f), post: montarCorpoRecorrente(f, 'abc'), direto: montarCorpoReceitaRecorrente(f),
+              ordem: Object.keys(montarCorpoRecorrente(f, 'abc')), json: JSON.stringify(montarCorpoRecorrente(f)),
+              gasto: Object.keys(montarCorpoRecorrente(Object.assign({}, f, { tipo: 'gasto' }))),
+            }));
+        """))
+        corpo = {'dia_recebimento': 5, 'valor': 4500.0, 'descricao': 'Salário'}
+        self.assertEqual(obtido['put'], corpo)
+        self.assertEqual(obtido['post'], dict(corpo, chave='abc'))
+        self.assertEqual(obtido['direto'], corpo)
+        self.assertEqual(obtido['ordem'][0], 'chave')
+        self.assertIn('"valor":4500,', obtido['json'])
+        # O gasto continua com o corpo de sempre (estabelecimento e categoria).
+        self.assertEqual(obtido['gasto'], ['dia_cobranca', 'valor', 'descricao', 'estabelecimento', 'categoria'])
+
+    def test_textos_da_receita_na_lista_no_formulario_e_na_folha(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            console.log(JSON.stringify({
+              contagem: [0, 1, 2, 3, 12].map(textoContagemReceitas),
+              formulario: [textosDoFormulario('receita', 'novo'), textosDoFormulario('receita', 'editar'),
+                           textosDoFormulario('gasto', 'novo'), textosDoFormulario('gasto', 'editar'), textosDoFormulario(undefined, 'novo')],
+              folha: [textosFolhaDia('receita'), textosFolhaDia('gasto'), textosFolhaDia(undefined)],
+              apagar: [textoConfirmarApagar({ descricao: 'Salário', valor: 4500, dia_recebimento: 5 }, 'receita'),
+                       textoConfirmarApagar({ descricao: 'Assinatura Spotify', valor: 117.8, dia_cobranca: 12 }, 'gasto'),
+                       textoConfirmarApagar({ descricao: 'Assinatura Spotify', valor: 117.8, dia_cobranca: 12 })],
+              dia: [diaDoRecorrente({ dia_recebimento: 5, dia_cobranca: 9 }, 'receita'), diaDoRecorrente({ dia_recebimento: 5, dia_cobranca: 9 }, 'gasto'),
+                    diaDoRecorrente({ dia_cobranca: 9 })],
+              rotas: [rotaRecorrentes('receita'), rotaRecorrentes('gasto'), rotaRecorrentes(), rotaRecorrentes('outro')],
+              itens: [itensDaResposta({ receitas_recorrentes: [{ id: 1 }], recorrentes: [{ id: 2 }] }, 'receita'),
+                      itensDaResposta({ receitas_recorrentes: [{ id: 1 }], recorrentes: [{ id: 2 }] }, 'gasto'),
+                      itensDaResposta({ recorrentes: [{ id: 2 }] }, 'receita'), itensDaResposta(undefined, 'gasto'),
+                      itensDaResposta({ recorrentes: 'x' }, 'gasto')],
+              aba: [abaDepoisDeSalvar('receita'), abaDepoisDeSalvar('gasto'), abaDepoisDeSalvar(undefined)],
+              dia_texto: [textoDiaEscolhido(5), textoConfirmarDia(5)],
+            }));
+        """))
+        self.assertEqual(obtido['contagem'], ['Nenhuma receita recorrente ainda', '1 receita, lançada sozinha todo mês',
+                                              '2 receitas, lançadas sozinhas todo mês', '3 receitas, lançadas sozinhas todo mês',
+                                              '12 receitas, lançadas sozinhas todo mês'])
+        titulo_novo = 'Registre Sua Receita e Espere Chegar a Data, na Data Exata o L1d3r Registra.'
+        apoio_novo = 'Escolha o Dia em Que Esse Valor Costuma Entrar na Sua Conta, Como o Dia do Salário.'
+        self.assertEqual(obtido['formulario'][0], {
+            'titulo': titulo_novo, 'intro': apoio_novo, 'rotuloDia': 'Dia do Recebimento',
+            'rotuloValor': 'Valor do Recebimento', 'exemplo': 'Ex.: Salário'})
+        self.assertEqual(obtido['formulario'][1], {
+            'titulo': 'Editar Recorrente',
+            'intro': 'As mudanças valem a partir do próximo recebimento. O que já entrou nos meses anteriores não muda.',
+            'rotuloDia': 'Dia do Recebimento', 'rotuloValor': 'Valor do Recebimento', 'exemplo': 'Ex.: Salário'})
+        self.assertEqual(obtido['formulario'][2], {
+            'titulo': 'Registre Seu Gasto e Espere Chegar a Data, na Data Exata o L1d3r Registra.',
+            'intro': 'Veja na Sua Fatura do Cartão o Dia Exato em Que Costuma Cair Essa Assinatura Para um Melhor Controle.',
+            'rotuloDia': 'Dia da Cobrança', 'rotuloValor': 'Valor da Cobrança', 'exemplo': 'Ex.: Assinatura Spotify'})
+        self.assertEqual(obtido['formulario'][3]['intro'],
+                         'As mudanças valem a partir da próxima cobrança. O que já entrou nos meses anteriores não muda.')
+        self.assertEqual(obtido['formulario'][4], obtido['formulario'][2])   # sem tipo, vale o gasto
+        self.assertEqual(obtido['folha'], [
+            {'titulo': 'Dia do Recebimento', 'apoio': 'Escolha o dia do mês em que esse valor entra.'},
+            {'titulo': 'Dia da Cobrança', 'apoio': 'Escolha o dia do mês em que essa cobrança cai.'},
+            {'titulo': 'Dia da Cobrança', 'apoio': 'Escolha o dia do mês em que essa cobrança cai.'}])
+        self.assertEqual(obtido['apagar'][0], {
+            'negrito': 'Salário · R$ 4.500,00',
+            'depois': ' deixa de entrar todo dia 5. As receitas que já entraram nos meses anteriores continuam no histórico.'})
+        self.assertEqual(obtido['apagar'][1], obtido['apagar'][2])
+        self.assertEqual(obtido['apagar'][1]['depois'],
+                         ' deixa de entrar todo dia 12. Os gastos que já entraram nos meses anteriores continuam no histórico.')
+        self.assertEqual(obtido['dia'], [5, 9, 9])
+        self.assertEqual(obtido['rotas'], ['/receitas-recorrentes', '/recorrentes', '/recorrentes', '/recorrentes'])
+        self.assertEqual(obtido['itens'], [[{'id': 1}], [{'id': 2}], [], [], []])
+        self.assertEqual(obtido['aba'], ['receita', 'gasto', 'gasto'])
+        self.assertEqual(obtido['dia_texto'], [{'antes': 'Todo dia ', 'negrito': '5'}, 'Confirmar Dia 5'])   # "Todo dia N" e "Confirmar Dia N"
+
+    def test_navegacao_do_guia_em_dois_passos_e_do_cartao_do_salario(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            const voltar = {};
+            for (const tela of ['guia', 'guia-passo-2', 'escolha', 'lista', 'form-novo', 'form-editar', 'outra']) {
+              voltar[tela] = [telaAoVoltarRecorrentes(tela, 'home', 'escolha'), telaAoVoltarRecorrentes(tela, 'lista', 'escolha'),
+                              telaAoVoltarRecorrentes(tela, 'home', 'salario'), telaAoVoltarRecorrentes(tela, 'lista'), telaAoVoltarRecorrentes(tela)];
+            }
+            console.log(JSON.stringify(voltar));
+        """))
+        self.assertEqual(obtido['guia'], ['home'] * 5)
+        self.assertEqual(obtido['guia-passo-2'], ['guia-passo-1'] * 5)       # o passo 2 volta ao passo 1
+        self.assertEqual(obtido['escolha'], ['home', 'lista', 'home', 'lista', 'home'])
+        self.assertEqual(obtido['lista'], ['home'] * 5)
+        # Formulário Novo: da escolha volta à escolha; do cartão do salário (D14) volta à home.
+        self.assertEqual(obtido['form-novo'], ['escolha', 'escolha', 'home', 'escolha', 'escolha'])
+        self.assertEqual(obtido['form-editar'], ['lista'] * 5)
+        self.assertEqual(obtido['outra'], [None] * 5)
+
+    def test_logo_e_avisos_da_receita(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            console.log(JSON.stringify({
+              criar: textosTelaLogoRecorrente('criar', 5, 'receita'), editar: textosTelaLogoRecorrente('editar', 5, 'receita'),
+              gastoCriar: textosTelaLogoRecorrente('criar', 12, 'gasto'), gastoSem: textosTelaLogoRecorrente('criar', 12),
+              avisos: ['criar', 'editar', 'apagar'].map((op) => avisoDeRecorrente(op, { categoria: 'Lazer', valor: 1 }, 'receita')),
+              avisoGasto: avisoDeRecorrente('criar', { categoria: 'Lazer' }, 'gasto'),
+              avisoApagarSemCorpo: avisoDeRecorrente('apagar', undefined, 'receita'),
+            }));
+        """))
+        self.assertEqual(obtido['criar'], {'cabecalho': 'Nova Receita', 'titulo': 'Salvando a Receita...',
+                                           'texto': 'Ela entra sozinha todo dia 5.'})
+        self.assertEqual(obtido['editar'], {'cabecalho': 'Editar Recorrente', 'titulo': 'Salvando as Alterações...',
+                                            'texto': 'Elas valem a partir do próximo recebimento.'})
+        self.assertEqual(obtido['gastoCriar'], {'cabecalho': 'Novo Recorrente', 'titulo': 'Salvando o Recorrente...',
+                                                'texto': 'Ele entra sozinho todo dia 12.'})
+        self.assertEqual(obtido['gastoSem'], obtido['gastoCriar'])
+        self.assertEqual([a['texto'] for a in obtido['avisos']],
+                         ['Receita Recorrente Adicionada', 'Receita Recorrente Atualizada', 'Receita Recorrente Apagada'])
+        for aviso in obtido['avisos']:
+            self.assertEqual((aviso['negrito'], aviso['depois']), ('', ''))   # sem categoria em negrito
+        self.assertEqual(obtido['avisoGasto']['texto'], 'Cobrança Recorrente Adicionada a Lazer')
+        self.assertEqual(obtido['avisoApagarSemCorpo']['texto'], 'Receita Recorrente Apagada')
+
+    def test_decisao_por_status_das_tres_gravacoes_da_receita(self):
+        sessao = 'Sua sessão expirou. Feche e abra o app de novo.'
+        salvar = 'Não foi possível salvar. Tente de novo.'
+        apagar = 'Não foi possível apagar. Tente de novo.'
+        repetida = 'Já existe uma receita recorrente com esse nome.'
+        nao_achou = 'receita_recorrente_nao_encontrada'
+        casos = [
+            ('criar', {'dados': {}, 'status': 201}, {'acao': 'sucesso'}),
+            ('criar', {'dados': {}, 'status': 200}, {'acao': 'sucesso'}),         # repetido: já estava gravado
+            ('editar', {'dados': {}, 'status': 200}, {'acao': 'sucesso'}),
+            ('apagar', {'dados': {}, 'status': 200}, {'acao': 'sucesso'}),
+            ('apagar', {'erro': 404, 'detalhe': nao_achou}, {'acao': 'sucesso'}),  # já apagada
+            ('editar', {'erro': 404, 'detalhe': nao_achou},
+             {'acao': 'erro', 'mensagem': 'Este recorrente não existe mais.', 'voltarLista': True}),
+            # O código do gasto não vale na receita (vira o 404 de cadastro), e o da receita não vale no gasto.
+            ('editar', {'erro': 404, 'detalhe': 'recorrente_nao_encontrado'},
+             {'acao': 'erro', 'mensagem': 'Não encontramos o seu cadastro. Feche e abra o app de novo.'}),
+            ('criar', {'erro': 422, 'detalhe': 'descricao_repetida'}, {'acao': 'erro', 'campo': 'descricao', 'mensagem': repetida}),
+            ('editar', {'erro': 422, 'detalhe': 'descricao_repetida'}, {'acao': 'erro', 'campo': 'descricao', 'mensagem': repetida}),
+            ('criar', {'erro': 422, 'detalhe': 'dia_invalido'}, {'acao': 'erro', 'campo': 'dia', 'mensagem': 'Escolha o dia do recebimento.'}),
+            ('criar', {'erro': 422, 'detalhe': 'valor_invalido'},
+             {'acao': 'erro', 'campo': 'valor', 'mensagem': 'Valor inválido. Digite um valor maior que zero e de no máximo R$ 1.000.000,00'}),
+            ('criar', {'erro': 422, 'detalhe': 'descricao_invalida'},
+             {'acao': 'erro', 'campo': 'descricao', 'mensagem': 'Preencha a descrição para continuar'}),
+            ('criar', {'erro': 422, 'detalhe': 'descricao_longa'},
+             {'acao': 'erro', 'campo': 'descricao', 'mensagem': 'A descrição pode ter no máximo 30 caracteres.'}),
+            # Não existe estabelecimento nem categoria na receita: esses códigos caem na mensagem geral.
+            ('criar', {'erro': 422, 'detalhe': 'categoria_nao_encontrada'}, {'acao': 'erro', 'mensagem': salvar}),
+            ('criar', {'erro': 422, 'detalhe': 'estabelecimento_longo'}, {'acao': 'erro', 'mensagem': salvar}),
+            ('criar', {'erro': 422, 'detalhe': 'chave_invalida'}, {'acao': 'erro', 'mensagem': salvar}),
+            ('apagar', {'erro': 422, 'detalhe': 'descricao_repetida'}, {'acao': 'erro', 'mensagem': apagar}),
+            ('criar', {'erro': 401}, {'acao': 'erro', 'mensagem': sessao}),
+            ('apagar', {'erro': 401}, {'acao': 'erro', 'mensagem': sessao}),
+            ('criar', {'erro': 404, 'detalhe': 'usuario_nao_cadastrado'},
+             {'acao': 'erro', 'mensagem': 'Não encontramos o seu cadastro. Feche e abra o app de novo.'}),
+            ('criar', {'erro': 409, 'detalhe': 'cadastro_incompleto'},
+             {'acao': 'erro', 'mensagem': 'Seu cadastro está incompleto. Volte ao bot e informe o dia de fechamento da fatura.'}),
+            ('criar', {'erro': 503, 'detalhe': 'banco_ocupado'}, {'acao': 'erro', 'mensagem': salvar}),
+            ('editar', {'erro': 0}, {'acao': 'erro', 'mensagem': salvar}),
+            ('criar', {'erro': 500, 'detalhe': 'erro_interno'}, {'acao': 'erro', 'mensagem': salvar}),
+            ('apagar', {'erro': 503, 'detalhe': 'banco_ocupado'}, {'acao': 'erro', 'mensagem': apagar}),
+            ('apagar', {'erro': 0}, {'acao': 'erro', 'mensagem': apagar}),
+        ]
+        obtido = rodar_node(com_funcoes_puras(
+            "console.log(JSON.stringify(ENTRADA.map(([op, r]) => decisaoDaGravacaoRecorrente(op, r, 'receita'))));"),
+            [[op, r] for op, r, _ in casos])
+        for (operacao, resultado, esperado), recebido in zip(casos, obtido):
+            with self.subTest(operacao=operacao, resultado=resultado):
+                self.assertEqual(recebido, esperado)
+        for recebido in obtido:
+            self.assertNotIn('descricao_repetida', recebido.get('mensagem', ''))
+        # O gasto (sem o tipo) segue como na PRO-101: o 404 da receita não vale e o 422 repetido tem a mensagem antiga.
+        gasto = rodar_node(com_funcoes_puras("""
+            console.log(JSON.stringify([
+              decisaoDaGravacaoRecorrente('editar', { erro: 404, detalhe: 'receita_recorrente_nao_encontrada' }),
+              decisaoDaGravacaoRecorrente('criar', { erro: 422, detalhe: 'descricao_repetida' }),
+              decisaoDaGravacaoRecorrente('criar', { erro: 422, detalhe: 'descricao_repetida' }, 'gasto'),
+            ]));
+        """))
+        self.assertEqual(gasto[0], {'acao': 'erro', 'mensagem': 'Não encontramos o seu cadastro. Feche e abra o app de novo.'})
+        self.assertEqual(gasto[1]['mensagem'], 'Já existe uma cobrança com esse nome nesta categoria.')
+        self.assertEqual(gasto[1], gasto[2])
+
+    def test_novas_tentativas_da_receita_repetem_o_mesmo_corpo_e_a_mesma_chave(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            (async () => {
+              const f = { tipo: 'receita', dia: 5, valorDigitos: '450000', descricao: 'Salário' };
+              const corpo = montarCorpoRecorrente(f, 'chave-do-formulario');
+              const enviados = [];
+              const respostas = [{ erro: 503, detalhe: 'banco_ocupado' }, { erro: 0 }, { dados: { id: 1 }, status: 201 }];
+              const resultado = await gravarComTentativas(async (c) => { enviados.push(JSON.stringify(c)); return respostas.shift(); }, corpo, async () => {});
+              console.log(JSON.stringify({ iguais: enviados.every((x) => x === enviados[0]), n: enviados.length,
+                                           status: resultado.status, tem_chave: JSON.parse(enviados[0]).chave }));
+            })();
+        """))
+        self.assertEqual(obtido, {'iguais': True, 'n': 3, 'status': 201, 'tem_chave': 'chave-do-formulario'})
 
 
 if __name__ == '__main__':
