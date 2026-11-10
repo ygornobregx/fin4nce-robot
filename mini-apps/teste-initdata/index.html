@@ -17,6 +17,10 @@
     #recorrentes label { display: block; margin: 8px 0 2px; font-size: .9rem; }
     #recorrentes input { width: 100%; box-sizing: border-box; padding: 6px; font-size: 1rem; }
     #recorrentes button { margin: 10px 8px 0 0; padding: 8px 14px; font-size: 1rem; }
+    #receitas-recorrentes { margin-top: 28px; padding-top: 8px; border-top: 1px solid rgba(127,127,127,.4); }
+    #receitas-recorrentes label { display: block; margin: 8px 0 2px; font-size: .9rem; }
+    #receitas-recorrentes input { width: 100%; box-sizing: border-box; padding: 6px; font-size: 1rem; }
+    #receitas-recorrentes button { margin: 10px 8px 0 0; padding: 8px 14px; font-size: 1rem; }
   </style>
 </head>
 <body>
@@ -72,6 +76,24 @@
     <button id="rec-apagar" type="button">Apagar (DELETE)</button>
     <h2 id="rec-titulo">Recorrentes: nada pedido ainda</h2>
     <pre id="rec-respostas"></pre>
+  </div>
+  <div id="receitas-recorrentes">
+    <h1>Receitas Recorrentes (diagnóstico)</h1>
+    <p>PRO-102. "Listar" só lê. "Criar" gera uma chave nova e manda o MESMO pedido duas vezes ao mesmo tempo, com essa chave: uma resposta deve vir 201 e a outra 200 com "repetido": true, com o mesmo id. "Editar" e "Apagar" usam o id do campo abaixo. Nada é lançado na hora: o job das 05:00 do bot lança no dia.</p>
+    <button id="rr-listar" type="button">Listar (GET /receitas-recorrentes)</button>
+    <label for="rr-dia">Dia do recebimento (1 a 31)</label>
+    <input id="rr-dia" type="number" min="1" max="31" step="1" inputmode="numeric">
+    <label for="rr-valor">Valor</label>
+    <input id="rr-valor" type="number" step="0.01" inputmode="decimal">
+    <label for="rr-descricao">Descrição (até 30 caracteres)</label>
+    <input id="rr-descricao" type="text">
+    <button id="rr-criar" type="button">Criar (2 pedidos juntos, mesma chave)</button>
+    <label for="rr-id">Id da receita recorrente (Editar e Apagar)</label>
+    <input id="rr-id" type="number" min="1" step="1" inputmode="numeric">
+    <button id="rr-editar" type="button">Editar (PUT)</button>
+    <button id="rr-apagar" type="button">Apagar (DELETE)</button>
+    <h2 id="rr-titulo">Receitas recorrentes: nada pedido ainda</h2>
+    <pre id="rr-respostas"></pre>
   </div>
   <script>
     const status = document.getElementById("status");
@@ -267,6 +289,55 @@
     $("rec-apagar").addEventListener("click", () => {
       const rota = "/recorrentes/" + encodeURIComponent($("rec-id").value);
       executarRecorrente("DELETE " + rota, async () => mostrar(await chamarRota("DELETE", rota)));
+    });
+
+    // --- Receitas Recorrentes (diagnóstico, PRO-102) ---
+    // Mesmo estilo do bloco acima; o texto da API só entra por textContent.
+    function camposReceitaRecorrente() {
+      return {
+        dia_recebimento: numeroOuNulo("rr-dia"),
+        valor: numeroOuNulo("rr-valor"),
+        descricao: $("rr-descricao").value
+      };
+    }
+
+    async function executarReceitaRecorrente(rotulo, acao) {
+      $("rr-titulo").textContent = rotulo + ": aguardando...";
+      $("rr-respostas").textContent = "";
+      try {
+        const texto = await acao();
+        $("rr-titulo").textContent = rotulo;
+        $("rr-respostas").textContent = texto;
+      } catch (e) {
+        $("rr-titulo").textContent = rotulo + ": falha ao chamar a API";
+      }
+    }
+
+    $("rr-listar").addEventListener("click", () =>
+      executarReceitaRecorrente("GET /receitas-recorrentes",
+        async () => mostrar(await chamarRota("GET", "/receitas-recorrentes"))));
+
+    $("rr-criar").addEventListener("click", () => {
+      const chave = crypto.randomUUID();
+      const corpo = Object.assign({ chave }, camposReceitaRecorrente());
+      executarReceitaRecorrente("POST /receitas-recorrentes (chave " + chave + ")", async () => {
+        // De propósito: o mesmo pedido, com a mesma chave, duas vezes ao mesmo tempo.
+        const [primeira, segunda] = await Promise.all([
+          chamarRota("POST", "/receitas-recorrentes", corpo), chamarRota("POST", "/receitas-recorrentes", corpo)
+        ]);
+        return "Pedido 1 - " + mostrar(primeira) + "\n\nPedido 2 - " + mostrar(segunda);
+      });
+    });
+
+    $("rr-editar").addEventListener("click", () => {
+      const rota = "/receitas-recorrentes/" + encodeURIComponent($("rr-id").value);
+      executarReceitaRecorrente("PUT " + rota,
+        async () => mostrar(await chamarRota("PUT", rota, camposReceitaRecorrente())));
+    });
+
+    $("rr-apagar").addEventListener("click", () => {
+      const rota = "/receitas-recorrentes/" + encodeURIComponent($("rr-id").value);
+      executarReceitaRecorrente("DELETE " + rota, async () => mostrar(await chamarRota("DELETE", rota)));
     });
   </script>
 </body>

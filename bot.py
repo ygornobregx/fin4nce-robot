@@ -48,6 +48,9 @@ from registro import (
     registrar_receita,
     validar_valor,
 )
+# Lançamento da receita recorrente no dia (PRO-102): a regra fica no
+# recorrentes.py (o mesmo módulo das rotas da API); o job só chama e avisa.
+from recorrentes import lancar_receita_recorrente
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.error import BadRequest, NetworkError
 from telegram.ext import (
@@ -186,7 +189,8 @@ def iniciar_banco():
     )''')
     # Receitas avulsas (PRO-86): valor sempre positivo (o banco recusa zero ou
     # negativo); data_receita em Brasília 'AAAA-MM-DD HH:MM:SS'; origem
-    # 'avulsa' agora e 'recorrente' na PRO-87 (com receita_recorrente_id).
+    # 'avulsa' ou, desde a PRO-102, 'recorrente' (lançada pelo job, com o
+    # receita_recorrente_id).
     cursor.execute('''CREATE TABLE IF NOT EXISTS receitas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
@@ -198,9 +202,10 @@ def iniciar_banco():
     )''')
     # Chave de idempotência das gravações pela API (PRO-88): uma linha por
     # chave e por usuário, gravada na mesma transação do lançamento. tipo é
-    # 'gasto', 'receita' ou, desde a PRO-87, 'recorrente'; lancamento_id =
-    # transacoes.id (parcela 1 no parcelado), receitas.id ou
-    # gastos_recorrentes.id; criado_em em Brasília.
+    # 'gasto', 'receita', 'recorrente' (desde a PRO-87) ou
+    # 'receita_recorrente' (desde a PRO-102); lancamento_id = transacoes.id
+    # (parcela 1 no parcelado), receitas.id, gastos_recorrentes.id ou
+    # receitas_recorrentes.id; criado_em em Brasília.
     cursor.execute('''CREATE TABLE IF NOT EXISTS chaves_registro (
         user_id INTEGER NOT NULL,
         chave TEXT NOT NULL,
@@ -208,6 +213,21 @@ def iniciar_banco():
         lancamento_id INTEGER NOT NULL,
         criado_em TEXT NOT NULL,
         PRIMARY KEY (user_id, chave)
+    )''')
+    # Receitas recorrentes (PRO-102): criadas pela API do Mini App e lançadas
+    # pelo job das 05:00 em 'receitas' (origem 'recorrente', com o
+    # receita_recorrente_id). Tabela nova, aditiva: nenhuma outra muda.
+    # descricao aparada, até 30; dia_recebimento de 1 a 31; criado_em em
+    # Brasília 'AAAA-MM-DD HH:MM:SS'; ultimo_ciclo_recebido 'AAAA-MM' do
+    # calendário, NULL até o primeiro lançamento.
+    cursor.execute('''CREATE TABLE IF NOT EXISTS receitas_recorrentes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        descricao TEXT NOT NULL,
+        valor REAL NOT NULL CHECK (valor > 0),
+        dia_recebimento INTEGER NOT NULL,
+        criado_em TEXT NOT NULL,
+        ultimo_ciclo_recebido TEXT
     )''')
 
     migrar_colunas_faltantes(cursor)
@@ -782,6 +802,17 @@ def obter_categorias_usuario(user_id):
     conn.close()
     return categorias
 
+def obter_renda_usuario(user_id):
+    """renda_mensal do usuário, só para escolher o texto da prévia da
+    receita (PRO-102, D5); None sem cadastro ou sem renda. Só leitura: a
+    Sobra continua no calculos.py."""
+    conn = obter_conexao_db()
+    try:
+        linha = conn.execute('SELECT renda_mensal FROM usuarios WHERE user_id = ?', (user_id,)).fetchone()
+    finally:
+        conn.close()
+    return linha[0] if linha else None
+
 async def salvar_gasto_livre(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto_usuario = update.message.text
     user_id = update.effective_user.id
@@ -827,7 +858,8 @@ async def salvar_gasto_livre(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 'descricao': gasto.descricao,
                 'momento_envio': momento_envio,
             }
-            texto, teclado = _montar_tela_previa_receita(valor_receita, gasto.descricao)
+            texto, teclado = _montar_tela_previa_receita(valor_receita, gasto.descricao,
+                                                         obter_renda_usuario(user_id))
             await enviar_fluxo(context, user_id, texto, reply_markup=teclado)
             return CONFIRMAR_RECEITA
 
@@ -905,14 +937,22 @@ def _texto_descricao_receita(descricao):
     texto do usuário, pela IA), ou 'Sem Informação' quando vazia."""
     return escape(descricao) if descricao else "Sem Informação"
 
-def _montar_tela_previa_receita(valor, descricao):
+TEXTO_PREVIA_RECEITA_COM_RENDA = "A sua renda mensal já entra na Sobra. Registre aqui só o dinheiro extra."
+TEXTO_PREVIA_RECEITA_SEM_RENDA = (
+    "O salário e as entradas fixas ficam em Recorrentes, no Mini App. Registre aqui só o dinheiro extra."
+)
+
+def _montar_tela_previa_receita(valor, descricao, renda):
     """Prévia 'Entendi Assim:' da receita (D4/D5): nada é gravado até o
-    'Confirmar'. A frase da renda lembra que o salário já entra na Sobra."""
+    'Confirmar'. A frase do fim depende da renda (PRO-102, D5): com renda
+    maior que 0, lembra que a renda já entra na Sobra; com renda 0 ou NULL,
+    aponta para a receita recorrente no Mini App."""
+    aviso = TEXTO_PREVIA_RECEITA_COM_RENDA if renda and renda > 0 else TEXTO_PREVIA_RECEITA_SEM_RENDA
     texto = (
         "Entendi Assim:\n\n"
         f"Receita: <b>{formatar_real(valor)}</b>\n"
         f"Descrição: {_texto_descricao_receita(descricao)}\n\n"
-        "A sua renda mensal já entra na Sobra. Registre aqui só o dinheiro extra."
+        f"{aviso}"
     )
     teclado = InlineKeyboardMarkup([
         [InlineKeyboardButton("Confirmar", callback_data='receita_confirmar')],
@@ -2704,6 +2744,10 @@ async def verificar_gastos_recorrentes(context: ContextTypes.DEFAULT_TYPE):
 
     Vencimento no dia 31 (ou 30/29) num mês mais curto dispara no último dia
     do mês, mesma regra já usada em _executar_verificacao_resets.
+
+    Desde a PRO-102, também as receitas recorrentes com recebimento hoje e
+    ainda não lançadas neste ciclo, pela MESMA regra do dia (D4). Continua um
+    job por usuário: o 'data' leva 'gr_ids' (gastos) e 'rr_ids' (receitas).
     """
     agora = datetime.now(FUSO_BRASILIA)
     dia_hoje = agora.day
@@ -2717,31 +2761,57 @@ async def verificar_gastos_recorrentes(context: ContextTypes.DEFAULT_TYPE):
            ORDER BY criado_em''',
         (ciclo_atual,)
     ).fetchall()
+    candidatas_receita = conn.execute(
+        '''SELECT id, dia_recebimento, user_id FROM receitas_recorrentes
+           WHERE ultimo_ciclo_recebido IS NULL OR ultimo_ciclo_recebido != ?
+           ORDER BY criado_em, id''',
+        (ciclo_atual,)
+    ).fetchall()
     conn.close()
 
     por_usuario = {}
     for gr_id, dia_cobranca, user_id in candidatos:
         if min(dia_cobranca, ultimo_dia_mes) == dia_hoje:
-            por_usuario.setdefault(user_id, []).append(gr_id)
+            por_usuario.setdefault(user_id, {'gr_ids': [], 'rr_ids': []})['gr_ids'].append(gr_id)
+    for rr_id, dia_recebimento, user_id in candidatas_receita:
+        if min(dia_recebimento, ultimo_dia_mes) == dia_hoje:
+            por_usuario.setdefault(user_id, {'gr_ids': [], 'rr_ids': []})['rr_ids'].append(rr_id)
 
-    for user_id, gr_ids in por_usuario.items():
+    for user_id, ids in por_usuario.items():
         context.job_queue.run_once(
             _lancar_gastos_recorrentes_job,
             0,
             chat_id=user_id,
             user_id=user_id,
-            data={'gr_ids': gr_ids, 'ciclo': ciclo_atual},
+            data={'gr_ids': ids['gr_ids'], 'rr_ids': ids['rr_ids'], 'ciclo': ciclo_atual},
             name=f"recorrentes_{user_id}_{ciclo_atual}"
         )
 
-    total = sum(len(gr_ids) for gr_ids in por_usuario.values())
-    if total:
-        print(f"🔁 {total} gasto(s) recorrente(s) de {len(por_usuario)} usuário(s) agendado(s) para lançamento imediato.")
+    total_gastos = sum(len(ids['gr_ids']) for ids in por_usuario.values())
+    total_receitas = sum(len(ids['rr_ids']) for ids in por_usuario.values())
+    if total_gastos or total_receitas:
+        print(f"🔁 {total_gastos} gasto(s) e {total_receitas} receita(s) recorrente(s) de {len(por_usuario)} "
+              f"usuário(s) agendado(s) para lançamento imediato.")
+
+# Título de cada página da mensagem diária dos recorrentes (PRO-102, D8). Cada
+# item guarda o seu; item sem título (estado do user_data de antes do deploy,
+# que só tinha cobranças) usa o da cobrança.
+TITULO_COBRANCA_RECORRENTE = "Cobrança Recorrente Lançada"
+TITULO_RECEITA_RECORRENTE = "Receita Recorrente Lançada"
 
 def _montar_texto_recorrente_diario(item):
-    """Texto de uma página da mensagem diária de cobranças recorrentes:
-    indicador "posição-total" + corpo já pronto daquela cobrança."""
-    return f"{item['posicao']}-{item['total_dia']}\n\nCobrança Recorrente Lançada\n\n{item['corpo']}"
+    """Texto de uma página da mensagem diária dos recorrentes: indicador
+    "posição-total" + título do item + corpo já pronto daquele lançamento."""
+    titulo = item.get('titulo') or TITULO_COBRANCA_RECORRENTE
+    return f"{item['posicao']}-{item['total_dia']}\n\n{titulo}\n\n{item['corpo']}"
+
+def _montar_corpo_receita_recorrente(descricao, valor):
+    """Corpo (HTML) da página "Receita Recorrente Lançada": descrição e
+    valor, sem categoria (a receita não tem)."""
+    return (
+        f"Descrição: <b>{escape(descricao or '')}</b>\n"
+        f"Valor: <b>{formatar_real(valor)}</b>"
+    )
 
 def _teclado_recorrente_diario():
     return InlineKeyboardMarkup([[
@@ -2800,20 +2870,40 @@ async def _lancar_gastos_recorrentes_job(context: ContextTypes.DEFAULT_TYPE):
     O indicador "posição-total" é calculado depois de lançar tudo, só com o
     que foi de fato lançado (uma cobrança pulada por já ter sido cobrada, ou
     por categoria removida, não deixa um "1-2" mentiroso).
+
+    Desde a PRO-102, depois dos gastos (lançados como antes), lança as
+    receitas recorrentes do dia ('rr_ids', lido com .get: job agendado antes
+    do deploy não tem) pela lancar_receita_recorrente do recorrentes.py, com
+    o momento de agora em Brasília. Cada receita lançada vira uma página
+    "Receita Recorrente Lançada" na MESMA mensagem (D8). Uma receita que der
+    erro é desfeita, vai para o log e o job segue para a próxima.
     """
     gr_ids = context.job.data['gr_ids']
+    rr_ids = context.job.data.get('rr_ids', [])
     ciclo = context.job.data['ciclo']
     user_id = context.job.chat_id
 
     conn = obter_conexao_db()
-    corpos = []
+    novos = []
     for gr_id in gr_ids:
         corpo = _lancar_item_recorrente(conn, user_id, gr_id, ciclo)
         if corpo:
-            corpos.append(corpo)
+            novos.append({'titulo': TITULO_COBRANCA_RECORRENTE, 'corpo': corpo})
+    if rr_ids:
+        momento = datetime.now(FUSO_BRASILIA).strftime('%Y-%m-%d %H:%M:%S')
+        for rr_id in rr_ids:
+            try:
+                lancada = lancar_receita_recorrente(conn, user_id, rr_id, ciclo, momento)
+            except Exception as e:
+                print(f"⚠️ Receita recorrente {rr_id} não lançada para o usuário {user_id}: "
+                      f"{type(e).__name__}: {e}")
+                continue
+            if lancada:
+                novos.append({'titulo': TITULO_RECEITA_RECORRENTE,
+                              'corpo': _montar_corpo_receita_recorrente(lancada.descricao, lancada.valor)})
     conn.close()
 
-    if not corpos:
+    if not novos:
         return
 
     # Estado (itens/paginação) guardado numa chave própria. A mensagem em si
@@ -2826,7 +2916,7 @@ async def _lancar_gastos_recorrentes_job(context: ContextTypes.DEFAULT_TYPE):
         estado = {'data': hoje_str, 'message_id': None, 'itens': []}
 
     primeira_nova = len(estado['itens'])
-    estado['itens'].extend({'corpo': corpo} for corpo in corpos)
+    estado['itens'].extend(novos)
     for i, item in enumerate(estado['itens']):
         item['posicao'] = i + 1
         item['total_dia'] = len(estado['itens'])
@@ -2891,10 +2981,11 @@ async def recorrente_diario_proxima(update: Update, context: ContextTypes.DEFAUL
         context.user_data['recorrente_diario'] = estado
         return
 
-    # Já estava na última cobrança já lançada: avisa e volta ao menu sozinho.
+    # Já estava no último recorrente já lançado: avisa e volta ao menu sozinho.
+    # (PRO-102, D8: "Recorrentes", porque a mensagem também tem receitas.)
     try:
         await query.message.edit_text(
-            "Sem Mais Cobranças Recorrentes Lançadas Hoje, Voltando ao Menu Principal."
+            "Sem Mais Recorrentes Lançados Hoje, Voltando ao Menu Principal."
         )
     except Exception:
         pass

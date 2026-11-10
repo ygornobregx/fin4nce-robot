@@ -19,6 +19,11 @@ Rotas dos gastos recorrentes (PRO-87): GET /categorias, GET /recorrentes,
 POST /recorrentes (uma vez só por chave), PUT /recorrentes/{id} e
 DELETE /recorrentes/{id}. As regras ficam no recorrentes.py.
 
+Rotas das receitas recorrentes (PRO-102): GET /receitas-recorrentes,
+POST /receitas-recorrentes (uma vez só por chave), PUT
+/receitas-recorrentes/{id} e DELETE /receitas-recorrentes/{id}. As regras
+também ficam no recorrentes.py; o lançamento no dia é do job do bot.
+
 Também serve, na mesma origem, a home do Mini App em /app (mini-apps/home, PRO-77)
 e a página de diagnóstico das rotas em /teste (mini-apps/teste-initdata).
 
@@ -318,7 +323,8 @@ def obter_limite_interpretacao() -> LimiteDeChamadas:
 
 # Códigos do registro.ErroRegistro que não são 422.
 STATUS_ERRO_REGISTRO = {"resposta_ia_invalida": 502, "ia_indisponivel": 503, "banco_ocupado": 503,
-                        "recorrente_nao_encontrado": 404}  # PRO-87
+                        "recorrente_nao_encontrado": 404,            # PRO-87
+                        "receita_recorrente_nao_encontrada": 404}    # PRO-102
 
 
 def erro_registro(erro: registro.ErroRegistro) -> HTTPException:
@@ -332,8 +338,8 @@ def erro_interno(erro: Exception, rotulo: str = "Registro") -> HTTPException:
     """Erro inesperado nas rotas que gravam: 500 {"detail": "erro_interno"}.
     Nem a resposta nem o log levam a mensagem (a do banco pode trazer SQL ou
     dados) nem o traceback; o log leva só o código e o nome da classe.
-    'rotulo' diz de que rota veio ("Registro", desde a PRO-96 "Cadastro" e,
-    desde a PRO-87, "Recorrentes")."""
+    'rotulo' diz de que rota veio ("Registro", desde a PRO-96 "Cadastro",
+    desde a PRO-87 "Recorrentes" e, desde a PRO-102, "Receitas recorrentes")."""
     logger.error("%s falhou: erro_interno (%s)", rotulo, type(erro).__name__)
     return HTTPException(status_code=500, detail="erro_interno")
 
@@ -646,6 +652,124 @@ def apagar_recorrente(recorrente_id: int, usuario: dict = Depends(usuario_autent
         raise erro_registro(erro) from None
     except Exception as erro:
         raise erro_interno(erro, "Recorrentes") from None
+    return {"id": apagado, "apagado": True}
+
+
+# --- RECEITAS RECORRENTES (PRO-102) ---
+# Contrato na nota da PRO-102 (base das telas da PRO-103), com as mesmas
+# regras das rotas /recorrentes: erros do recorrentes.py como
+# registro.ErroRegistro (404 receita_recorrente_nao_encontrada, 503
+# banco_ocupado, 422 nos demais); o id da URL vai sempre junto com o user_id
+# do initData na consulta.
+class PedidoReceitaRecorrente(BaseModel):
+    """Corpo do PUT. Campos soltos (Any): quem confere é o recorrentes.py, com
+    os códigos do contrato. Campos a mais (user_id, categoria,
+    estabelecimento, ultimo_ciclo_recebido...) são ignorados."""
+    dia_recebimento: Any = None
+    valor: Any = None
+    descricao: Any = None
+
+
+class PedidoNovaReceitaRecorrente(PedidoReceitaRecorrente):
+    """Corpo do POST: o do PUT mais a chave de toque duplo (UUID v4)."""
+    chave: Any = None
+
+
+def receita_recorrente_json(receita: recorrentes.ReceitaRecorrente) -> dict:
+    """Formato de uma receita recorrente, o mesmo em todas as rotas."""
+    return {
+        "id": receita.id,
+        "descricao": receita.descricao,
+        "valor": em_reais(receita.valor),
+        "dia_recebimento": receita.dia_recebimento,
+    }
+
+
+@app.get("/receitas-recorrentes")
+def listar_receitas_recorrentes(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db)):
+    """As receitas recorrentes do usuário, por dia de recebimento (e id), e o
+    total mensal (soma dos valores; 0.0 sem nenhuma)."""
+    user_id = usuario["id"]
+    try:
+        carregar_cadastro(conn, user_id)
+        lista = recorrentes.listar_receitas_recorrentes(conn, user_id)
+    except HTTPException:
+        raise
+    except Exception as erro:
+        raise erro_interno(erro, "Receitas recorrentes") from None
+    return {
+        "receitas_recorrentes": [receita_recorrente_json(receita) for receita in lista.receitas_recorrentes],
+        "total_mensal": em_reais(lista.total_mensal),
+    }
+
+
+@app.post("/receitas-recorrentes", status_code=201)
+def criar_receita_recorrente(pedido: PedidoNovaReceitaRecorrente, response: Response,
+                             usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db),
+                             agora: datetime = Depends(obter_agora)):
+    """Cria a receita recorrente (sem IA). 201 se gravou; 200 com
+    repetido=true se a mesma chave já tinha sido gravada (a original, como
+    está agora). criado_em do servidor, em Brasília; nada é lançado na hora
+    (o job das 05:00 do bot lança no próximo dia de recebimento). Banco
+    ocupado depois das novas tentativas: 503 banco_ocupado (a tela reenvia o
+    MESMO corpo, com a MESMA chave). Erro inesperado: 500 erro_interno."""
+    user_id = usuario["id"]
+    try:
+        carregar_cadastro(conn, user_id)
+        receita = recorrentes.criar_receita_recorrente_api(
+            conn, user_id, pedido.chave, pedido.dia_recebimento, pedido.valor, pedido.descricao,
+            registro.momento_agora(agora)
+        )
+    except HTTPException:
+        raise
+    except registro.ErroRegistro as erro:
+        raise erro_registro(erro) from None
+    except Exception as erro:
+        raise erro_interno(erro, "Receitas recorrentes") from None
+    if receita.repetido:
+        response.status_code = 200
+    return dict(receita_recorrente_json(receita), repetido=receita.repetido)
+
+
+@app.put("/receitas-recorrentes/{receita_recorrente_id}")
+def editar_receita_recorrente(receita_recorrente_id: int, pedido: PedidoReceitaRecorrente,
+                              usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db)):
+    """Edita os 3 campos da receita recorrente do usuário: 422 dos campos
+    antes da existência; depois 404 receita_recorrente_nao_encontrada
+    (inexistente ou de outro usuário, sem dizer qual); depois 422
+    descricao_repetida. Não mexe no ciclo já recebido nem na data de criação.
+    200 com a receita recorrente como ficou."""
+    user_id = usuario["id"]
+    try:
+        carregar_cadastro(conn, user_id)
+        receita = recorrentes.editar_receita_recorrente(
+            conn, user_id, receita_recorrente_id, pedido.dia_recebimento, pedido.valor, pedido.descricao
+        )
+    except HTTPException:
+        raise
+    except registro.ErroRegistro as erro:
+        raise erro_registro(erro) from None
+    except Exception as erro:
+        raise erro_interno(erro, "Receitas recorrentes") from None
+    return receita_recorrente_json(receita)
+
+
+@app.delete("/receitas-recorrentes/{receita_recorrente_id}")
+def apagar_receita_recorrente(receita_recorrente_id: int, usuario: dict = Depends(usuario_autenticado),
+                              conn=Depends(obter_conexao_db)):
+    """Apaga a receita recorrente do usuário (as receitas já lançadas ficam).
+    404 receita_recorrente_nao_encontrada se não existe, é de outro usuário ou
+    já foi apagada (a tela trata o 404 repetido como "já apagada")."""
+    user_id = usuario["id"]
+    try:
+        carregar_cadastro(conn, user_id)
+        apagado = recorrentes.apagar_receita_recorrente(conn, user_id, receita_recorrente_id)
+    except HTTPException:
+        raise
+    except registro.ErroRegistro as erro:
+        raise erro_registro(erro) from None
+    except Exception as erro:
+        raise erro_interno(erro, "Receitas recorrentes") from None
     return {"id": apagado, "apagado": True}
 
 

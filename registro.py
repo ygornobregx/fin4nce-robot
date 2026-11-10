@@ -387,7 +387,8 @@ def validar_valor_receita(valor):
     return valor if valor > 0 else None
 
 
-def registrar_receita(conn, user_id, valor, momento, descricao=None, origem='avulsa', commit=True):
+def registrar_receita(conn, user_id, valor, momento, descricao=None, origem='avulsa', commit=True,
+                      receita_recorrente_id=None):
     """Grava uma receita na tabela 'receitas' (valor sempre positivo) e faz o
     commit; devolve o id da linha nova. Valida o valor de novo
     (validar_valor_receita) e levanta ValueError ANTES do INSERT se ele não
@@ -401,15 +402,20 @@ def registrar_receita(conn, user_id, valor, momento, descricao=None, origem='avu
 
     commit=False (PRO-88): não faz o commit no sucesso (quem chama grava a
     chave de registro na mesma transação e faz o commit); em erro, desfaz
-    como no padrão."""
+    como no padrão.
+
+    receita_recorrente_id (PRO-102): o id em 'receitas_recorrentes' da
+    receita lançada pelo job (com origem='recorrente'). A receita avulsa
+    (bot e POST /receitas) não passa nada e fica com NULL."""
     valor_valido = validar_valor_receita(valor)
     if valor_valido is None:
         raise ValueError(f"Valor de receita inválido: {valor!r}")
     try:
         cursor = conn.cursor()
         cursor.execute(
-            'INSERT INTO receitas (user_id, valor, descricao, data_receita, origem) VALUES (?, ?, ?, ?, ?)',
-            (user_id, valor_valido, _aparar_descricao(descricao), momento, origem)
+            'INSERT INTO receitas (user_id, valor, descricao, data_receita, origem, receita_recorrente_id) '
+            'VALUES (?, ?, ?, ?, ?, ?)',
+            (user_id, valor_valido, _aparar_descricao(descricao), momento, origem, receita_recorrente_id)
         )
         receita_id = cursor.lastrowid
         if commit:
