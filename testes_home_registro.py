@@ -23,6 +23,13 @@ do /me levando à escolha, nenhum "/start" na home, e no node a comparação de
 categorias repetidas contra a normalizar_texto() de verdade do cadastro.py, o
 contador, a saudação do tour, a decisão por status do POST /cadastro, a barra
 vazia, o gráfico vazio e o cartão do salário.
+
+Desde a PRO-101, as telas dos gastos recorrentes (guia, escolha, lista, formulário Novo e Editar e as
+folhas do dia, da categoria e do apagar): blocos e textos dos quadros, o atalho ligado (só "Categorias"
+segue em "Em breve"), a chave nascendo só no formulário Novo, a tela da logo com tempo mínimo no criar e
+no editar e ausente no apagar, o guia "já visto" sempre em try, e no node a máscara de centavos, a
+validação do valor contra o registro.validar_valor, a dica do Salvar, o corpo dos pedidos, os textos da
+lista e a decisão por status das três gravações.
 """
 import json
 import os
@@ -37,6 +44,8 @@ import unittest
 RAIZ = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, RAIZ)
 import cadastro  # noqa: E402  (só a biblioteca padrão e o registro.py: sem .env, rede nem banco)
+import recorrentes  # noqa: E402  (idem: só o cadastro.py e o registro.py)
+import registro  # noqa: E402
 CAMINHO_HOME = os.path.join(RAIZ, 'mini-apps', 'home', 'index.html')
 NODE = shutil.which('node')
 
@@ -132,11 +141,13 @@ class TestEstruturaDaHome(unittest.TestCase):
         principal = codigo_principal(HOME)
         self.assertIn('$("atalho-registrar").addEventListener("click", abrirOpcoes)', principal)
 
-    def test_categorias_e_recorrentes_continuam_em_breve(self):
+    def test_so_categorias_continua_em_breve(self):
         principal = codigo_principal(HOME)
-        # Todo .atalho, MENOS o Registrar, segue com o aviso "Em breve".
-        self.assertIn('document.querySelectorAll(".atalho:not(#atalho-registrar)")'
+        # Todo .atalho, MENOS o Registrar e (desde a PRO-101) o Recorrentes, segue com o aviso "Em breve".
+        self.assertIn('document.querySelectorAll(".atalho:not(#atalho-registrar):not(#atalho-recorrentes)")'
                       '.forEach((b) => b.addEventListener("click", avisarEmBreve))', principal)
+        self.assertRegex(HOME, r'<button class="atalho" id="atalho-recorrentes" type="button" aria-label="Recorrentes">')
+        self.assertIn('$("atalho-recorrentes").addEventListener("click", abrirRecorrentes);', principal)
         self.assertIn('aria-label="Categorias"', HOME)
         self.assertIn('aria-label="Recorrentes"', HOME)
         # As ações e os lápis do detalhe continuam com o seletor de antes.
@@ -178,16 +189,21 @@ class TestEstruturaDaHome(unittest.TestCase):
 
     def test_envio_leva_os_cabecalhos_de_autenticacao(self):
         corpo = corpo_da_funcao(codigo_principal(HOME), 'async function enviarJson')
-        self.assertIn('"Authorization": "tma " + initData', corpo)
-        self.assertIn('"ngrok-skip-browser-warning": "1"', corpo)
-        self.assertIn('method: "POST"', corpo)
-        self.assertIn('JSON.stringify(corpo)', corpo)
-        self.assertIn('return { erro: 0 }', corpo)  # nunca lança: falha de rede vira erro 0
+        # O POST do Registrar, do cadastro e dos recorrentes passa pelo mesmo envio, que desde a PRO-101 também faz PUT e DELETE.
+        self.assertIn('return enviarComMetodo("POST", rota, corpo, tempoLimiteMs);', corpo)
+        envio = corpo_da_funcao(codigo_principal(HOME), 'async function enviarComMetodo')
+        self.assertIn('"Authorization": "tma " + initData', envio)
+        self.assertIn('"ngrok-skip-browser-warning": "1"', envio)
+        self.assertIn('method: metodo', envio)
+        self.assertIn('JSON.stringify(corpo)', envio)
+        self.assertIn('return { erro: 0 }', envio)  # nunca lança: falha de rede vira erro 0
 
-    def test_chave_so_nasce_com_a_previa(self):
+    def test_chave_so_nasce_com_a_previa_ou_o_formulario_novo(self):
         principal = codigo_principal(HOME)
-        self.assertEqual(principal.count('gerarChave('), 1)
+        # Duas chamadas só: a prévia do Registrar (interpretar) e o formulário Novo dos recorrentes (PRO-101).
+        self.assertEqual(principal.count('gerarChave('), 2)
         self.assertIn('gerarChave()', corpo_da_funcao(principal, 'async function interpretar'))
+        self.assertIn('gerarChave()', corpo_da_funcao(principal, 'function abrirFormNovo'))
         self.assertNotIn('gerarChave', corpo_da_funcao(principal, 'async function confirmar'))
         # A gravação usa o corpo guardado, e as novas tentativas passam por gravarComTentativas.
         confirmar = corpo_da_funcao(principal, 'async function confirmar')
@@ -1371,20 +1387,22 @@ class TestEstruturaDaTelaDaLogo(unittest.TestCase):
         reduzido = HOME[HOME.index('@media (prefers-reduced-motion: reduce)'):]
         self.assertIn('.logo-animada .traco { animation: none; stroke-dashoffset: 0; opacity: 1; }', reduzido[:200])
 
-    def test_com_tempo_minimo_so_na_abertura_e_no_cadastro(self):
+    def test_com_tempo_minimo_so_na_abertura_no_cadastro_e_no_salvar_recorrente(self):
         principal = codigo_principal(HOME)
         self.assertIn('comTempoMinimo(', corpo_da_funcao(principal, 'async function carregar'))
         self.assertIn('comTempoMinimo(', corpo_da_funcao(principal, 'async function enviarCadastro'))
+        self.assertIn('comTempoMinimo(', corpo_da_funcao(principal, 'async function salvarRecorrente'))  # PRO-101: criar e editar
         for assinatura in ('async function interpretar', 'async function confirmar', 'function concluirRegistro',
                            'async function buscarCadastroDoAmigo', 'async function carregarDetalhe',
-                           'function terminarTour'):
+                           'function terminarTour', 'async function apagarRecorrente',
+                           'async function carregarRecorrentes', 'async function carregarCategoriasRec'):
             with self.subTest(funcao=assinatura):
                 corpo = corpo_da_funcao(principal, assinatura)
                 self.assertNotIn('comTempoMinimo', corpo)
                 self.assertNotIn('mostrarTelaLogo', corpo)
-        # Fora das duas funções, ninguém chama o tempo mínimo.
+        # Fora dessas três funções (abertura, cadastro e salvar recorrente), ninguém chama o tempo mínimo.
         chamadas = principal.count('comTempoMinimo(')
-        self.assertEqual(chamadas, 2)
+        self.assertEqual(chamadas, 3)
 
     def test_abertura_so_na_primeira_carga(self):
         principal = codigo_principal(HOME)
@@ -1444,6 +1462,534 @@ class TestEstruturaDaTelaDaLogo(unittest.TestCase):
                       'Guardando o seu nome, o dia e as categorias.'):
             with self.subTest(texto=texto):
                 self.assertIn(texto, HOME)
+
+
+# ----------------------------------------------------------------------------
+# 5. Gastos recorrentes no Mini App (PRO-101)
+# ----------------------------------------------------------------------------
+
+def centavos_validos_no_servidor(centavos):
+    """O que o servidor (registro.validar_valor) aceita para este valor em centavos."""
+    return registro.validar_valor(centavos / 100) is not None
+
+
+class TestEstruturaDosRecorrentes(unittest.TestCase):
+    TELAS = ('recorrentes-guia', 'recorrentes-escolha', 'recorrentes-lista', 'recorrente-form')
+    FOLHAS = ('folha-dia', 'folha-categoria', 'folha-apagar')
+
+    def test_blocos_main_e_folhas(self):
+        for identificador in self.TELAS:
+            with self.subTest(main=identificador):
+                self.assertRegex(HOME, r'<main id="%s" class="tela-cheia" hidden>' % identificador)
+        # As folhas de baixo ficam fora dos <main> (depois do último), escondidas, como o aviso do topo.
+        ultimo_main = HOME.rindex('</main>')
+        for identificador in self.FOLHAS:
+            with self.subTest(folha=identificador):
+                self.assertRegex(HOME, r'<div class="folha-camada" id="%s" role="dialog" aria-modal="true" aria-labelledby="[^"]+" hidden>' % identificador)
+                self.assertGreater(HOME.index('id="%s"' % identificador), ultimo_main)
+
+    def test_ids_unicos(self):
+        ids = ('atalho-recorrentes', 'guia-voltar', 'guia-comecar', 'escolha-rec-voltar', 'escolha-rec-titulo',
+               'escolha-rec-gasto', 'escolha-rec-receita', 'lista-rec-voltar', 'rec-carregando', 'rec-erro',
+               'rec-erro-texto', 'rec-erro-tentar', 'rec-conteudo', 'rec-total', 'rec-contagem', 'rec-itens',
+               'rec-vazio', 'rec-rodape', 'rec-adicionar', 'rf-cabecalho', 'rf-voltar', 'rf-titulo', 'rf-corpo',
+               'rf-intro', 'rf-dia', 'rf-dia-texto', 'rf-dia-erro', 'rf-valor', 'rf-valor-caixa', 'rf-valor-erro',
+               'rf-descricao', 'rf-descricao-erro', 'rf-estabelecimento', 'rf-estabelecimento-erro', 'rf-categoria',
+               'rf-categoria-texto', 'rf-categoria-erro', 'rf-erro', 'rf-salvar', 'rf-dica', 'rf-apagar',
+               'folha-dia-grade', 'folha-dia-texto', 'folha-dia-confirmar', 'folha-categoria-lista',
+               'folha-categoria-estado', 'folha-categoria-tentar', 'folha-apagar-texto', 'folha-apagar-erro',
+               'folha-apagar-confirmar', 'folha-apagar-cancelar')
+        for identificador in ids:
+            with self.subTest(id=identificador):
+                self.assertEqual(HOME.count('id="%s"' % identificador), 1)
+
+    def test_textos_dos_quadros(self):
+        for texto in ('Como Funciona?', 'Use Essa Aba Para Assinaturas e Pagamentos Recorrentes no Cartão.', 'Exemplo:',
+                      'Abre um calendário para selecionar o dia', 'Abre uma seleção das categorias existentes',
+                      'Começar', 'Assinaturas do cartão', 'Salário e entradas', 'Em Breve',
+                      'Total por Mês', 'Adicionar Recorrente', 'Seus recorrentes aparecem aqui',
+                      'Comece pelas assinaturas do cartão, como <strong>Streaming</strong> e <strong>Academia</strong>',
+                      'Dia da Cobrança', 'Valor da Cobrança', 'Descrição', 'Estabelecimento', '(Opcional)', 'Categoria',
+                      'Escolha o dia', 'Ex.: Assinatura Spotify', 'Ex.: Spotify', 'Escolha a categoria',
+                      'Registre Seu Gasto e Espere Chegar a Data, na Data Exata o L1d3r Registra.',
+                      'Veja na Sua Fatura do Cartão o Dia Exato em Que Costuma Cair Essa Assinatura Para um Melhor Controle.',
+                      'As mudanças valem a partir da próxima cobrança. O que já entrou nos meses anteriores não muda.',
+                      'Salvar Alterações', 'Apagar Recorrente', 'Escolha o dia do mês em que essa cobrança cai.',
+                      'Nos meses mais curtos, usamos o último dia', 'Escolha uma das suas categorias.',
+                      'Apagar Este Recorrente?', 'Sim, Apagar', 'Cancelar', 'Salvando...', 'Apagando...'):
+            with self.subTest(texto=texto):
+                self.assertIn(texto, HOME)
+
+    def test_campos_do_formulario(self):
+        self.assertRegex(HOME, r'<input id="rf-valor" type="text" inputmode="numeric"')
+        self.assertRegex(HOME, r'<input class="campo-form" id="rf-descricao" type="text" maxlength="30"')
+        self.assertRegex(HOME, r'<input class="campo-form" id="rf-estabelecimento" type="text" maxlength="60"')
+        # Dia e categoria abrem folhas: botões, não campos digitáveis.
+        self.assertRegex(HOME, r'<button class="campo-form" id="rf-dia" type="button"')
+        self.assertRegex(HOME, r'<button class="campo-form" id="rf-categoria" type="button"')
+        # O Salvar começa desabilitado e o Apagar começa escondido (só aparece no Editar).
+        self.assertRegex(HOME, r'id="rf-salvar" type="button" disabled>Salvar<')
+        self.assertRegex(HOME, r'id="rf-apagar" type="button" hidden>')
+
+    def test_guia_sem_campos_tocaveis(self):
+        guia = bloco_main('recorrentes-guia')
+        exemplo = guia[guia.index('class="guia-exemplo"'):guia.index('class="rodape-tela"')]
+        self.assertIn('aria-hidden="true"', exemplo[:60])
+        for proibido in ('<input', '<button', '<textarea', '<select', 'tabindex'):
+            with self.subTest(proibido=proibido):
+                self.assertNotIn(proibido, exemplo)
+        self.assertIn('pointer-events: none', HOME[HOME.index('.guia-exemplo .campo-form'):][:120])
+        for valor in ('>12<', '>117,80<', '>Assinatura Spotify<', '>Spotify<', '>Lazer<'):
+            self.assertIn(valor, exemplo)
+
+    def test_receita_so_avisa_em_breve_e_gasto_abre_o_formulario(self):
+        principal = codigo_principal(HOME)
+        self.assertIn('$("escolha-rec-receita").addEventListener("click", avisarEmBreve);', principal)
+        self.assertIn('$("escolha-rec-gasto").addEventListener("click", abrirFormNovo);', principal)
+        escolha = bloco_main('recorrentes-escolha')
+        self.assertIn('<span class="selo-opcao">Em Breve</span>', escolha)
+        self.assertIn('id="escolha-rec-titulo"', escolha)
+        self.assertIn('$("escolha-rec-titulo").textContent = tituloDaEscolha(nomeDoUsuario);',
+                      corpo_da_funcao(principal, 'function abrirEscolha(origem)'))
+        # O nome vem do /me, guardado no cabeçalho da home.
+        self.assertIn('nomeDoUsuario = me.nome || "";', corpo_da_funcao(principal, 'function mostrarCabecalho'))
+
+    def test_lista_usa_o_total_do_servidor_e_so_textcontent(self):
+        principal = codigo_principal(HOME)
+        desenhar = corpo_da_funcao(principal, 'function desenharLista')
+        self.assertIn('dados.total_mensal', desenhar)
+        self.assertIn('formatarDinheiro(', desenhar)
+        # Nenhum cálculo no front: nada de somar valores.
+        for proibido in ('reduce(', '+=', '.valor +', 'sum('):
+            with self.subTest(proibido=proibido):
+                self.assertNotIn(proibido, desenhar)
+        linha = corpo_da_funcao(principal, 'function criarLinhaRecorrente')
+        for trecho in ('criar("span", "rec-linha-nome", r.descricao)', 'subtituloRecorrente(r)',
+                       'formatarDinheiro(r.valor)', 'textoDiaCobranca(r.dia_cobranca)'):
+            self.assertIn(trecho, linha)
+        # Categorias e fichas também só por textContent (criar).
+        self.assertIn('criar("span", "", nome)', corpo_da_funcao(principal, 'function criarLinhaCategoria'))
+        self.assertIn('criar("strong", "", texto.negrito)', corpo_da_funcao(principal, 'function abrirFolhaApagar'))
+        for padrao in (r'\.innerHTML\s*[+]?=', r'\.outerHTML\s*[+]?=', r'insertAdjacentHTML', r'document\.write'):
+            self.assertIsNone(re.search(padrao, HOME), padrao)
+
+    def test_lista_tem_carregando_erros_e_tentar_de_novo(self):
+        principal = codigo_principal(HOME)
+        self.assertIn('Carregando...', bloco_main('recorrentes-lista'))
+        self.assertIn('mensagemDeErro([resultado]).texto', corpo_da_funcao(principal, 'function aplicarResultadoLista'))
+        self.assertIn('$("rec-erro-tentar").addEventListener("click", () => carregarRecorrentes());', principal)
+        # Carregar a lista não usa a tela da logo (só os salvamentos).
+        carregar = corpo_da_funcao(principal, 'async function carregarRecorrentes')
+        self.assertNotIn('mostrarTelaLogo', carregar)
+        self.assertIn('chamar("/recorrentes")', carregar)
+
+    def test_categorias_buscadas_ao_abrir_o_formulario(self):
+        principal = codigo_principal(HOME)
+        self.assertIn('carregarCategoriasRec();', corpo_da_funcao(principal, 'function abrirForm()'))
+        self.assertIn('chamar("/categorias")', corpo_da_funcao(principal, 'async function carregarCategoriasRec'))
+        self.assertIn('categoriaExistente(formRec.categoria, categoriasRec.lista)',
+                      corpo_da_funcao(principal, 'async function carregarCategoriasRec'))
+
+    def test_chave_nasce_so_no_formulario_novo_e_se_repete(self):
+        principal = codigo_principal(HOME)
+        self.assertIn('formRec.chave = gerarChave();', corpo_da_funcao(principal, 'function abrirFormNovo'))
+        self.assertNotIn('gerarChave', corpo_da_funcao(principal, 'async function salvarRecorrente'))
+        self.assertNotIn('gerarChave', corpo_da_funcao(principal, 'function abrirFormEditar'))
+        # O editar não leva chave; o novo leva a do formulário, a mesma em todas as tentativas.
+        salvar = corpo_da_funcao(principal, 'async function salvarRecorrente')
+        self.assertIn('montarCorpoRecorrente(f, novo ? f.chave : undefined)', salvar)
+        self.assertIn('gravarComTentativas((c) => enviarComMetodo(metodo, rota, c, 15000), corpo, esperar)', salvar)
+        self.assertEqual(salvar.count('montarCorpoRecorrente('), 1)  # o corpo é montado uma vez só, antes das tentativas
+        self.assertIn('f.chave = null;', corpo_da_funcao(principal, 'function zerarForm'))
+
+    def test_salvar_usa_a_tela_da_logo_com_tempo_minimo(self):
+        salvar = corpo_da_funcao(codigo_principal(HOME), 'async function salvarRecorrente').replace('\r\n', '\n')
+        self.assertIn('TEMPO_MINIMO_LOGO_MS, (x) => decisaoDaGravacaoRecorrente(operacao, x.r).acao === "sucesso", () => performance.now(), esperar', salvar)
+        self.assertIn('mostrarTelaLogo(logo.cabecalho, logo.titulo, logo.texto);', salvar)
+        self.assertIn('textosTelaLogoRecorrente(operacao, f.dia)', salvar)
+        # Trava no primeiro toque (antes de qualquer chamada), logo antes do POST/PUT, sai no erro na hora.
+        self.assertLess(salvar.index('f.salvando = true;'), salvar.index('mostrarTelaLogo('))
+        self.assertLess(salvar.index('mostrarTelaLogo('), salvar.index('gravarComTentativas('))
+        self.assertLess(salvar.index('comTempoMinimo('), salvar.index('f.salvando = false;'))
+        self.assertIn('if (!podeSalvarRecorrente(f)) return;', salvar)
+        self.assertEqual(salvar.count('esconderTelaLogo();'), 2)
+        # Sucesso: a lista e o aviso entram na mesma tarefa em que a logo sai.
+        sucesso = salvar[salvar.index('if (decisao.acao === "sucesso")'):]
+        self.assertLess(sucesso.index('mostrarTelaRecorrentes("recorrentes-lista");'), sucesso.index('esconderTelaLogo();'))
+        self.assertIn('mostrarAvisoTopo(avisoDeRecorrente(operacao, resultado.r.dados));', sucesso)
+        # PUT no editar e POST no criar.
+        self.assertIn('const metodo = novo ? "POST" : "PUT";', salvar)
+        self.assertIn('"/recorrentes/" + encodeURIComponent(f.id)', salvar)
+
+    def test_apagar_nao_usa_a_logo_e_trata_o_404_como_sucesso(self):
+        principal = codigo_principal(HOME)
+        apagar = corpo_da_funcao(principal, 'async function apagarRecorrente')
+        for proibido in ('comTempoMinimo', 'mostrarTelaLogo', 'esconderTelaLogo'):
+            self.assertNotIn(proibido, apagar)
+        self.assertIn('"Apagando..."', apagar)
+        self.assertIn('gravarComTentativas(() => enviarComMetodo("DELETE", rota, undefined, 15000), null, esperar)', apagar)
+        self.assertIn('decisaoDaGravacaoRecorrente("apagar", resultado)', apagar)
+        self.assertIn('mostrarAvisoTopo(avisoDeRecorrente("apagar", resultado.dados));', apagar)
+        # O primeiro toque desabilita o botão.
+        self.assertLess(apagar.index('$("folha-apagar-confirmar").disabled = true;'), apagar.index('gravarComTentativas('))
+        self.assertIn('if (apagarRec.apagando) return;', apagar)
+        # A folha pede a confirmação antes: "Apagar Recorrente" só abre a folha.
+        self.assertIn('$("rf-apagar").addEventListener("click", abrirFolhaApagar);', principal)
+        self.assertNotIn('DELETE', corpo_da_funcao(principal, 'function abrirFolhaApagar'))
+        self.assertEqual(principal.count('"DELETE"'), 1)
+
+    def test_comTempoMinimo_so_nos_tres_lugares(self):
+        principal = codigo_principal(HOME)
+        for assinatura in ('async function carregar(', 'async function enviarCadastro', 'async function salvarRecorrente'):
+            with self.subTest(funcao=assinatura):
+                self.assertIn('comTempoMinimo(', corpo_da_funcao(principal, assinatura))
+        # Chamadas à tela da logo (fora a definição): o cadastro e o salvar recorrente. A abertura já vem visível no HTML.
+        sem_comentarios = re.sub(r'//[^\n]*', '', principal)
+        chamadas = [m for m in re.finditer(r'\bmostrarTelaLogo\(', sem_comentarios)
+                    if not sem_comentarios[:m.start()].endswith('function ')]
+        self.assertEqual(len(chamadas), 2)
+
+    def test_voltar_sobe_um_nivel_e_a_logo_bloqueia(self):
+        principal = codigo_principal(HOME)
+        voltar = corpo_da_funcao(principal, 'function voltarUmNivel')
+        self.assertLess(voltar.index('if (!$("tela-logo").hidden) return;'), voltar.index('folhaAberta()'))
+        self.assertLess(voltar.index('folhaAberta()'), voltar.index('telaRecorrentesAtual()'))
+        for trecho in ('fecharFolhaAtual();', 'voltarNasRecorrentes(telaRecorrentes);'):
+            self.assertIn(trecho, voltar)
+        nas_recorrentes = corpo_da_funcao(principal, 'function voltarNasRecorrentes')
+        self.assertIn('telaAoVoltarRecorrentes(atual, origemEscolha)', nas_recorrentes)
+        self.assertIn('if (formRec.salvando || apagarRec.apagando) return;', nas_recorrentes)
+        for identificador in ('guia-voltar', 'escolha-rec-voltar', 'lista-rec-voltar', 'rf-voltar'):
+            self.assertIn('"%s"' % identificador, corpo_da_funcao(principal, 'function iniciarRecorrentes'))
+        # A seta de voltar vai para a home no fim: BackButton escondido.
+        self.assertIn('mostrarBackButton(false);', corpo_da_funcao(principal, 'function voltarRecorrentesParaHome'))
+        self.assertIn('mostrarBackButton(true);', corpo_da_funcao(principal, 'function mostrarTelaRecorrentes'))
+
+    def test_guia_visto_no_cloudstorage_com_reserva_no_localstorage_sempre_em_try(self):
+        principal = codigo_principal(HOME)
+        self.assertIn('const CHAVE_GUIA_RECORRENTES = "guia_recorrentes_visto";', principal)
+        for assinatura, marca in (('function lerGuiaLocal', 'localStorage'), ('function lerGuiaNuvem', 'tg.CloudStorage'),
+                                  ('function marcarGuiaVisto', 'localStorage'), ('function marcarGuiaVisto', 'tg.CloudStorage')):
+            with self.subTest(funcao=assinatura, marca=marca):
+                corpo = corpo_da_funcao(principal, assinatura)
+                self.assertIn(marca, corpo)
+                self.assertIn('try {', corpo)
+                self.assertIn('catch (e)', corpo)
+        # localStorage e CloudStorage só aparecem dentro dessas três funções (nenhum acesso solto).
+        def sem_comentarios(texto):
+            return re.sub(r'//[^\n]*', '', texto)
+        for marca in ('localStorage', 'CloudStorage'):
+            dentro = sum(sem_comentarios(corpo_da_funcao(principal, f)).count(marca)
+                         for f in ('function lerGuiaLocal', 'function lerGuiaNuvem', 'function marcarGuiaVisto'))
+            self.assertEqual(sem_comentarios(principal).count(marca), dentro, marca)
+        self.assertNotIn('setInterval', HOME)
+
+    def test_css_das_folhas_fica_entre_o_aviso_e_a_logo(self):
+        regra = re.search(r'(?m)^\s*\.folha-camada\s*\{([^}]*)\}', HOME).group(1)
+        z_folha = int(re.search(r'z-index:\s*(\d+)', regra).group(1))
+        z_aviso = int(re.search(r'z-index:\s*(\d+)', re.search(r'(?m)^\s*\.aviso-topo\s*\{([^}]*)\}', HOME).group(1)).group(1))
+        z_logo = int(re.search(r'z-index:\s*(\d+)', re.search(r'(?m)^\s*\.tela-logo\s*\{([^}]*)\}', HOME).group(1)).group(1))
+        self.assertGreater(z_folha, z_aviso)
+        self.assertLess(z_folha, z_logo)
+        self.assertIn('#12121266', HOME)  # o fundo escuro do Paper
+
+    def test_novas_cores_vem_de_variaveis_ou_do_paper(self):
+        # Só as cores do Paper (#12121266 e #FAFAFA) aparecem soltas nas regras novas.
+        inicio = HOME.index('/* ---------- Gastos recorrentes (PRO-101')
+        css = HOME[inicio:HOME.index('</style>')]
+        self.assertEqual(sorted(set(re.findall(r'#[0-9A-Fa-f]{3,8}\b', css))), ['#12121266', '#FAFAFA'])
+
+
+@unittest.skipUnless(NODE, 'node não encontrado no PATH')
+class TestRecorrentesFuncoesPuras(unittest.TestCase):
+    def test_mascara_de_centavos_digito_a_digito(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            const texto_apos = (digitos) => textoDoValor(digitos);
+            // Digita 1, 1, 7, 8, 0: cada dígito entra pela direita do texto que o campo mostra.
+            let digitos = '';
+            const digitando = [];
+            for (const d of '11780') {
+              digitos = digitosDoValor(texto_apos(digitos) + d);
+              digitando.push([digitos, texto_apos(digitos)]);
+            }
+            // Apaga um por um (o campo tira o último caractere do texto) até esvaziar.
+            const apagando = [];
+            for (let i = 0; i < 6; i++) {
+              const texto = texto_apos(digitos);
+              digitos = digitosDoValor(texto.slice(0, -1));
+              apagando.push([digitos, texto_apos(digitos)]);
+            }
+            // Digitar 0 no campo vazio, e mais um 0 em cima.
+            const zero = digitosDoValor('0');
+            const doisZeros = digitosDoValor(textoDoValor(zero) + '0');
+            console.log(JSON.stringify({
+              digitando, apagando, zero, textoZero: textoDoValor(zero), doisZeros,
+              casos: ['', '1', '0,01', '0,015', '117,800', '0005', '00', '000', 'a1b2', '99999999999', '999999999999', '1.234,56'].map((t) => digitosDoValor(t)),
+            }));
+        """))
+        self.assertEqual(obtido['digitando'], [['1', '0,01'], ['11', '0,11'], ['117', '1,17'], ['1178', '11,78'], ['11780', '117,80']])
+        self.assertEqual(obtido['apagando'], [['1178', '11,78'], ['117', '1,17'], ['11', '0,11'], ['1', '0,01'], ['', ''], ['', '']])
+        self.assertEqual(obtido['zero'], '0')
+        self.assertEqual(obtido['textoZero'], '0,00')
+        self.assertEqual(obtido['doisZeros'], '0')
+        self.assertEqual(obtido['casos'], ['', '1', '1', '15', '117800', '5', '', '0', '12', '99999999999', '99999999999', '123456'])
+
+    def test_valor_enviado_e_numero_com_duas_casas(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            const exemplos = { um: valorDosDigitos('1'), cento: valorDosDigitos('11780'), vazio: valorDosDigitos(''),
+                               texto_cento: textoDoValor('11780'), milhar: textoDoValor('123456'), teto: textoDoValor('100000000') };
+            // Todos os valores de 0,00 a 20.000,00: o número tem no máximo 2 casas e volta aos mesmos dígitos.
+            let ruins = 0;
+            for (let c = 0; c <= 2000000; c++) {
+              const v = valorDosDigitos(String(c));
+              const casas = (JSON.stringify(v).split('.')[1] || '').length;
+              if (casas > 2 || Math.round(v * 100) !== c || digitosDoValorGravado(v) !== String(c)) ruins++;
+            }
+            console.log(JSON.stringify({ exemplos, ruins, gravado: [digitosDoValorGravado(117.8), digitosDoValorGravado(0.01), digitosDoValorGravado(1000000)] }));
+        """))
+        self.assertEqual(obtido['exemplos'], {'um': 0.01, 'cento': 117.8, 'vazio': None, 'texto_cento': '117,80',
+                                              'milhar': '1.234,56', 'teto': '1.000.000,00'})
+        self.assertEqual(obtido['ruins'], 0)
+        self.assertEqual(obtido['gravado'], ['11780', '1', '100000000'])
+
+    def test_erro_do_valor_igual_ao_do_servidor(self):
+        centavos = [0, 1, 2, 99, 100, 117_80, 99_999_999, 100_000_000, 100_000_001, 100_000_100, 999_999_999, 9_999_999_999]
+        obtido = rodar_node(com_funcoes_puras("""
+            console.log(JSON.stringify(ENTRADA.map((c) => erroDoValor(String(c)))));
+        """), centavos)
+        mensagem = 'Valor inválido. Digite um valor maior que zero e de no máximo R$ 1.000.000,00'
+        for c, erro in zip(centavos, obtido):
+            with self.subTest(centavos=c):
+                # A tela só avisa o que o servidor recusaria (validar_valor), com a mesma mensagem do bot.
+                self.assertEqual(erro is None, centavos_validos_no_servidor(c))
+                if erro is not None:
+                    self.assertEqual(erro, mensagem)
+        vazio = rodar_node(com_funcoes_puras("console.log(JSON.stringify([erroDoValor(''), erroDaDescricao(''), erroDaDescricao('   '), erroDaDescricao(' a ')]));"))
+        self.assertEqual(vazio, [None, 'Preencha a descrição para continuar', 'Preencha a descrição para continuar', None])
+
+    def test_limites_iguais_aos_do_servidor(self):
+        puro = codigo_puro(HOME)
+        def constante(nome):
+            return int(re.search(r'const %s = (\d+);' % nome, puro).group(1))
+        self.assertEqual(constante('RECORRENTE_DESCRICAO_MAXIMA'), recorrentes.DESCRICAO_MAXIMA_RECORRENTE)
+        self.assertEqual(constante('RECORRENTE_ESTABELECIMENTO_MAXIMO'), registro.ESTABELECIMENTO_MAXIMO)
+        self.assertEqual(constante('RECORRENTE_VALOR_MAXIMO_CENTAVOS'), round(registro.VALOR_MAXIMO * 100))
+        # Os maxlength do HTML são os mesmos limites.
+        self.assertIn('id="rf-descricao" type="text" maxlength="%d"' % recorrentes.DESCRICAO_MAXIMA_RECORRENTE, HOME)
+        self.assertIn('id="rf-estabelecimento" type="text" maxlength="%d"' % registro.ESTABELECIMENTO_MAXIMO, HOME)
+
+    def test_dica_do_salvar(self):
+        base = {'dia': 12, 'valorDigitos': '11780', 'descricao': 'Assinatura Spotify', 'categoria': 'Lazer'}
+        casos = [
+            ({'dia': None, 'valorDigitos': '', 'descricao': '', 'categoria': None}, 'Preencha o dia, o valor, a descrição e a categoria'),
+            ({'dia': 12, 'valorDigitos': '0', 'descricao': '', 'categoria': 'Lazer'}, 'Corrija o valor e preencha a descrição'),
+            ({'dia': 12, 'valorDigitos': '100000001', 'descricao': 'x', 'categoria': 'Lazer'}, 'Corrija o valor'),
+            (base, ''),
+            (dict(base, dia=None), 'Preencha o dia'),
+            (dict(base, dia=None, categoria=None), 'Preencha o dia e a categoria'),
+            (dict(base, valorDigitos='', descricao='   '), 'Preencha o valor e a descrição'),
+            (dict(base, valorDigitos='', descricao='', categoria=None), 'Preencha o valor, a descrição e a categoria'),
+            (dict(base, valorDigitos='0', dia=None, descricao='', categoria=None), 'Corrija o valor e preencha o dia, a descrição e a categoria'),
+            (dict(base, categoria=''), 'Preencha a categoria'),
+        ]
+        obtido = rodar_node(com_funcoes_puras("console.log(JSON.stringify(ENTRADA.map((f) => dicaDoSalvar(f))));"), [c for c, _ in casos])
+        for (entrada, esperado), recebido in zip(casos, obtido):
+            with self.subTest(entrada=entrada):
+                self.assertEqual(recebido, esperado)
+
+    def test_salvar_so_com_os_quatro_obrigatorios_validos(self):
+        base = {'dia': 12, 'valorDigitos': '11780', 'descricao': 'Assinatura Spotify', 'categoria': 'Lazer', 'salvando': False}
+        casos = [
+            (base, True),
+            (dict(base, estabelecimento=''), True),                 # o estabelecimento é opcional
+            (dict(base, salvando=True), False),                     # o primeiro toque trava
+            (dict(base, dia=None), False), (dict(base, dia=0), False), (dict(base, dia=32), False),
+            (dict(base, dia='12'), False), (dict(base, dia=12.5), False), (dict(base, dia=1), True), (dict(base, dia=31), True),
+            (dict(base, valorDigitos=''), False), (dict(base, valorDigitos='0'), False),
+            (dict(base, valorDigitos='100000000'), True), (dict(base, valorDigitos='100000001'), False),
+            (dict(base, descricao=''), False), (dict(base, descricao='   '), False),
+            (dict(base, categoria=None), False), (dict(base, categoria=''), False),
+        ]
+        obtido = rodar_node(com_funcoes_puras("console.log(JSON.stringify(ENTRADA.map((f) => podeSalvarRecorrente(f))));"), [c for c, _ in casos])
+        for (entrada, esperado), recebido in zip(casos, obtido):
+            with self.subTest(entrada=entrada):
+                self.assertEqual(recebido, esperado)
+
+    def test_corpo_do_pedido(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            const f = { dia: 12, valorDigitos: '11780', descricao: '  Assinatura Spotify ', estabelecimento: ' Spotify ', categoria: 'Lazer' };
+            const sem_estab = Object.assign({}, f, { estabelecimento: '   ' });
+            console.log(JSON.stringify({
+              put: montarCorpoRecorrente(f), post: montarCorpoRecorrente(f, 'abc'), sem: montarCorpoRecorrente(sem_estab),
+              ordem_post: Object.keys(montarCorpoRecorrente(f, 'abc')), json: JSON.stringify(montarCorpoRecorrente(f)),
+            }));
+        """))
+        corpo = {'dia_cobranca': 12, 'valor': 117.8, 'descricao': 'Assinatura Spotify', 'estabelecimento': 'Spotify', 'categoria': 'Lazer'}
+        self.assertEqual(obtido['put'], corpo)
+        self.assertEqual(obtido['post'], dict(corpo, chave='abc'))
+        self.assertIsNone(obtido['sem']['estabelecimento'])
+        self.assertEqual(obtido['ordem_post'][0], 'chave')
+        self.assertIn('"valor":117.8,', obtido['json'])
+
+    def test_textos_da_lista(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            console.log(JSON.stringify({
+              contagem: [0, 1, 2, 4, 12].map(textoContagemRecorrentes),
+              subtitulos: [
+                subtituloRecorrente({ estabelecimento: 'Smart Fit', categoria: 'Academia' }),
+                subtituloRecorrente({ estabelecimento: null, categoria: 'Lazer' }),
+                subtituloRecorrente({ estabelecimento: '   ', categoria: 'Casa' }),
+                subtituloRecorrente({ categoria: 'Casa' }),
+              ],
+              dia: [1, 5, 28].map(textoDiaCobranca),
+              escolha: [tituloDaEscolha('Ygor Nobrega'), tituloDaEscolha(''), tituloDaEscolha(null), tituloDaEscolha('  Ana  ')],
+              apagar: textoConfirmarApagar({ descricao: 'Assinatura Spotify', valor: 117.8, dia_cobranca: 12 }),
+              confirmarDia: [textoConfirmarDia(null), textoConfirmarDia(12), textoConfirmarDia(1)],
+              existente: [categoriaExistente('Lazer', ['Casa', 'Lazer']), categoriaExistente('Lazer', ['Casa']),
+                          categoriaExistente(null, ['Lazer']), categoriaExistente('Lazer', undefined)],
+            }));
+        """))
+        self.assertEqual(obtido['contagem'], ['Nenhum gasto recorrente ainda', '1 gasto, lançado sozinho todo mês',
+                                              '2 gastos, lançados sozinhos todo mês', '4 gastos, lançados sozinhos todo mês',
+                                              '12 gastos, lançados sozinhos todo mês'])
+        self.assertEqual(obtido['subtitulos'], ['Smart Fit · Academia', 'Lazer', 'Casa', 'Casa'])
+        self.assertEqual(obtido['dia'], ['Todo dia 1', 'Todo dia 5', 'Todo dia 28'])
+        self.assertEqual(obtido['escolha'], ['Olá, Ygor! O Que Deseja Adicionar Como Recorrente?',
+                                             'O Que Deseja Adicionar Como Recorrente?', 'O Que Deseja Adicionar Como Recorrente?',
+                                             'Olá, Ana! O Que Deseja Adicionar Como Recorrente?'])
+        self.assertEqual(obtido['apagar']['negrito'], 'Assinatura Spotify · R$ 117,80')
+        self.assertEqual(obtido['apagar']['depois'], ' deixa de entrar todo dia 12. Os gastos que já entraram nos meses '
+                                                     'anteriores continuam no histórico.')
+        self.assertEqual(obtido['confirmarDia'], ['Escolha um Dia', 'Confirmar Dia 12', 'Confirmar Dia 1'])
+        self.assertEqual(obtido['existente'], ['Lazer', None, None, None])
+
+    def test_navegacao(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            const voltar = {};
+            for (const tela of ['guia', 'escolha', 'lista', 'form-novo', 'form-editar', 'outra']) {
+              voltar[tela] = [telaAoVoltarRecorrentes(tela, 'home'), telaAoVoltarRecorrentes(tela, 'lista')];
+            }
+            console.log(JSON.stringify({
+              atalho: [proximaTelaDoAtalho(false), proximaTelaDoAtalho(true), proximaTelaDoAtalho(undefined)],
+              guia: [guiaJaVisto('1', null), guiaJaVisto(null, '1'), guiaJaVisto('1', '1'), guiaJaVisto(null, null),
+                     guiaJaVisto('', ''), guiaJaVisto(undefined, undefined), guiaJaVisto('0', '0'), guiaJaVisto('true', 'sim')],
+              voltar,
+            }));
+        """))
+        self.assertEqual(obtido['atalho'], ['guia', 'lista', 'guia'])
+        self.assertEqual(obtido['guia'], [True, True, True, False, False, False, False, False])
+        self.assertEqual(obtido['voltar'], {
+            'guia': ['home', 'home'],
+            'escolha': ['home', 'lista'],        # a escolha volta de onde veio
+            'lista': ['home', 'home'],
+            'form-novo': ['escolha', 'escolha'],  # descarta o que foi digitado
+            'form-editar': ['lista', 'lista'],
+            'outra': [None, None],
+        })
+
+    def test_textos_da_logo_e_dos_avisos(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            console.log(JSON.stringify({
+              criar: textosTelaLogoRecorrente('criar', 12), editar: textosTelaLogoRecorrente('editar', 12),
+              avisoCriar: avisoDeRecorrente('criar', { categoria: 'Lazer', valor: 1 }),
+              avisoEditar: avisoDeRecorrente('editar', {}), avisoApagar: avisoDeRecorrente('apagar', undefined),
+              avisoSemCategoria: avisoDeRecorrente('criar', {}),
+            }));
+        """))
+        self.assertEqual(obtido['criar'], {'cabecalho': 'Novo Recorrente', 'titulo': 'Salvando o Recorrente...',
+                                           'texto': 'Ele entra sozinho todo dia 12.'})
+        self.assertEqual(obtido['editar'], {'cabecalho': 'Editar Recorrente', 'titulo': 'Salvando as Alterações...',
+                                            'texto': 'Elas valem a partir da próxima cobrança.'})
+        self.assertEqual(obtido['avisoCriar']['texto'], 'Cobrança Recorrente Adicionada a Lazer')
+        self.assertEqual((obtido['avisoCriar']['antes'], obtido['avisoCriar']['negrito'], obtido['avisoCriar']['depois']),
+                         ('Cobrança Recorrente Adicionada a ', 'Lazer', ''))
+        self.assertEqual(obtido['avisoEditar']['texto'], 'Cobrança Recorrente Atualizada')
+        self.assertEqual(obtido['avisoApagar']['texto'], 'Cobrança Recorrente Apagada')
+        self.assertEqual(obtido['avisoSemCategoria']['texto'], 'Cobrança Recorrente Adicionada a ')
+
+    def test_decisao_por_status_das_tres_gravacoes(self):
+        sessao = 'Sua sessão expirou. Feche e abra o app de novo.'
+        salvar = 'Não foi possível salvar. Tente de novo.'
+        apagar = 'Não foi possível apagar. Tente de novo.'
+        casos = [
+            # (operação, resultado, esperado)
+            ('criar', {'dados': {}, 'status': 201}, {'acao': 'sucesso'}),
+            ('criar', {'dados': {}, 'status': 200}, {'acao': 'sucesso'}),    # repetido: já estava gravado
+            ('editar', {'dados': {}, 'status': 200}, {'acao': 'sucesso'}),
+            ('apagar', {'dados': {}, 'status': 200}, {'acao': 'sucesso'}),
+            ('apagar', {'erro': 404, 'detalhe': 'recorrente_nao_encontrado'}, {'acao': 'sucesso'}),  # já apagado
+            ('editar', {'erro': 404, 'detalhe': 'recorrente_nao_encontrado'},
+             {'acao': 'erro', 'mensagem': 'Este recorrente não existe mais.', 'voltarLista': True}),
+            ('criar', {'erro': 422, 'detalhe': 'descricao_repetida'},
+             {'acao': 'erro', 'campo': 'descricao', 'mensagem': 'Já existe uma cobrança com esse nome nesta categoria.'}),
+            ('editar', {'erro': 422, 'detalhe': 'descricao_repetida'},
+             {'acao': 'erro', 'campo': 'descricao', 'mensagem': 'Já existe uma cobrança com esse nome nesta categoria.'}),
+            ('criar', {'erro': 422, 'detalhe': 'categoria_nao_encontrada'},
+             {'acao': 'erro', 'campo': 'categoria', 'mensagem': 'Essa categoria não existe mais. Escolha outra.',
+              'recarregarCategorias': True}),
+            ('criar', {'erro': 422, 'detalhe': 'valor_invalido'},
+             {'acao': 'erro', 'campo': 'valor', 'mensagem': 'Valor inválido. Digite um valor maior que zero e de no máximo R$ 1.000.000,00'}),
+            ('criar', {'erro': 422, 'detalhe': 'dia_invalido'}, {'acao': 'erro', 'campo': 'dia', 'mensagem': 'Escolha o dia da cobrança.'}),
+            ('criar', {'erro': 422, 'detalhe': 'descricao_invalida'},
+             {'acao': 'erro', 'campo': 'descricao', 'mensagem': 'Preencha a descrição para continuar'}),
+            ('criar', {'erro': 422, 'detalhe': 'descricao_longa'},
+             {'acao': 'erro', 'campo': 'descricao', 'mensagem': 'A descrição pode ter no máximo 30 caracteres.'}),
+            ('criar', {'erro': 422, 'detalhe': 'estabelecimento_longo'},
+             {'acao': 'erro', 'campo': 'estabelecimento', 'mensagem': 'O estabelecimento pode ter no máximo 60 caracteres.'}),
+            ('criar', {'erro': 422, 'detalhe': 'chave_invalida'}, {'acao': 'erro', 'mensagem': salvar}),
+            ('criar', {'erro': 422, 'detalhe': 'qualquer_coisa'}, {'acao': 'erro', 'mensagem': salvar}),
+            ('apagar', {'erro': 422, 'detalhe': 'descricao_repetida'}, {'acao': 'erro', 'mensagem': apagar}),
+            ('criar', {'erro': 401}, {'acao': 'erro', 'mensagem': sessao}),
+            ('editar', {'erro': 401}, {'acao': 'erro', 'mensagem': sessao}),
+            ('apagar', {'erro': 401}, {'acao': 'erro', 'mensagem': sessao}),
+            ('criar', {'erro': 404, 'detalhe': 'usuario_nao_cadastrado'},
+             {'acao': 'erro', 'mensagem': 'Não encontramos o seu cadastro. Feche e abra o app de novo.'}),
+            ('criar', {'erro': 409, 'detalhe': 'cadastro_incompleto'},
+             {'acao': 'erro', 'mensagem': 'Seu cadastro está incompleto. Volte ao bot e informe o dia de fechamento da fatura.'}),
+            ('criar', {'erro': 503, 'detalhe': 'banco_ocupado'}, {'acao': 'erro', 'mensagem': salvar}),
+            ('editar', {'erro': 0}, {'acao': 'erro', 'mensagem': salvar}),
+            ('criar', {'erro': 500, 'detalhe': 'erro_interno'}, {'acao': 'erro', 'mensagem': salvar}),
+            ('apagar', {'erro': 503, 'detalhe': 'banco_ocupado'}, {'acao': 'erro', 'mensagem': apagar}),
+            ('apagar', {'erro': 0}, {'acao': 'erro', 'mensagem': apagar}),
+            ('apagar', {'erro': 500}, {'acao': 'erro', 'mensagem': apagar}),
+        ]
+        obtido = rodar_node(com_funcoes_puras(
+            "console.log(JSON.stringify(ENTRADA.map(([op, r]) => decisaoDaGravacaoRecorrente(op, r))));"),
+            [[op, r] for op, r, _ in casos])
+        for (operacao, resultado, esperado), recebido in zip(casos, obtido):
+            with self.subTest(operacao=operacao, resultado=resultado):
+                self.assertEqual(recebido, esperado)
+        # O texto cru do servidor nunca aparece: a mensagem não contém o código do erro.
+        for recebido in obtido:
+            self.assertNotIn('descricao_repetida', recebido.get('mensagem', ''))
+
+    def test_codigos_422_tratados_sao_os_do_recorrentes_py(self):
+        tratados = set(re.findall(r'^      (\w+): \{ campo:', codigo_puro(HOME), re.M))
+        esperados = {'dia_invalido', 'valor_invalido', 'descricao_invalida', 'descricao_longa', 'descricao_repetida',
+                     'estabelecimento_longo', 'categoria_nao_encontrada'}
+        self.assertEqual(tratados, esperados)
+        fonte = open(os.path.join(RAIZ, 'recorrentes.py'), encoding='utf-8').read() + open(
+            os.path.join(RAIZ, 'api', 'main.py'), encoding='utf-8').read()
+        for codigo in esperados:
+            with self.subTest(codigo=codigo):
+                self.assertIn("'%s'" % codigo, fonte)
+
+    def test_novas_tentativas_do_salvar_repetem_corpo_e_chave(self):
+        # O salvar usa o gravarComTentativas de sempre: 503 banco_ocupado e rede repetem o MESMO corpo (com a mesma chave).
+        obtido = rodar_node(com_funcoes_puras("""
+            (async () => {
+              const f = { dia: 12, valorDigitos: '11780', descricao: 'Assinatura Spotify', estabelecimento: '', categoria: 'Lazer' };
+              const corpo = montarCorpoRecorrente(f, 'chave-do-formulario');
+              const enviados = [];
+              const respostas = [{ erro: 503, detalhe: 'banco_ocupado' }, { erro: 0 }, { dados: { id: 1 }, status: 201 }];
+              const resultado = await gravarComTentativas(async (c) => { enviados.push(JSON.stringify(c)); return respostas.shift(); }, corpo, async () => {});
+              const rejeitado = [];
+              await gravarComTentativas(async (c) => { rejeitado.push(1); return { erro: 422, detalhe: 'descricao_repetida' }; }, corpo, async () => {});
+              console.log(JSON.stringify({ iguais: enviados.every((x) => x === enviados[0]), n: enviados.length,
+                                           status: resultado.status, rejeitado: rejeitado.length }));
+            })();
+        """))
+        self.assertEqual(obtido, {'iguais': True, 'n': 3, 'status': 201, 'rejeitado': 1})  # 422 não é repetido sozinho
 
 
 if __name__ == '__main__':

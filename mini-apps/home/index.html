@@ -1005,6 +1005,199 @@
     .tour-bolinhas span { width: 6px; height: 6px; border-radius: 3px; background: var(--cor-barra-fechado); }
     .tour-bolinhas span.atual { width: 20px; background: var(--cor-grafite); }
     .botao-texto { height: 44px; border-radius: 16px; font-size: 15px; line-height: 20px; font-weight: 700; color: var(--cor-texto-2); }
+
+    /* ---------- Gastos recorrentes (PRO-101, quadros FUTURO - RECORRENTES - ... - V1) ---------- */
+    /* As telas ocupam a altura toda como as de boas-vindas: o rodapé com o botão fica embaixo. */
+    body.modo-recorrentes { padding-bottom: 0; }
+    .botao-principal.com-icone { display: flex; align-items: center; justify-content: center; gap: 10px; }
+    .botao-principal.com-icone svg { width: 22px; height: 22px; flex-shrink: 0; fill: none; stroke: var(--cor-branco); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+    .botao-principal.com-icone.mais svg { width: 18px; height: 18px; stroke-width: 2; }
+    .rec-corpo { flex-grow: 1; padding: 32px 24px 24px; display: flex; flex-direction: column; gap: 20px; }
+    .rec-escolha { padding: 32px 24px 0; display: flex; flex-direction: column; gap: 14px; }
+    .rec-escolha .pergunta { padding-bottom: 10px; }
+
+    /* Guia de uso (primeira vez) */
+    .guia-exemplo { padding: 20px 16px; display: flex; flex-direction: column; gap: 16px; border-radius: 18px; background: var(--cor-fundo-suave); }
+    .guia-exemplo-titulo { font-size: 13px; line-height: 18px; font-weight: 700; color: var(--cor-texto-2); }
+    .guia-exemplo .campo-form { pointer-events: none; border-color: var(--cor-divisoria); }
+    .guia-balao-bloco { padding-right: 18px; display: flex; flex-direction: column; align-items: flex-end; }
+    .guia-balao-bloco svg { width: 14px; height: 7px; margin-right: 2px; flex-shrink: 0; fill: var(--cor-grafite); }
+    .guia-balao { padding: 6px 10px; border-radius: 10px; background: var(--cor-grafite); color: var(--cor-branco); font-size: 12px; line-height: 16px; font-weight: 600; }
+
+    /* Escolha: Gasto ou Receita (a Receita fica apagada, com o selo Em Breve) */
+    .opcao.apagada { background: #FAFAFA; }
+    .opcao.apagada .opcao-titulo, .opcao.apagada .opcao-subtitulo { color: var(--cor-desabilitado-texto); }
+    .opcao.apagada .opcao-icone svg { stroke: var(--cor-desabilitado-texto); }
+    .selo-opcao { padding: 3px 8px; flex-shrink: 0; border-radius: 6px; background: var(--cor-grafite); color: var(--cor-branco); font-size: 11px; line-height: 14px; font-weight: 700; }
+
+    /* Lista */
+    .rec-carregando { padding: 40px 24px; text-align: center; font-size: 15px; line-height: 20px; font-weight: 600; color: var(--cor-texto-2); }
+    .rec-conteudo { flex-grow: 1; padding: 28px 24px 24px; display: flex; flex-direction: column; gap: 20px; }
+    .rec-total { display: flex; flex-direction: column; gap: 4px; }
+    .rec-total-rotulo { font-size: 15px; line-height: 20px; font-weight: 600; color: var(--cor-texto-2); }
+    .rec-total-valor { font-size: 32px; line-height: 38px; font-weight: 800; letter-spacing: -0.02em; color: var(--cor-texto); overflow-wrap: anywhere; }
+    .rec-total-contagem { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--cor-texto-2); }
+    .rec-itens { border-bottom: 1px solid var(--cor-divisoria); }
+    .rec-linha {
+      width: 100%;
+      padding: 16px 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-align: left;
+      border-top: 1px solid var(--cor-divisoria);
+    }
+    .rec-linha-textos { min-width: 0; flex-grow: 1; display: flex; flex-direction: column; gap: 2px; }
+    .rec-linha-nome { font-size: 15px; line-height: 20px; font-weight: 600; color: var(--cor-texto); overflow-wrap: anywhere; }
+    .rec-linha-sub { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--cor-texto-2); overflow-wrap: anywhere; }
+    .rec-linha-lado { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+    .rec-linha-valor { font-size: 15px; line-height: 20px; font-weight: 700; color: var(--cor-texto); white-space: nowrap; }
+    .rec-linha-dia { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--cor-texto-2); white-space: nowrap; }
+    .rec-linha-seta { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: var(--cor-texto-2); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .rec-vazio { padding-top: 12px; display: flex; flex-direction: column; gap: 12px; }
+    .rec-vazio-caixa {
+      padding: 28px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      border-radius: 18px;
+      background: var(--cor-fundo-suave);
+      text-align: center;
+      font-size: 15px;
+      line-height: 20px;
+      font-weight: 600;
+      color: var(--cor-texto-2);
+    }
+    .rec-vazio-caixa svg { width: 26px; height: 26px; fill: none; stroke: var(--cor-texto-3); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .rec-vazio-dica {
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid var(--cor-divisoria);
+      border-radius: 14px;
+      font-size: 13px;
+      line-height: 18px;
+      font-weight: 500;
+      color: var(--cor-texto-2);
+    }
+    .rec-vazio-dica strong { font-weight: 700; color: var(--cor-texto); }
+    .rec-vazio-dica-icone { width: 32px; height: 32px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: var(--cor-fundo-suave); }
+    .rec-vazio-dica-icone svg { width: 18px; height: 18px; fill: none; stroke: var(--cor-grafite); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+    /* Formulário (Novo e Editar no mesmo bloco). O Novo tem o cabeçalho alto, com o texto grande embaixo da seta. */
+    .cabecalho-registro.novo .cabecalho-linha { flex-direction: column; align-items: flex-start; gap: 16px; }
+    .cabecalho-registro.novo .titulo-tela { font-size: 20px; line-height: 26px; letter-spacing: -0.01em; }
+    .rf-corpo { flex-grow: 1; padding: 28px 24px 24px; display: flex; flex-direction: column; gap: 20px; }
+    .rf-corpo.novo { padding-top: 24px; }
+    .rf-campos { display: flex; flex-direction: column; gap: 18px; }
+    .campo-rotulo span { font-weight: 500; color: var(--cor-texto-2); }
+    .rf-campos .campo-erro { align-items: flex-start; }
+    .rf-campos .campo-erro svg { margin-top: 1px; }
+    .campo-form {
+      width: 100%;
+      height: 52px;
+      padding: 0 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      border: 1.5px solid var(--cor-divisoria);
+      border-radius: 16px;
+      outline: none;
+      background: var(--cor-branco);
+      color: var(--cor-texto);
+      caret-color: var(--cor-grafite);
+      text-align: left;
+      font: 600 16px/22px "Manrope", system-ui, sans-serif;
+    }
+    input.campo-form { display: block; }
+    input.campo-form::placeholder, .campo-form input::placeholder { color: var(--cor-placeholder); font-weight: 500; }
+    .campo-form:focus-within { border-color: var(--cor-grafite); }
+    .campo-form.com-erro { border-color: var(--cor-erro); background: var(--cor-erro-fundo); caret-color: var(--cor-erro); }
+    .campo-form:disabled, .campo-form.travado { opacity: 0.6; cursor: default; }
+    .campo-form .vazio { color: var(--cor-placeholder); font-weight: 500; }
+    .campo-form svg { width: 20px; height: 20px; flex-shrink: 0; fill: none; stroke: var(--cor-texto-2); stroke-linecap: round; stroke-linejoin: round; }
+    .campo-valor { justify-content: flex-start; }
+    .campo-valor .moeda-prefixo { color: var(--cor-texto-2); }
+    .campo-valor.vazio-valor .moeda-prefixo { color: var(--cor-placeholder); font-weight: 500; }
+    .campo-valor input {
+      min-width: 0;
+      flex: 1;
+      padding: 0;
+      border: 0;
+      outline: none;
+      background: transparent;
+      color: inherit;
+      caret-color: inherit;
+      font: inherit;
+    }
+    .rf-dica { text-align: center; font-size: 13px; line-height: 18px; font-weight: 500; color: var(--cor-texto-2); }
+    .botao-apagar {
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border-radius: 16px;
+      color: var(--cor-erro);
+      font-size: 15px;
+      line-height: 20px;
+      font-weight: 700;
+    }
+    .botao-apagar svg, .folha-icone-apagar svg { fill: none; stroke: var(--cor-erro); stroke-linecap: round; stroke-linejoin: round; }
+    .botao-apagar svg { width: 18px; height: 18px; stroke-width: 1.7; }
+
+    /* Folhas de baixo (dia, categoria e confirmar apagar): acima do aviso no topo (20) e abaixo da tela da logo (30) */
+    .folha-camada { position: fixed; inset: 0; z-index: 25; display: flex; flex-direction: column; justify-content: flex-end; }
+    .folha-fundo { position: absolute; inset: 0; background: #12121266; touch-action: none; }
+    .folha {
+      position: relative;
+      max-height: calc(var(--altura-tela, 100vh) - 24px);
+      padding: 12px 24px calc(32px + env(safe-area-inset-bottom, 0px));
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      overflow-y: auto;
+      border-radius: 24px 24px 0 0;
+      background: var(--cor-branco);
+    }
+    .folha.compacta { gap: 16px; }
+    .folha > * { flex-shrink: 0; }
+    .folha-alca { align-self: center; width: 36px; height: 4px; flex-shrink: 0; border-radius: 2px; background: var(--cor-divisoria); }
+    .folha-titulos { display: flex; flex-direction: column; gap: 6px; }
+    .folha-titulo { font-size: 22px; line-height: 28px; font-weight: 800; letter-spacing: -0.02em; color: var(--cor-texto); }
+    .folha-texto { font-size: 15px; line-height: 22px; font-weight: 500; color: var(--cor-texto-2); }
+    .folha-texto strong { font-weight: 700; color: var(--cor-texto); overflow-wrap: anywhere; }
+    .folha-botoes { display: flex; flex-direction: column; gap: 6px; }
+    .folha-icone-apagar { width: 56px; height: 56px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 18px; background: var(--cor-erro-fundo); }
+    .folha-icone-apagar svg { width: 24px; height: 24px; stroke-width: 1.6; }
+    .categoria-lista { display: flex; flex-direction: column; gap: 4px; }
+    .categoria-linha {
+      width: 100%;
+      height: 48px;
+      padding: 0 16px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-radius: 14px;
+      text-align: left;
+      font-size: 15px;
+      line-height: 20px;
+      font-weight: 600;
+      color: var(--cor-texto);
+    }
+    .categoria-linha span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .categoria-bolinha { width: 22px; height: 22px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border: 1.5px solid var(--cor-barra-fechado); border-radius: 11px; }
+    .categoria-bolinha svg { display: none; width: 14px; height: 14px; fill: none; stroke: var(--cor-branco); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+    .categoria-linha[aria-checked="true"] { background: var(--cor-fundo-suave); font-weight: 800; }
+    .categoria-linha[aria-checked="true"] .categoria-bolinha { border-color: var(--cor-grafite); background: var(--cor-grafite); }
+    .categoria-linha[aria-checked="true"] .categoria-bolinha svg { display: block; }
+    .folha-estado { padding: 8px 0; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; font-size: 15px; line-height: 22px; font-weight: 500; color: var(--cor-texto-2); }
+    .folha-estado button { padding: 10px 20px; border-radius: 14px; background: var(--cor-grafite); color: var(--cor-branco); font-size: 15px; line-height: 20px; font-weight: 700; }
   </style>
 </head>
 <body>
@@ -1092,7 +1285,7 @@
         </span>
         <span class="atalho-rotulo">Registrar</span>
       </button>
-      <button class="atalho" type="button" aria-label="Recorrentes">
+      <button class="atalho" id="atalho-recorrentes" type="button" aria-label="Recorrentes">
         <span class="atalho-icone">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 3.5V8h4.5"/>
@@ -1639,6 +1832,248 @@
     </section>
   </main>
 
+  <!-- Gastos recorrentes (PRO-101), guia de uso: só na primeira vez que a pessoa toca em Recorrentes. Os campos do exemplo não são tocáveis. -->
+  <main id="recorrentes-guia" class="tela-cheia" hidden>
+    <header class="cabecalho cabecalho-registro">
+      <div class="cabecalho-linha cabecalho-titulo">
+        <button class="botao-menu" id="guia-voltar" type="button" aria-label="Voltar">
+          <svg viewBox="0 0 22 22" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17 11H5"/><path d="M10 6l-5 5 5 5"/>
+          </svg>
+        </button>
+        <h1 class="titulo-tela">Recorrentes</h1>
+      </div>
+    </header>
+
+    <div class="rec-corpo">
+      <div class="pergunta-bloco">
+        <h2 class="pergunta">Como Funciona?</h2>
+        <p class="pergunta-apoio">Use Essa Aba Para Assinaturas e Pagamentos Recorrentes no Cartão.</p>
+      </div>
+      <div class="guia-exemplo" aria-hidden="true">
+        <p class="guia-exemplo-titulo">Exemplo:</p>
+        <div class="campo-bloco">
+          <p class="campo-rotulo">Dia da Cobrança</p>
+          <div class="campo-form">
+            <span>12</span>
+            <svg viewBox="0 0 20 20"><rect x="3" y="4.5" width="14" height="12.5" rx="3" stroke-width="1.6"/><path d="M3 8.5h14M7 2.8v3M13 2.8v3" stroke-width="1.6"/></svg>
+          </div>
+          <div class="guia-balao-bloco">
+            <svg viewBox="0 0 14 7"><path d="M7 0L14 7H0Z"/></svg>
+            <p class="guia-balao">Abre um calendário para selecionar o dia</p>
+          </div>
+        </div>
+        <div class="campo-bloco">
+          <p class="campo-rotulo">Valor da Cobrança</p>
+          <div class="campo-form campo-valor"><span class="moeda-prefixo">R$</span><span>117,80</span></div>
+        </div>
+        <div class="campo-bloco">
+          <p class="campo-rotulo">Descrição</p>
+          <div class="campo-form"><span>Assinatura Spotify</span></div>
+        </div>
+        <div class="campo-bloco">
+          <p class="campo-rotulo">Estabelecimento <span>(Opcional)</span></p>
+          <div class="campo-form"><span>Spotify</span></div>
+        </div>
+        <div class="campo-bloco">
+          <p class="campo-rotulo">Categoria</p>
+          <div class="campo-form">
+            <span>Lazer</span>
+            <svg viewBox="0 0 20 20"><path d="M5.5 8l4.5 4.5L14.5 8" stroke-width="1.8"/></svg>
+          </div>
+          <div class="guia-balao-bloco">
+            <svg viewBox="0 0 14 7"><path d="M7 0L14 7H0Z"/></svg>
+            <p class="guia-balao">Abre uma seleção das categorias existentes</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="rodape-tela">
+      <button class="botao-principal com-icone" id="guia-comecar" type="button">
+        <svg viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M8 8L11.5 5"/>
+          <path d="M11.5 5V22.5C11.5 25.3 10 26.8 8 26.8C6.2 26.8 5.3 25.4 6.3 24.4C7.4 23.3 10.2 24 13 24H24.5L27.5 21.2L24.5 18.4H20.5"/>
+          <path d="M24.5 18.4L27.5 15.6L24.5 12.8H19.5"/>
+        </svg>
+        <span>Começar</span>
+      </button>
+    </div>
+  </main>
+
+  <!-- Gastos recorrentes (PRO-101), escolha: Gasto ou Receita. A Receita (PRO-102) só mostra o "Em breve" nativo do Telegram. -->
+  <main id="recorrentes-escolha" class="tela-cheia" hidden>
+    <header class="cabecalho cabecalho-registro">
+      <div class="cabecalho-linha cabecalho-titulo">
+        <button class="botao-menu" id="escolha-rec-voltar" type="button" aria-label="Voltar">
+          <svg viewBox="0 0 22 22" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17 11H5"/><path d="M10 6l-5 5 5 5"/>
+          </svg>
+        </button>
+        <h1 class="titulo-tela">Recorrentes</h1>
+      </div>
+    </header>
+
+    <div class="rec-escolha">
+      <h2 class="pergunta" id="escolha-rec-titulo"></h2>
+      <button class="opcao" id="escolha-rec-gasto" type="button">
+        <span class="opcao-icone">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17L17 7"/><path d="M9 7h8v8"/></svg>
+        </span>
+        <span class="opcao-textos">
+          <span class="opcao-titulo">Gasto</span>
+          <span class="opcao-subtitulo">Assinaturas do cartão</span>
+        </span>
+        <svg class="opcao-seta" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5L13 10l-5.5 5.5"/></svg>
+      </button>
+      <button class="opcao apagada" id="escolha-rec-receita" type="button">
+        <span class="opcao-icone">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 7L7 17"/><path d="M15 17H7V9"/></svg>
+        </span>
+        <span class="opcao-textos">
+          <span class="opcao-titulo">Receita</span>
+          <span class="opcao-subtitulo">Salário e entradas</span>
+        </span>
+        <span class="selo-opcao">Em Breve</span>
+      </button>
+    </div>
+  </main>
+
+  <!-- Gastos recorrentes (PRO-101), lista (com o estado vazio): "Carregando..." e erros como as outras telas -->
+  <main id="recorrentes-lista" class="tela-cheia" hidden>
+    <header class="cabecalho cabecalho-registro">
+      <div class="cabecalho-linha cabecalho-titulo">
+        <button class="botao-menu" id="lista-rec-voltar" type="button" aria-label="Voltar">
+          <svg viewBox="0 0 22 22" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17 11H5"/><path d="M10 6l-5 5 5 5"/>
+          </svg>
+        </button>
+        <h1 class="titulo-tela">Recorrentes</h1>
+      </div>
+    </header>
+
+    <p class="rec-carregando" id="rec-carregando" role="status">Carregando...</p>
+
+    <div class="detalhe-erro" id="rec-erro" role="alert" hidden>
+      <p id="rec-erro-texto"></p>
+      <button id="rec-erro-tentar" type="button">Tentar de novo</button>
+    </div>
+
+    <div class="rec-conteudo" id="rec-conteudo" hidden>
+      <div class="rec-total">
+        <p class="rec-total-rotulo">Total por Mês</p>
+        <p class="rec-total-valor" id="rec-total"></p>
+        <p class="rec-total-contagem" id="rec-contagem"></p>
+      </div>
+      <div class="rec-itens" id="rec-itens"></div>
+      <div class="rec-vazio" id="rec-vazio" hidden>
+        <div class="rec-vazio-caixa">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 3.5V8h4.5"/>
+            <path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20.5V16h-4.5"/>
+          </svg>
+          <p>Seus recorrentes aparecem aqui</p>
+        </div>
+        <div class="rec-vazio-dica">
+          <span class="rec-vazio-dica-icone">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17L17 7"/><path d="M9 7h8v8"/></svg>
+          </span>
+          <span>Comece pelas assinaturas do cartão, como <strong>Streaming</strong> e <strong>Academia</strong></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="rodape-tela" id="rec-rodape" hidden>
+      <button class="botao-principal com-icone mais" id="rec-adicionar" type="button">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg>
+        <span>Adicionar Recorrente</span>
+      </button>
+    </div>
+  </main>
+
+  <!-- Gastos recorrentes (PRO-101), formulário: um bloco só para Novo e Editar (troca o cabeçalho, o texto e os botões) -->
+  <main id="recorrente-form" class="tela-cheia" hidden>
+    <header class="cabecalho cabecalho-registro novo" id="rf-cabecalho">
+      <div class="cabecalho-linha cabecalho-titulo">
+        <button class="botao-menu" id="rf-voltar" type="button" aria-label="Voltar">
+          <svg viewBox="0 0 22 22" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17 11H5"/><path d="M10 6l-5 5 5 5"/>
+          </svg>
+        </button>
+        <h1 class="titulo-tela" id="rf-titulo"></h1>
+      </div>
+    </header>
+
+    <div class="rf-corpo novo" id="rf-corpo">
+      <p class="pergunta-apoio" id="rf-intro"></p>
+      <div class="rf-campos">
+        <div class="campo-bloco">
+          <p class="campo-rotulo">Dia da Cobrança</p>
+          <button class="campo-form" id="rf-dia" type="button" aria-haspopup="dialog">
+            <span id="rf-dia-texto" class="vazio">Escolha o dia</span>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12.5" rx="3" stroke-width="1.6"/><path d="M3 8.5h14M7 2.8v3M13 2.8v3" stroke-width="1.6"/></svg>
+          </button>
+          <p class="campo-erro" id="rf-dia-erro" role="alert" hidden>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.8v3.7"/><circle class="ponto" cx="8" cy="11" r="0.9"/></svg>
+            <span></span>
+          </p>
+        </div>
+
+        <div class="campo-bloco">
+          <label class="campo-rotulo" for="rf-valor">Valor da Cobrança</label>
+          <div class="campo-form campo-valor vazio-valor" id="rf-valor-caixa">
+            <span class="moeda-prefixo">R$</span>
+            <input id="rf-valor" type="text" inputmode="numeric" autocomplete="off" enterkeyhint="next" placeholder="0,00">
+          </div>
+          <p class="campo-erro" id="rf-valor-erro" role="alert" hidden>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.8v3.7"/><circle class="ponto" cx="8" cy="11" r="0.9"/></svg>
+            <span></span>
+          </p>
+        </div>
+
+        <div class="campo-bloco">
+          <label class="campo-rotulo" for="rf-descricao">Descrição</label>
+          <input class="campo-form" id="rf-descricao" type="text" maxlength="30" autocomplete="off" enterkeyhint="next" placeholder="Ex.: Assinatura Spotify">
+          <p class="campo-erro" id="rf-descricao-erro" role="alert" hidden>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.8v3.7"/><circle class="ponto" cx="8" cy="11" r="0.9"/></svg>
+            <span></span>
+          </p>
+        </div>
+
+        <div class="campo-bloco">
+          <label class="campo-rotulo" for="rf-estabelecimento">Estabelecimento <span>(Opcional)</span></label>
+          <input class="campo-form" id="rf-estabelecimento" type="text" maxlength="60" autocomplete="off" enterkeyhint="done" placeholder="Ex.: Spotify">
+          <p class="campo-erro" id="rf-estabelecimento-erro" role="alert" hidden>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.8v3.7"/><circle class="ponto" cx="8" cy="11" r="0.9"/></svg>
+            <span></span>
+          </p>
+        </div>
+
+        <div class="campo-bloco">
+          <p class="campo-rotulo">Categoria</p>
+          <button class="campo-form" id="rf-categoria" type="button" aria-haspopup="dialog">
+            <span id="rf-categoria-texto" class="vazio">Escolha a categoria</span>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 8l4.5 4.5L14.5 8" stroke-width="1.8"/></svg>
+          </button>
+          <p class="campo-erro" id="rf-categoria-erro" role="alert" hidden>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.8v3.7"/><circle class="ponto" cx="8" cy="11" r="0.9"/></svg>
+            <span></span>
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="rodape-tela">
+      <p class="erro-gravacao" id="rf-erro" role="alert" hidden></p>
+      <button class="botao-principal" id="rf-salvar" type="button" disabled>Salvar</button>
+      <p class="rf-dica" id="rf-dica" hidden></p>
+      <button class="botao-apagar" id="rf-apagar" type="button" hidden>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M8 6V4.5h4V6M6 6l.7 9.5c.1.8.7 1.5 1.5 1.5h3.6c.8 0 1.4-.7 1.5-1.5L14 6"/></svg>
+        <span>Apagar Recorrente</span>
+      </button>
+    </div>
+  </main>
+
   <!-- Aviso no topo da home depois de registrar (some em 10 s) -->
   <div class="aviso-topo" id="aviso-topo" role="status" aria-live="polite" hidden>
     <div class="aviso-topo-linha">
@@ -1648,6 +2083,66 @@
       <p class="aviso-topo-texto" id="aviso-topo-texto"></p>
     </div>
     <div class="aviso-topo-trilho"><div class="aviso-topo-barra" id="aviso-topo-barra"></div></div>
+  </div>
+
+  <!-- Gastos recorrentes (PRO-101), folhas de baixo: dia, categoria e confirmar apagar. Ficam fora dos <main>,
+       por cima de tudo menos da tela da logo. O toque no fundo escuro fecha a folha. -->
+  <div class="folha-camada" id="folha-dia" role="dialog" aria-modal="true" aria-labelledby="folha-dia-titulo" hidden>
+    <div class="folha-fundo" data-fechar="folha-dia"></div>
+    <div class="folha">
+      <div class="folha-alca"></div>
+      <div class="folha-titulos">
+        <h2 class="folha-titulo" id="folha-dia-titulo">Dia da Cobrança</h2>
+        <p class="folha-texto">Escolha o dia do mês em que essa cobrança cai.</p>
+      </div>
+      <div class="calendario">
+        <div class="linha-rotulo">
+          <p class="campo-rotulo">Dia do Mês</p>
+          <p class="linha-rotulo-valor" id="folha-dia-texto"></p>
+        </div>
+        <div class="calendario-grade" id="folha-dia-grade" role="radiogroup" aria-label="Dia do mês"></div>
+        <p class="calendario-nota">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 7.2v4"/><circle class="ponto" cx="8" cy="4.9" r="0.9"/></svg>
+          <span>Nos meses mais curtos, usamos o último dia</span>
+        </p>
+      </div>
+      <button class="botao-principal" id="folha-dia-confirmar" type="button" disabled>Escolha um Dia</button>
+    </div>
+  </div>
+
+  <div class="folha-camada" id="folha-categoria" role="dialog" aria-modal="true" aria-labelledby="folha-categoria-titulo" hidden>
+    <div class="folha-fundo" data-fechar="folha-categoria"></div>
+    <div class="folha compacta">
+      <div class="folha-alca"></div>
+      <div class="folha-titulos">
+        <h2 class="folha-titulo" id="folha-categoria-titulo">Categoria</h2>
+        <p class="folha-texto">Escolha uma das suas categorias.</p>
+      </div>
+      <div class="categoria-lista" id="folha-categoria-lista" role="radiogroup" aria-label="Categorias"></div>
+      <div class="folha-estado" id="folha-categoria-estado" hidden>
+        <p id="folha-categoria-estado-texto"></p>
+        <button id="folha-categoria-tentar" type="button" hidden>Tentar de novo</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="folha-camada" id="folha-apagar" role="dialog" aria-modal="true" aria-labelledby="folha-apagar-titulo" hidden>
+    <div class="folha-fundo" data-fechar="folha-apagar"></div>
+    <div class="folha">
+      <div class="folha-alca"></div>
+      <span class="folha-icone-apagar">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M8 6V4.5h4V6M6 6l.7 9.5c.1.8.7 1.5 1.5 1.5h3.6c.8 0 1.4-.7 1.5-1.5L14 6"/></svg>
+      </span>
+      <div class="folha-titulos">
+        <h2 class="folha-titulo" id="folha-apagar-titulo">Apagar Este Recorrente?</h2>
+        <p class="folha-texto" id="folha-apagar-texto"></p>
+      </div>
+      <p class="erro-gravacao" id="folha-apagar-erro" role="alert" hidden></p>
+      <div class="folha-botoes">
+        <button class="botao-principal" id="folha-apagar-confirmar" type="button">Sim, Apagar</button>
+        <button class="botao-texto" id="folha-apagar-cancelar" type="button">Cancelar</button>
+      </div>
+    </div>
   </div>
 
   <!-- INICIO FUNCOES PURAS (PRO-89): sem DOM e sem rede; o testes_home_registro.py extrai este bloco e roda no node. -->
@@ -2050,6 +2545,233 @@
       const primeiro = primeiroNome(nome);
       return primeiro ? "Olá, " + primeiro + "! " + saudacao : saudacao;
     }
+
+    // ---------- Gastos recorrentes (PRO-101) ----------
+    // Limites iguais aos do servidor, só para AVISAR na tela (quem decide é o servidor, com os códigos 422).
+    const RECORRENTE_DESCRICAO_MAXIMA = 30;               // DESCRICAO_MAXIMA_RECORRENTE do recorrentes.py
+    const RECORRENTE_ESTABELECIMENTO_MAXIMO = 60;         // ESTABELECIMENTO_MAXIMO do registro.py
+    const RECORRENTE_VALOR_MAXIMO_CENTAVOS = 100000000;   // VALOR_MAXIMO do registro.py: R$ 1.000.000,00
+    const RECORRENTE_MAX_DIGITOS = 11;                    // até R$ 999.999.999,99 na máscara; acima do teto o aviso aparece
+
+    const MSG_RECORRENTE_VALOR = "Valor inválido. Digite um valor maior que zero e de no máximo R$ 1.000.000,00";
+    const MSG_RECORRENTE_DESCRICAO = "Preencha a descrição para continuar";
+    const MSG_RECORRENTE_DESCRICAO_REPETIDA = "Já existe uma cobrança com esse nome nesta categoria.";
+    const MSG_RECORRENTE_CATEGORIA_SUMIU = "Essa categoria não existe mais. Escolha outra.";
+    const MSG_RECORRENTE_NAO_EXISTE = "Este recorrente não existe mais.";
+    const MSG_RECORRENTE_FALHOU = "Não foi possível salvar. Tente de novo.";
+    const MSG_RECORRENTE_APAGAR_FALHOU = "Não foi possível apagar. Tente de novo.";
+
+    // Máscara de centavos (D11): cada dígito entra pela direita e apagar tira o último. Recebe o texto do campo
+    // (ex.: "117,80" depois de digitar um 0 a mais: "117,800") e devolve só os dígitos, sem zeros à esquerda:
+    //   ""        -> ""        (campo vazio: aparece o "0,00" cinza do placeholder)
+    //   "0"       -> "0"       (a pessoa digitou 0: vira "0,00" e o aviso do valor aparece ao sair do campo)
+    //   "00"      -> ""        (apagou o último dígito do "0,00": o campo esvazia)
+    //   "000..."  -> "0"       (mais um zero digitado em cima do "0,00")
+    //   "0005"    -> "5"       ("0,05")
+    // O limite de RECORRENTE_MAX_DIGITOS corta o excesso no fim (o dígito novo, que entrou pela direita).
+    function digitosDoValor(texto) {
+      const digitos = String(texto).replace(/\D/g, "");
+      if (!digitos) return "";
+      const semZeros = digitos.replace(/^0+/, "");
+      if (!semZeros) return digitos.length === 2 ? "" : "0";
+      return semZeros.slice(0, RECORRENTE_MAX_DIGITOS);
+    }
+
+    // Os dígitos viram o número com 2 casas (11780 -> 117.8; 1 -> 0.01). Vazio -> null.
+    function valorDosDigitos(digitos) {
+      if (!digitos) return null;
+      return Number(digitos) / 100;
+    }
+
+    // O texto que o campo mostra: "117,80", "1.234,56", "0,01". Vazio -> "" (o placeholder aparece).
+    function textoDoValor(digitos) {
+      const valor = valorDosDigitos(digitos);
+      return valor === null ? "" : formatadorNumero.format(valor);
+    }
+
+    // O valor gravado (117.8) volta para os dígitos da máscara ("11780"), ao abrir o Editar. Só conversão de formato.
+    function digitosDoValorGravado(valor) {
+      return String(Math.round(Number(valor) * 100));
+    }
+
+    // O mesmo critério do servidor (registro.validar_valor): maior que zero e até R$ 1.000.000,00.
+    // Campo vazio não é "inválido": é "falta preencher" (a dica do Salvar cuida disso).
+    function erroDoValor(digitos) {
+      if (!digitos) return null;
+      const centavos = Number(digitos);
+      return centavos > 0 && centavos <= RECORRENTE_VALOR_MAXIMO_CENTAVOS ? null : MSG_RECORRENTE_VALOR;
+    }
+
+    function erroDaDescricao(descricao) {
+      return String(descricao).trim() ? null : MSG_RECORRENTE_DESCRICAO;
+    }
+
+    function diaValido(dia) {
+      return Number.isInteger(dia) && dia >= 1 && dia <= 31;
+    }
+
+    // Os 4 obrigatórios válidos.
+    function formularioRecorrenteValido(f) {
+      return diaValido(f.dia)
+        && !!f.valorDigitos && erroDoValor(f.valorDigitos) === null
+        && erroDaDescricao(f.descricao) === null
+        && typeof f.categoria === "string" && f.categoria !== "";
+    }
+
+    // O Salvar liga com os 4 obrigatórios válidos e nada em andamento (o primeiro toque trava).
+    function podeSalvarRecorrente(f) {
+      return !f.salvando && formularioRecorrenteValido(f);
+    }
+
+    // Dica embaixo do Salvar: o que falta ou está errado. Vazia quando está tudo certo.
+    //   tudo faltando:                   "Preencha o dia, o valor, a descrição e a categoria"
+    //   valor errado e descrição vazia:  "Corrija o valor e preencha a descrição"
+    function dicaDoSalvar(f) {
+      const faltam = [];
+      if (!diaValido(f.dia)) faltam.push("o dia");
+      if (!f.valorDigitos) faltam.push("o valor");
+      if (erroDaDescricao(f.descricao) !== null) faltam.push("a descrição");
+      if (!(typeof f.categoria === "string" && f.categoria !== "")) faltam.push("a categoria");
+      const corrigir = !!f.valorDigitos && erroDoValor(f.valorDigitos) !== null;
+      if (!faltam.length && !corrigir) return "";
+      const lista = faltam.length > 1 ? faltam.slice(0, -1).join(", ") + " e " + faltam[faltam.length - 1] : (faltam[0] || "");
+      if (corrigir && faltam.length) return "Corrija o valor e preencha " + lista;
+      if (corrigir) return "Corrija o valor";
+      return "Preencha " + lista;
+    }
+
+    // "Escolha um Dia" (nada marcado) ou "Confirmar Dia 12"
+    function textoConfirmarDia(dia) {
+      return Number.isInteger(dia) ? "Confirmar Dia " + dia : "Escolha um Dia";
+    }
+
+    // A categoria gravada só vale se ainda existe na lista do usuário; senão, o campo começa vazio.
+    function categoriaExistente(categoria, lista) {
+      return Array.isArray(lista) && typeof categoria === "string" && lista.includes(categoria) ? categoria : null;
+    }
+
+    // Corpo do POST (com a chave) e do PUT (sem). O estabelecimento vazio vai como null; nada é calculado aqui.
+    function montarCorpoRecorrente(f, chave) {
+      const estabelecimento = String(f.estabelecimento || "").trim();
+      const corpo = {
+        dia_cobranca: f.dia,
+        valor: valorDosDigitos(f.valorDigitos),
+        descricao: String(f.descricao).trim(),
+        estabelecimento: estabelecimento ? estabelecimento : null,
+        categoria: f.categoria,
+      };
+      return typeof chave === "string" ? Object.assign({ chave: chave }, corpo) : corpo;
+    }
+
+    // ---------- Lista ----------
+    // "Nenhum gasto recorrente ainda", "1 gasto, lançado sozinho todo mês", "4 gastos, lançados sozinhos todo mês"
+    function textoContagemRecorrentes(n) {
+      if (!n) return "Nenhum gasto recorrente ainda";
+      return n === 1 ? "1 gasto, lançado sozinho todo mês" : n + " gastos, lançados sozinhos todo mês";
+    }
+
+    // "Smart Fit · Academia"; sem estabelecimento, só a categoria.
+    function subtituloRecorrente(r) {
+      const estabelecimento = typeof r.estabelecimento === "string" ? r.estabelecimento.trim() : "";
+      return estabelecimento ? estabelecimento + " · " + r.categoria : r.categoria;
+    }
+
+    function textoDiaCobranca(dia) {
+      return "Todo dia " + dia;
+    }
+
+    // Saudação da escolha: "Olá, Ygor! O Que Deseja Adicionar Como Recorrente?" (sem nome: só a pergunta).
+    function tituloDaEscolha(nome) {
+      const primeiro = primeiroNome(nome);
+      return (primeiro ? "Olá, " + primeiro + "! " : "") + "O Que Deseja Adicionar Como Recorrente?";
+    }
+
+    // ---------- Navegação ----------
+    // Toque no atalho Recorrentes: o guia só na primeira vez; depois, a lista.
+    function proximaTelaDoAtalho(guiaVisto) {
+      return guiaVisto ? "lista" : "guia";
+    }
+
+    // O guia já foi visto se o CloudStorage do Telegram OU o localStorage guardaram "1" (sem os dois: não visto).
+    function guiaJaVisto(valorNuvem, valorLocal) {
+      return valorNuvem === "1" || valorLocal === "1";
+    }
+
+    // Seta e BackButton: uma tela por vez. 'origemEscolha' = "lista" quando a escolha foi aberta pelo botão da lista.
+    function telaAoVoltarRecorrentes(atual, origemEscolha) {
+      if (atual === "guia" || atual === "lista") return "home";
+      if (atual === "escolha") return origemEscolha === "lista" ? "lista" : "home";
+      if (atual === "form-novo") return "escolha";
+      if (atual === "form-editar") return "lista";
+      return null;
+    }
+
+    // ---------- Gravação (criar, editar e apagar) ----------
+    // Textos da tela da logo (D9). 'dia' só entra no criar.
+    function textosTelaLogoRecorrente(operacao, dia) {
+      if (operacao === "editar") {
+        return { cabecalho: "Editar Recorrente", titulo: "Salvando as Alterações...", texto: "Elas valem a partir da próxima cobrança." };
+      }
+      return { cabecalho: "Novo Recorrente", titulo: "Salvando o Recorrente...", texto: "Ele entra sozinho todo dia " + dia + "." };
+    }
+
+    // Aviso no topo (D9), no mesmo formato do montarAviso: { antes, negrito, depois, texto }. O criar usa a
+    // categoria da RESPOSTA do servidor, em negrito.
+    function avisoDeRecorrente(operacao, resposta) {
+      if (operacao === "criar") {
+        const antes = "Cobrança Recorrente Adicionada a ";
+        const negrito = resposta && typeof resposta.categoria === "string" ? resposta.categoria : "";
+        return { antes: antes, negrito: negrito, depois: "", texto: antes + negrito };
+      }
+      const texto = operacao === "editar" ? "Cobrança Recorrente Atualizada" : "Cobrança Recorrente Apagada";
+      return { antes: texto, negrito: "", depois: "", texto: texto };
+    }
+
+    // Mensagem de cada 422 de campo (a tela mostra embaixo do campo; nunca o texto cru do servidor).
+    const ERROS_422_RECORRENTE = {
+      dia_invalido: { campo: "dia", mensagem: "Escolha o dia da cobrança." },
+      valor_invalido: { campo: "valor", mensagem: MSG_RECORRENTE_VALOR },
+      descricao_invalida: { campo: "descricao", mensagem: MSG_RECORRENTE_DESCRICAO },
+      descricao_longa: { campo: "descricao", mensagem: "A descrição pode ter no máximo " + RECORRENTE_DESCRICAO_MAXIMA + " caracteres." },
+      descricao_repetida: { campo: "descricao", mensagem: MSG_RECORRENTE_DESCRICAO_REPETIDA },
+      estabelecimento_longo: { campo: "estabelecimento", mensagem: "O estabelecimento pode ter no máximo " + RECORRENTE_ESTABELECIMENTO_MAXIMO + " caracteres." },
+      categoria_nao_encontrada: { campo: "categoria", mensagem: MSG_RECORRENTE_CATEGORIA_SUMIU },
+    };
+
+    // O que fazer com a resposta de uma gravação (já depois das novas tentativas do gravarComTentativas).
+    // operacao: "criar" (POST), "editar" (PUT) ou "apagar" (DELETE). Devolve:
+    //   { acao: "sucesso" }                                        201, 200 (repetido) e, no apagar, 404 (já estava apagado);
+    //   { acao: "erro", campo, mensagem, recarregarCategorias? }   422 de campo (inclusive descricao_repetida);
+    //   { acao: "erro", mensagem, voltarLista: true }              404 no editar: o recorrente sumiu;
+    //   { acao: "erro", mensagem }                                 o resto (401, 404/409 de cadastro, 503, rede, 500, chave...).
+    function decisaoDaGravacaoRecorrente(operacao, resultado) {
+      const falhou = operacao === "apagar" ? MSG_RECORRENTE_APAGAR_FALHOU : MSG_RECORRENTE_FALHOU;
+      if (resultado.erro === undefined) return { acao: "sucesso" };
+      if (resultado.erro === 401) return { acao: "erro", mensagem: MSG_SESSAO };
+      if (resultado.erro === 404 && resultado.detalhe === "recorrente_nao_encontrado") {
+        if (operacao === "apagar") return { acao: "sucesso" };
+        return { acao: "erro", mensagem: MSG_RECORRENTE_NAO_EXISTE, voltarLista: true };
+      }
+      if (resultado.erro === 404) return { acao: "erro", mensagem: MSG_CADASTRO_404 };
+      if (resultado.erro === 409) return { acao: "erro", mensagem: MSG_CADASTRO_409 };
+      if (resultado.erro === 422 && operacao !== "apagar") {
+        const conhecido = ERROS_422_RECORRENTE[resultado.detalhe];
+        if (conhecido) {
+          const decisao = { acao: "erro", campo: conhecido.campo, mensagem: conhecido.mensagem };
+          if (resultado.detalhe === "categoria_nao_encontrada") decisao.recarregarCategorias = true;
+          return decisao;
+        }
+      }
+      return { acao: "erro", mensagem: falhou };
+    }
+
+    // Texto do "Apagar Este Recorrente?": negrito "Assinatura Spotify · R$ 117,80" e o resto da frase.
+    function textoConfirmarApagar(r) {
+      return {
+        negrito: r.descricao + " · " + formatarDinheiro(r.valor),
+        depois: " deixa de entrar todo dia " + r.dia_cobranca + ". Os gastos que já entraram nos meses anteriores continuam no histórico.",
+      };
+    }
   </script>
   <!-- FIM FUNCOES PURAS -->
 
@@ -2071,6 +2793,8 @@
     const initData = (tg && tg.initData) || "";
 
     const $ = (id) => document.getElementById(id);
+
+    let nomeDoUsuario = ""; // nome do /me, para a saudação da escolha dos Recorrentes (PRO-101)
 
     // Cria um elemento com classe e texto (sempre textContent, nunca innerHTML com dados da API).
     function criar(tag, classe, texto) {
@@ -2130,6 +2854,7 @@
     }
 
     function mostrarCabecalho(me, resumo) {
+      nomeDoUsuario = me.nome || "";
       mostrarDataESaudacao(me.nome);
       $("gasto-rotulo").textContent = "Gastos em " + MESES_COMPLETOS[indiceMes(resumo.ano_mes)];
       mostrarValorGrande(resumo.total_gasto);
@@ -2255,21 +2980,22 @@
       }
     }
 
-    // POST com corpo JSON (PRO-89), no mesmo formato do 'chamar': nunca lança; devolve
-    // { dados, status } (status 201 = gravou, 200 = repetido) ou { erro: status HTTP, detalhe, retryAfter }
-    // (erro 0 = falha de rede ou tempo esgotado). 'retryAfter' vem do cabeçalho Retry-After (429), em segundos.
-    async function enviarJson(rota, corpo, tempoLimiteMs = 30000) {
+    // Envio com corpo JSON (PRO-89 para o POST; PRO-101 acrescentou o PUT e o DELETE), no mesmo formato do 'chamar':
+    // nunca lança; devolve { dados, status } (status 201 = gravou, 200 = repetido) ou
+    // { erro: status HTTP, detalhe, retryAfter } (erro 0 = falha de rede ou tempo esgotado). 'retryAfter' vem do
+    // cabeçalho Retry-After (429), em segundos. Sem corpo (DELETE), nada é enviado no body.
+    async function enviarComMetodo(metodo, rota, corpo, tempoLimiteMs = 30000) {
       const controle = new AbortController();
       const relogio = setTimeout(() => controle.abort(), tempoLimiteMs);
       try {
         const resposta = await fetch(rota, {
-          method: "POST",
+          method: metodo,
           headers: {
             "Authorization": "tma " + initData,
             "ngrok-skip-browser-warning": "1",
             "Content-Type": "application/json",
           },
-          body: JSON.stringify(corpo),
+          body: corpo === undefined || corpo === null ? undefined : JSON.stringify(corpo),
           signal: controle.signal,
         });
         if (!resposta.ok) {
@@ -2284,6 +3010,11 @@
       } finally {
         clearTimeout(relogio);
       }
+    }
+
+    // POST com corpo JSON (PRO-89): registro, gastos, receitas, cadastro e recorrentes.
+    async function enviarJson(rota, corpo, tempoLimiteMs = 30000) {
+      return enviarComMetodo("POST", rota, corpo, tempoLimiteMs);
     }
 
     // Escolhe a mensagem do primeiro erro, na ordem da tabela: 401, 404, 409, outro.
@@ -2612,6 +3343,15 @@
     // Seta do cabeçalho e BackButton do Telegram: sobem UM nível por vez.
     function voltarUmNivel() {
       if (!$("tela-logo").hidden) return; // a tela da logo está por cima: nada embaixo recebe comando (PRO-100)
+      if (folhaAberta()) {                // folha de baixo aberta: fecha a folha (PRO-101)
+        fecharFolhaAtual();
+        return;
+      }
+      const telaRecorrentes = telaRecorrentesAtual();
+      if (telaRecorrentes) {              // guia, escolha, lista ou formulário dos Recorrentes (PRO-101)
+        voltarNasRecorrentes(telaRecorrentes);
+        return;
+      }
       if (!$("cadastro").hidden) {
         voltarNoCadastro();           // passo anterior; do passo 1, a escolha inicial (PRO-97)
       } else if (!$("amigo").hidden) {
@@ -3192,6 +3932,584 @@
       $("cartao-salario").addEventListener("click", abrirReceitaDireto);
     }
 
+    // ---------- Gastos recorrentes (PRO-101) ----------
+    // Fluxo: atalho Recorrentes -> guia (só na 1ª vez) -> escolha (Gasto ou Receita) -> formulário Novo -> lista;
+    // lista -> formulário Editar (salvar ou apagar) -> lista. Tudo na mesma página, trocando blocos sem recarregar.
+    // Consome as rotas da PRO-87 (GET /categorias, GET/POST /recorrentes, PUT/DELETE /recorrentes/{id}).
+    const TELAS_RECORRENTES = ["recorrentes-guia", "recorrentes-escolha", "recorrentes-lista", "recorrente-form"];
+    const FOLHAS_RECORRENTES = ["folha-dia", "folha-categoria", "folha-apagar"];
+    const CHAVE_GUIA_RECORRENTES = "guia_recorrentes_visto";
+    const TITULO_FORM_NOVO = "Registre Seu Gasto e Espere Chegar a Data, na Data Exata o L1d3r Registra.";
+    const INTRO_FORM_NOVO = "Veja na Sua Fatura do Cartão o Dia Exato em Que Costuma Cair Essa Assinatura Para um Melhor Controle.";
+    const INTRO_FORM_EDITAR = "As mudanças valem a partir da próxima cobrança. O que já entrou nos meses anteriores não muda.";
+    const MSG_CATEGORIAS_FALHOU = "Não foi possível carregar as categorias. Tente de novo.";
+    const MSG_SEM_CATEGORIAS = "Você ainda não tem categorias.";
+    const NS_SVG = "http://www.w3.org/2000/svg";
+
+    let origemEscolha = "home";        // de onde a escolha foi aberta: "lista" ou "home" (decide o voltar)
+    let abrindoRecorrentes = false;    // trava o toque duplo no atalho enquanto lê o guia
+    let versaoLista = 0;               // descarta resposta atrasada de uma lista já fechada ou recarregada
+    let diaRascunho = null;            // dia marcado na folha, ainda sem o "Confirmar Dia"
+
+    const listaRecorrentes = { itens: [] };
+
+    // Estado do formulário (Novo e Editar no mesmo bloco). Os valores digitados ficam aqui; a tela só desenha.
+    const formRec = {
+      modo: "novo",          // "novo" ou "editar"
+      id: null,              // id do recorrente (só no editar)
+      original: null,        // o recorrente como veio da lista (só no editar; o texto do "Apagar" usa)
+      chave: null,           // UUID do formulário Novo: nasce ao abrir e se repete nas novas tentativas
+      dia: null,
+      valorDigitos: "",      // centavos em dígitos ("11780" = R$ 117,80)
+      descricao: "",
+      estabelecimento: "",
+      categoria: null,
+      valorTocado: false,    // o erro do valor só aparece depois de sair do campo
+      descricaoTocada: false,
+      erroServidor: null,    // { campo, mensagem }: 422 do servidor, embaixo do campo
+      erroGeral: null,       // texto acima do Salvar
+      salvando: false,
+    };
+
+    const categoriasRec = { lista: [], estado: "idle", versao: 0, mensagem: "" }; // estado: idle, carregando, ok, erro
+    const apagarRec = { apagando: false };
+
+    function criarSvgPath(classe, viewBox, caminho) {
+      const svg = document.createElementNS(NS_SVG, "svg");
+      if (classe) svg.setAttribute("class", classe);
+      svg.setAttribute("viewBox", viewBox);
+      svg.setAttribute("aria-hidden", "true");
+      const path = document.createElementNS(NS_SVG, "path");
+      path.setAttribute("d", caminho);
+      svg.append(path);
+      return svg;
+    }
+
+    function mostrarAlertaNativo(texto) {
+      try { tg.showAlert(texto); } catch (e) { window.alert(texto); }
+    }
+
+    // --- Guia "já visto": CloudStorage do Telegram, com reserva no localStorage (tudo dentro de try) ---
+    function lerGuiaLocal() {
+      try { return window.localStorage.getItem(CHAVE_GUIA_RECORRENTES); } catch (e) { return null; }
+    }
+
+    // O CloudStorage responde por callback; sem a função (versão antiga) ou sem resposta em 2 s, vale "não visto".
+    function lerGuiaNuvem() {
+      return new Promise((resolver) => {
+        let resolvido = false;
+        const fim = (valor) => { if (!resolvido) { resolvido = true; resolver(valor); } };
+        try {
+          tg.CloudStorage.getItem(CHAVE_GUIA_RECORRENTES, (erro, valor) => fim(erro ? null : valor));
+          setTimeout(() => fim(null), 2000);
+        } catch (e) {
+          fim(null);
+        }
+      });
+    }
+
+    async function guiaRecorrentesVisto() {
+      const local = lerGuiaLocal();
+      if (guiaJaVisto(null, local)) return true; // já visto neste aparelho: não espera a nuvem
+      return guiaJaVisto(await lerGuiaNuvem(), local);
+    }
+
+    function marcarGuiaVisto() {
+      try { window.localStorage.setItem(CHAVE_GUIA_RECORRENTES, "1"); } catch (e) { /* sem armazenamento */ }
+      try { tg.CloudStorage.setItem(CHAVE_GUIA_RECORRENTES, "1", () => {}); } catch (e) { /* versão antiga */ }
+    }
+
+    // --- Navegação ---
+    // Mostra uma tela dos Recorrentes e esconde as outras e a home; liga a seta do Telegram.
+    function mostrarTelaRecorrentes(id) {
+      TELAS_RECORRENTES.forEach((t) => { $(t).hidden = t !== id; });
+      $("tela").hidden = true;
+      document.body.classList.add("modo-recorrentes");
+      ajustarAlturaTela();
+      window.scrollTo(0, 0);
+      mostrarBackButton(true);
+    }
+
+    function telaRecorrentesAtual() {
+      const aberta = TELAS_RECORRENTES.find((t) => !$(t).hidden);
+      if (!aberta) return null;
+      if (aberta === "recorrentes-guia") return "guia";
+      if (aberta === "recorrentes-escolha") return "escolha";
+      if (aberta === "recorrentes-lista") return "lista";
+      return formRec.modo === "editar" ? "form-editar" : "form-novo";
+    }
+
+    function voltarRecorrentesParaHome() {
+      versaoLista++;
+      categoriasRec.versao++;
+      FOLHAS_RECORRENTES.forEach((f) => { $(f).hidden = true; });
+      TELAS_RECORRENTES.forEach((t) => { $(t).hidden = true; });
+      document.body.classList.remove("modo-recorrentes");
+      $("tela").hidden = false;
+      $("grafico-area").scrollLeft = rolagemGrafico;
+      window.scrollTo(0, rolagemHome);
+      mostrarBackButton(false);
+    }
+
+    // Seta e BackButton: sobem um nível (a regra está em telaAoVoltarRecorrentes). Gravando, espera terminar.
+    function voltarNasRecorrentes(atual) {
+      if (formRec.salvando || apagarRec.apagando) return;
+      if (document.activeElement) document.activeElement.blur();
+      const destino = telaAoVoltarRecorrentes(atual, origemEscolha);
+      if (destino === "home") voltarRecorrentesParaHome();
+      else if (destino === "escolha") abrirEscolha();
+      else if (destino === "lista") mostrarTelaRecorrentes("recorrentes-lista"); // a lista já está desenhada
+    }
+
+    function folhaAberta() {
+      return FOLHAS_RECORRENTES.find((f) => !$(f).hidden) || null;
+    }
+
+    function fecharFolhaAtual() {
+      const id = folhaAberta();
+      if (!id || (id === "folha-apagar" && apagarRec.apagando)) return;
+      $(id).hidden = true;
+    }
+
+    // Toque no atalho: guia na primeira vez, lista nas próximas (também depois de fechar e abrir o app).
+    async function abrirRecorrentes() {
+      if (abrindoRecorrentes) return;
+      abrindoRecorrentes = true;
+      try {
+        rolagemHome = window.scrollY;
+        rolagemGrafico = $("grafico-area").scrollLeft;
+        const visto = await guiaRecorrentesVisto();
+        if (proximaTelaDoAtalho(visto) === "guia") mostrarTelaRecorrentes("recorrentes-guia");
+        else abrirLista();
+      } finally {
+        abrindoRecorrentes = false;
+      }
+    }
+
+    function abrirEscolha(origem) {
+      if (origem) origemEscolha = origem;
+      $("escolha-rec-titulo").textContent = tituloDaEscolha(nomeDoUsuario);
+      mostrarTelaRecorrentes("recorrentes-escolha");
+    }
+
+    // --- Lista ---
+    function mostrarEstadoLista(estado) {
+      $("rec-carregando").hidden = estado !== "carregando";
+      $("rec-erro").hidden = estado !== "erro";
+      $("rec-conteudo").hidden = estado !== "ok";
+      $("rec-rodape").hidden = estado !== "ok";
+    }
+
+    function criarLinhaRecorrente(r) {
+      const textos = criar("span", "rec-linha-textos");
+      textos.append(criar("span", "rec-linha-nome", r.descricao), criar("span", "rec-linha-sub", subtituloRecorrente(r)));
+      const lado = criar("span", "rec-linha-lado");
+      lado.append(criar("span", "rec-linha-valor", formatarDinheiro(r.valor)), criar("span", "rec-linha-dia", textoDiaCobranca(r.dia_cobranca)));
+      const linha = criar("button", "rec-linha");
+      linha.type = "button";
+      linha.dataset.id = String(r.id);
+      linha.append(textos, lado, criarSvgPath("rec-linha-seta", "0 0 20 20", "M7.5 4.5L13 10l-5.5 5.5"));
+      return linha;
+    }
+
+    // Todo texto vem da API: só por textContent (criar). O total é o do servidor (total_mensal), sem soma aqui.
+    function desenharLista(dados) {
+      const itens = Array.isArray(dados.recorrentes) ? dados.recorrentes : [];
+      listaRecorrentes.itens = itens;
+      $("rec-total").textContent = formatarDinheiro(Number(dados.total_mensal) || 0);
+      $("rec-contagem").textContent = textoContagemRecorrentes(itens.length);
+      $("rec-itens").replaceChildren(...itens.map(criarLinhaRecorrente));
+      $("rec-itens").hidden = itens.length === 0;
+      $("rec-vazio").hidden = itens.length > 0;
+      mostrarEstadoLista("ok");
+    }
+
+    // 'resultado' no formato do 'chamar': { dados } ou { erro }. 401, 404, 409 e rede com os textos de hoje.
+    function aplicarResultadoLista(resultado) {
+      if (resultado.erro !== undefined) {
+        $("rec-erro-texto").textContent = mensagemDeErro([resultado]).texto;
+        mostrarEstadoLista("erro");
+      } else {
+        desenharLista(resultado.dados);
+      }
+    }
+
+    async function carregarRecorrentes() {
+      const versao = ++versaoLista;
+      mostrarEstadoLista("carregando");
+      const resultado = await chamar("/recorrentes");
+      if (versao !== versaoLista) return; // o usuário já saiu da lista ou ela foi recarregada
+      aplicarResultadoLista(resultado);
+    }
+
+    function abrirLista() {
+      mostrarTelaRecorrentes("recorrentes-lista");
+      carregarRecorrentes();
+    }
+
+    // --- Categorias do formulário (GET /categorias, buscada ao abrir o formulário) ---
+    async function carregarCategoriasRec() {
+      const versao = ++categoriasRec.versao;
+      categoriasRec.estado = "carregando";
+      desenharFolhaCategoria();
+      const resultado = await chamar("/categorias");
+      if (versao !== categoriasRec.versao) return;
+      if (resultado.erro !== undefined) {
+        categoriasRec.estado = "erro";
+        categoriasRec.mensagem = resultado.erro === 401 ? MSG_SESSAO : MSG_CATEGORIAS_FALHOU;
+      } else {
+        categoriasRec.lista = Array.isArray(resultado.dados.categorias) ? resultado.dados.categorias : [];
+        categoriasRec.estado = "ok";
+        // Categoria gravada que não existe mais (ou foi apagada): o campo começa vazio.
+        if (formRec.categoria !== null) formRec.categoria = categoriaExistente(formRec.categoria, categoriasRec.lista);
+      }
+      desenharForm();
+      desenharFolhaCategoria();
+    }
+
+    // --- Formulário ---
+    function zerarForm(modo) {
+      const f = formRec;
+      f.modo = modo;
+      f.id = null;
+      f.original = null;
+      f.chave = null;
+      f.dia = null;
+      f.valorDigitos = "";
+      f.descricao = "";
+      f.estabelecimento = "";
+      f.categoria = null;
+      f.valorTocado = false;
+      f.descricaoTocada = false;
+      f.erroServidor = null;
+      f.erroGeral = null;
+      f.salvando = false;
+    }
+
+    function abrirForm() {
+      $("rf-valor").value = textoDoValor(formRec.valorDigitos);
+      $("rf-descricao").value = formRec.descricao;
+      $("rf-estabelecimento").value = formRec.estabelecimento;
+      mostrarTelaRecorrentes("recorrente-form");
+      desenharForm();
+      carregarCategoriasRec();
+    }
+
+    // Formulário Novo: a chave de idempotência nasce aqui e só muda num formulário Novo de verdade.
+    function abrirFormNovo() {
+      zerarForm("novo");
+      formRec.chave = gerarChave();
+      abrirForm();
+    }
+
+    // Formulário Editar, já preenchido com o recorrente da lista (sem chave: o PUT repete sem problema).
+    function abrirFormEditar(r) {
+      zerarForm("editar");
+      formRec.id = r.id;
+      formRec.original = r;
+      formRec.dia = r.dia_cobranca;
+      formRec.valorDigitos = digitosDoValorGravado(r.valor);
+      formRec.descricao = r.descricao;
+      formRec.estabelecimento = typeof r.estabelecimento === "string" ? r.estabelecimento : "";
+      formRec.categoria = r.categoria; // confere com a lista de categorias quando ela chega
+      abrirForm();
+    }
+
+    function mostrarErroCampo(id, mensagem) {
+      const p = $(id);
+      p.hidden = !mensagem;
+      p.querySelector("span").textContent = mensagem || "";
+    }
+
+    // Erro de um campo: o do servidor (422), ou o de tela (valor e descrição, depois de sair do campo).
+    function erroDoCampoRec(campo) {
+      const f = formRec;
+      if (f.erroServidor && f.erroServidor.campo === campo) return f.erroServidor.mensagem;
+      if (campo === "valor") return f.valorTocado ? erroDoValor(f.valorDigitos) : null;
+      if (campo === "descricao") return f.descricaoTocada ? erroDaDescricao(f.descricao) : null;
+      return null;
+    }
+
+    function limparErroServidor(...campos) {
+      if (formRec.erroServidor && campos.includes(formRec.erroServidor.campo)) formRec.erroServidor = null;
+    }
+
+    // Desenha o estado do formulário (não mexe no texto que a pessoa está digitando).
+    function desenharForm() {
+      const f = formRec;
+      const novo = f.modo === "novo";
+      $("rf-cabecalho").classList.toggle("novo", novo);
+      $("rf-corpo").classList.toggle("novo", !!novo);
+      $("rf-titulo").textContent = novo ? TITULO_FORM_NOVO : "Editar Recorrente";
+      $("rf-intro").textContent = novo ? INTRO_FORM_NOVO : INTRO_FORM_EDITAR;
+
+      $("rf-dia-texto").textContent = f.dia === null ? "Escolha o dia" : String(f.dia);
+      $("rf-dia-texto").classList.toggle("vazio", f.dia === null);
+      $("rf-categoria-texto").textContent = f.categoria === null ? "Escolha a categoria" : f.categoria;
+      $("rf-categoria-texto").classList.toggle("vazio", f.categoria === null);
+      $("rf-valor-caixa").classList.toggle("vazio-valor", !f.valorDigitos);
+
+      const erros = { dia: erroDoCampoRec("dia"), valor: erroDoCampoRec("valor"), descricao: erroDoCampoRec("descricao"),
+                      estabelecimento: erroDoCampoRec("estabelecimento"), categoria: erroDoCampoRec("categoria") };
+      mostrarErroCampo("rf-dia-erro", erros.dia);
+      mostrarErroCampo("rf-valor-erro", erros.valor);
+      mostrarErroCampo("rf-descricao-erro", erros.descricao);
+      mostrarErroCampo("rf-estabelecimento-erro", erros.estabelecimento);
+      mostrarErroCampo("rf-categoria-erro", erros.categoria);
+      $("rf-dia").classList.toggle("com-erro", !!erros.dia);
+      $("rf-valor-caixa").classList.toggle("com-erro", !!erros.valor);
+      $("rf-descricao").classList.toggle("com-erro", !!erros.descricao);
+      $("rf-estabelecimento").classList.toggle("com-erro", !!erros.estabelecimento);
+      $("rf-categoria").classList.toggle("com-erro", !!erros.categoria);
+
+      // Salvando: campos e botão travados (a tela da logo cobre tudo; isto vale por baixo dela).
+      ["rf-dia", "rf-valor", "rf-descricao", "rf-estabelecimento", "rf-categoria", "rf-apagar"].forEach((id) => { $(id).disabled = f.salvando; });
+      $("rf-salvar").disabled = !podeSalvarRecorrente(f);
+      $("rf-salvar").textContent = f.salvando ? "Salvando..." : (novo ? "Salvar" : "Salvar Alterações");
+      const dica = f.salvando ? "" : dicaDoSalvar(f);
+      $("rf-dica").textContent = dica;
+      $("rf-dica").hidden = !dica;
+      $("rf-apagar").hidden = novo;
+      $("rf-erro").textContent = f.erroGeral || "";
+      $("rf-erro").hidden = !f.erroGeral;
+    }
+
+    // --- Folha do dia ---
+    function desenharFolhaDia() {
+      const dia = textoDiaEscolhido(diaRascunho);
+      $("folha-dia-texto").replaceChildren(document.createTextNode(dia.antes));
+      if (dia.negrito) $("folha-dia-texto").append(criar("strong", "", dia.negrito));
+      document.querySelectorAll("#folha-dia-grade .dia").forEach((b) => {
+        b.setAttribute("aria-checked", String(parseInt(b.dataset.dia, 10) === diaRascunho));
+      });
+      $("folha-dia-confirmar").textContent = textoConfirmarDia(diaRascunho);
+      $("folha-dia-confirmar").disabled = !Number.isInteger(diaRascunho);
+    }
+
+    function abrirFolhaDia() {
+      if (formRec.salvando) return;
+      diaRascunho = formRec.dia;
+      desenharFolhaDia();
+      $("folha-dia").hidden = false;
+    }
+
+    function confirmarDia() {
+      if (!Number.isInteger(diaRascunho)) return;
+      formRec.dia = diaRascunho;
+      limparErroServidor("dia");
+      $("folha-dia").hidden = true;
+      desenharForm();
+    }
+
+    // --- Folha da categoria ---
+    function criarLinhaCategoria(nome, indice) {
+      const bolinha = criar("span", "categoria-bolinha");
+      bolinha.append(criarSvgPath("", "0 0 20 20", "M5 10.5l3.2 3.2L15 7"));
+      const linha = criar("button", "categoria-linha");
+      linha.type = "button";
+      linha.setAttribute("role", "radio");
+      linha.setAttribute("aria-checked", String(nome === formRec.categoria));
+      linha.dataset.indice = String(indice);
+      linha.append(criar("span", "", nome), bolinha);
+      return linha;
+    }
+
+    function desenharFolhaCategoria() {
+      const c = categoriasRec;
+      const mostrarLista = c.estado === "ok" && c.lista.length > 0;
+      $("folha-categoria-lista").hidden = !mostrarLista;
+      $("folha-categoria-estado").hidden = mostrarLista;
+      $("folha-categoria-tentar").hidden = c.estado !== "erro";
+      if (mostrarLista) {
+        $("folha-categoria-lista").replaceChildren(...c.lista.map(criarLinhaCategoria));
+      } else {
+        $("folha-categoria-estado-texto").textContent =
+          c.estado === "erro" ? c.mensagem : (c.estado === "ok" ? MSG_SEM_CATEGORIAS : "Carregando...");
+      }
+    }
+
+    function abrirFolhaCategoria() {
+      if (formRec.salvando) return;
+      desenharFolhaCategoria();
+      $("folha-categoria").hidden = false;
+      if (categoriasRec.estado === "erro" || categoriasRec.estado === "idle") carregarCategoriasRec();
+    }
+
+    function escolherCategoria(indice) {
+      const nome = categoriasRec.lista[indice];
+      if (typeof nome !== "string") return;
+      formRec.categoria = nome;
+      limparErroServidor("categoria", "descricao"); // trocar a categoria pode desfazer o "nome repetido"
+      $("folha-categoria").hidden = true;
+      desenharForm();
+    }
+
+    // --- Salvar (criar e editar): tela da logo por no mínimo TEMPO_MINIMO_LOGO_MS, contado do toque ---
+    // O primeiro toque trava campos e botão. O POST (ou PUT) sai na hora, com as novas tentativas de sempre
+    // (3 tentativas, só em 503 e rede, o MESMO corpo e a MESMA chave); no sucesso, a lista nova é buscada já
+    // dentro da espera, para a logo sair direto na lista pronta. O erro tira a logo na hora.
+    async function salvarRecorrente() {
+      const f = formRec;
+      if (!podeSalvarRecorrente(f)) return;
+      f.salvando = true;
+      f.erroGeral = null;
+      f.erroServidor = null;
+      desenharForm();
+      const novo = f.modo === "novo";
+      const operacao = novo ? "criar" : "editar";
+      const logo = textosTelaLogoRecorrente(operacao, f.dia);
+      mostrarTelaLogo(logo.cabecalho, logo.titulo, logo.texto);
+      const corpo = montarCorpoRecorrente(f, novo ? f.chave : undefined);
+      const rota = novo ? "/recorrentes" : "/recorrentes/" + encodeURIComponent(f.id);
+      const metodo = novo ? "POST" : "PUT";
+      const resultado = await comTempoMinimo(
+        (async () => {
+          const r = await gravarComTentativas((c) => enviarComMetodo(metodo, rota, c, 15000), corpo, esperar);
+          if (decisaoDaGravacaoRecorrente(operacao, r).acao !== "sucesso") return { r: r };
+          return { r: r, lista: await chamar("/recorrentes") };
+        })(),
+        TEMPO_MINIMO_LOGO_MS, (x) => decisaoDaGravacaoRecorrente(operacao, x.r).acao === "sucesso", () => performance.now(), esperar
+      );
+      f.salvando = false;
+      const decisao = decisaoDaGravacaoRecorrente(operacao, resultado.r);
+      if (decisao.acao === "sucesso") {
+        versaoLista++;
+        aplicarResultadoLista(resultado.lista);
+        mostrarTelaRecorrentes("recorrentes-lista");
+        esconderTelaLogo(); // na mesma tarefa da lista e do aviso: a logo some sem um desenho no meio
+        mostrarAvisoTopo(avisoDeRecorrente(operacao, resultado.r.dados));
+        return;
+      }
+      esconderTelaLogo();
+      if (decisao.voltarLista) {
+        mostrarAlertaNativo(decisao.mensagem);
+        abrirLista();
+        return;
+      }
+      if (decisao.campo) {
+        f.erroServidor = { campo: decisao.campo, mensagem: decisao.mensagem };
+        if (decisao.recarregarCategorias) {
+          f.categoria = null;
+          carregarCategoriasRec();
+        }
+      } else {
+        f.erroGeral = decisao.mensagem;
+      }
+      desenharForm();
+    }
+
+    // --- Apagar: folha de confirmação, SEM tela da logo ("Apagando..." no botão) ---
+    function abrirFolhaApagar() {
+      const r = formRec.original;
+      if (formRec.modo !== "editar" || !r || formRec.salvando) return;
+      const texto = textoConfirmarApagar(r);
+      $("folha-apagar-texto").replaceChildren(criar("strong", "", texto.negrito), document.createTextNode(texto.depois));
+      $("folha-apagar-erro").hidden = true;
+      $("folha-apagar-confirmar").disabled = false;
+      $("folha-apagar-confirmar").textContent = "Sim, Apagar";
+      $("folha-apagar-cancelar").disabled = false;
+      $("folha-apagar").hidden = false;
+    }
+
+    // DELETE pelo mesmo gravarComTentativas. 200 e 404 (já apagado, inclusive depois de uma nova tentativa) são sucesso.
+    async function apagarRecorrente() {
+      if (apagarRec.apagando) return;
+      apagarRec.apagando = true;
+      $("folha-apagar-confirmar").disabled = true;
+      $("folha-apagar-confirmar").textContent = "Apagando...";
+      $("folha-apagar-cancelar").disabled = true;
+      $("folha-apagar-erro").hidden = true;
+      const rota = "/recorrentes/" + encodeURIComponent(formRec.id);
+      const resultado = await gravarComTentativas(() => enviarComMetodo("DELETE", rota, undefined, 15000), null, esperar);
+      const decisao = decisaoDaGravacaoRecorrente("apagar", resultado);
+      if (decisao.acao === "sucesso") {
+        const lista = await chamar("/recorrentes");
+        apagarRec.apagando = false;
+        versaoLista++;
+        aplicarResultadoLista(lista);
+        $("folha-apagar").hidden = true;
+        mostrarTelaRecorrentes("recorrentes-lista");
+        mostrarAvisoTopo(avisoDeRecorrente("apagar", resultado.dados));
+        return;
+      }
+      apagarRec.apagando = false;
+      $("folha-apagar-erro").textContent = decisao.mensagem;
+      $("folha-apagar-erro").hidden = false;
+      $("folha-apagar-confirmar").disabled = false;
+      $("folha-apagar-confirmar").textContent = "Sim, Apagar";
+      $("folha-apagar-cancelar").disabled = false;
+    }
+
+    function iniciarRecorrentes() {
+      // Grade de 1 a 31 da folha do dia (as mesmas classes do passo 2 do cadastro)
+      const grade = $("folha-dia-grade");
+      for (let d = 1; d <= 31; d++) {
+        const dia = criar("button", "dia", String(d));
+        dia.type = "button";
+        dia.setAttribute("role", "radio");
+        dia.setAttribute("aria-checked", "false");
+        dia.dataset.dia = String(d);
+        grade.append(dia);
+      }
+      grade.addEventListener("click", (evento) => {
+        const dia = evento.target.closest(".dia");
+        if (!dia) return;
+        diaRascunho = parseInt(dia.dataset.dia, 10);
+        desenharFolhaDia();
+      });
+
+      $("atalho-recorrentes").addEventListener("click", abrirRecorrentes);
+      ["guia-voltar", "escolha-rec-voltar", "lista-rec-voltar", "rf-voltar"].forEach((id) => $(id).addEventListener("click", voltarUmNivel));
+      $("guia-comecar").addEventListener("click", () => { marcarGuiaVisto(); abrirEscolha("home"); });
+      $("escolha-rec-gasto").addEventListener("click", abrirFormNovo);
+      $("escolha-rec-receita").addEventListener("click", avisarEmBreve);
+      $("rec-adicionar").addEventListener("click", () => abrirEscolha("lista"));
+      $("rec-erro-tentar").addEventListener("click", () => carregarRecorrentes());
+      $("rec-itens").addEventListener("click", (evento) => {
+        const linha = evento.target.closest(".rec-linha");
+        if (!linha) return;
+        const r = listaRecorrentes.itens.find((item) => String(item.id) === linha.dataset.id);
+        if (r) abrirFormEditar(r);
+      });
+
+      // Campos do formulário. A máscara de centavos refaz o texto a cada dígito, com o cursor sempre no fim.
+      $("rf-dia").addEventListener("click", abrirFolhaDia);
+      $("rf-categoria").addEventListener("click", abrirFolhaCategoria);
+      $("rf-valor").addEventListener("input", () => {
+        formRec.valorDigitos = digitosDoValor($("rf-valor").value);
+        const texto = textoDoValor(formRec.valorDigitos);
+        $("rf-valor").value = texto;
+        try { $("rf-valor").setSelectionRange(texto.length, texto.length); } catch (e) { /* campo sem seleção */ }
+        limparErroServidor("valor");
+        desenharForm();
+      });
+      $("rf-valor").addEventListener("blur", () => { formRec.valorTocado = true; desenharForm(); });
+      $("rf-descricao").addEventListener("input", () => {
+        formRec.descricao = $("rf-descricao").value;
+        limparErroServidor("descricao");
+        desenharForm();
+      });
+      $("rf-descricao").addEventListener("blur", () => { formRec.descricaoTocada = true; desenharForm(); });
+      $("rf-estabelecimento").addEventListener("input", () => {
+        formRec.estabelecimento = $("rf-estabelecimento").value;
+        limparErroServidor("estabelecimento");
+        desenharForm();
+      });
+      $("rf-salvar").addEventListener("click", salvarRecorrente);
+      $("rf-apagar").addEventListener("click", abrirFolhaApagar);
+
+      // Folhas
+      document.querySelectorAll("[data-fechar]").forEach((fundo) => fundo.addEventListener("click", fecharFolhaAtual));
+      $("folha-dia-confirmar").addEventListener("click", confirmarDia);
+      $("folha-categoria-lista").addEventListener("click", (evento) => {
+        const linha = evento.target.closest(".categoria-linha");
+        if (linha) escolherCategoria(parseInt(linha.dataset.indice, 10));
+      });
+      $("folha-categoria-tentar").addEventListener("click", () => carregarCategoriasRec());
+      $("folha-apagar-confirmar").addEventListener("click", apagarRecorrente);
+      $("folha-apagar-cancelar").addEventListener("click", fecharFolhaAtual);
+    }
+
     function iniciar() {
       if (tg) {
         try { tg.ready(); } catch (e) { /* versão antiga */ }
@@ -3208,10 +4526,11 @@
       }
 
       $("botao-menu").addEventListener("click", avisarEmBreve);
-      // Só o "Registrar" abre o fluxo (PRO-89); "Categorias" e "Recorrentes" seguem com o "Em breve".
-      document.querySelectorAll(".atalho:not(#atalho-registrar)").forEach((b) => b.addEventListener("click", avisarEmBreve));
+      // "Registrar" (PRO-89) e "Recorrentes" (PRO-101) abrem as suas telas; só "Categorias" segue com o "Em breve".
+      document.querySelectorAll(".atalho:not(#atalho-registrar):not(#atalho-recorrentes)").forEach((b) => b.addEventListener("click", avisarEmBreve));
       iniciarRegistro();
       iniciarBoasVindas();
+      iniciarRecorrentes();
       $("aviso-botao").addEventListener("click", () => carregar()); // sem o evento no lugar do 'abertura'
 
       // Detalhe do gasto: toque na linha, voltar (cabeçalho, erro ou BackButton do Telegram) e ações "Em breve".
