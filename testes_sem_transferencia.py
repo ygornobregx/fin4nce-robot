@@ -1,8 +1,10 @@
 """Testes da remoção da transferência entre categorias (PRO-84).
 
 Roda com `python testes_sem_transferencia.py`. Não usa .env, banco nem rede:
-o bot.py e a home do Mini App são lidos como texto (e o bot.py com `ast`),
-sem importar o bot, para não abrir conexão com o Turso nem criar o cliente da IA.
+o bot.py, o categorias.py e a home do Mini App são lidos como texto (e os
+.py com `ast`), sem importar o bot, para não abrir conexão com o Turso nem
+criar o cliente da IA. Desde a PRO-104, a _REFERENCIAS_NOME_CATEGORIA fica no
+categorias.py (saiu do bot.py junto com o renomear_categoria).
 """
 import ast
 import os
@@ -18,6 +20,7 @@ def ler(*partes):
 
 FONTE_BOT = ler('bot.py')
 ARVORE_BOT = ast.parse(FONTE_BOT)
+ARVORE_CATEGORIAS = ast.parse(ler('categorias.py'))
 HOME = ler('mini-apps', 'home', 'index.html')
 
 
@@ -79,8 +82,15 @@ class TestBotSemTransferencia(unittest.TestCase):
 
 class TestDadosAntigosFicam(unittest.TestCase):
     def test_renomear_categoria_continua_atualizando_transferencias(self):
-        referencias = valor_da_atribuicao(ARVORE_BOT, '_REFERENCIAS_NOME_CATEGORIA')
-        self.assertIsNotNone(referencias, "_REFERENCIAS_NOME_CATEGORIA não encontrada no bot.py")
+        referencias = valor_da_atribuicao(ARVORE_CATEGORIAS, '_REFERENCIAS_NOME_CATEGORIA')
+        self.assertIsNotNone(referencias, "_REFERENCIAS_NOME_CATEGORIA não encontrada no categorias.py")
+        self.assertEqual(referencias, (
+            ('transacoes', 'categoria_nome'),
+            ('parcelamentos', 'categoria_nome'),
+            ('gastos_recorrentes', 'categoria_nome'),
+            ('transferencias', 'categoria_origem'),
+            ('transferencias', 'categoria_destino'),
+        ))
         self.assertIn(('transferencias', 'categoria_origem'), referencias)
         self.assertIn(('transferencias', 'categoria_destino'), referencias)
 

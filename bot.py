@@ -31,6 +31,7 @@ from cadastro import (
 # (PRO-86): ficam no registro.py, que a API também usa. O bot cuida das
 # mensagens e dos estados.
 from registro import (
+    ErroRegistro,
     alterar_valor_lancamento,
     buscar_lancamento,
     debitar_categoria,
@@ -51,6 +52,20 @@ from registro import (
 # Lançamento da receita recorrente no dia (PRO-102): a regra fica no
 # recorrentes.py (o mesmo módulo das rotas da API); o job só chama e avisa.
 from recorrentes import lancar_receita_recorrente
+# Regras da categoria (PRO-104): criar (nome, repetido e limite), renomear
+# com a propagação do nome e excluir (com o user_id, sem a categoria que tem
+# gasto recorrente nem a última) ficam no categorias.py, o mesmo módulo das
+# rotas /categorias da API. Os erros chegam como ErroRegistro com um código.
+from categorias import (
+    _REFERENCIAS_NOME_CATEGORIA,
+    LIMITE_CATEGORIAS,
+    NOME_MAXIMO as NOME_MAXIMO_CATEGORIA,
+    buscar_nome_repetido,
+    criar_categoria,
+    excluir_categoria,
+    renomear_categoria,
+    validar_nome as validar_nome_categoria,
+)
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.error import BadRequest, NetworkError
 from telegram.ext import (
@@ -1354,21 +1369,44 @@ async def iniciar_adicionar_categoria(update: Update, context: ContextTypes.DEFA
     return AGUARDANDO_NOME_CAT
 
 async def receber_nome_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # A categoria não tem limite (PRO-83): é gravada logo depois do nome.
-    # orcamento_mensal e saldo_atual (sem uso) recebem 0, nunca nulo.
-    nome_cat = update.message.text.strip().capitalize()
+    # A categoria não tem orçamento (PRO-83): é gravada logo depois do nome.
+    # As regras (strip().capitalize(), 1 a 30 caracteres, nome repetido sem
+    # caixa nem acento e o limite de 20) são as do categorias.py (PRO-104), as
+    # mesmas da API. orcamento_mensal e saldo_atual (sem uso) recebem 0.
+    texto = update.message.text
+    user_id = update.effective_user.id
     try:
         await update.message.delete()
     except Exception:
         pass
 
     conn = obter_conexao_db()
-    data_criacao = datetime.now(FUSO_BRASILIA).strftime('%Y-%m-%d %H:%M:%S')
-    conn.execute('INSERT INTO categorias (user_id, nome, orcamento_mensal, saldo_atual, data_criacao) VALUES (?, ?, ?, ?, ?)', (update.effective_user.id, nome_cat, 0.0, 0.0, data_criacao))
-    conn.commit()
-    conn.close()
+    try:
+        data_criacao = datetime.now(FUSO_BRASILIA).strftime('%Y-%m-%d %H:%M:%S')
+        criar_categoria(conn, user_id, texto, data_criacao)
+    except ErroRegistro as erro:
+        if erro.codigo == 'limite_categorias':
+            # Sem como criar: a mensagem some sozinha e o menu volta.
+            await mostrar_resumo_temporario(
+                context, user_id,
+                f"Você já tem {LIMITE_CATEGORIAS} categorias. Exclua uma para criar outra."
+            )
+            return ConversationHandler.END
+        if erro.codigo == 'nome_repetido':
+            nome_digitado = validar_nome_categoria(texto)
+            existente = buscar_nome_repetido(conn, user_id, nome_digitado) or nome_digitado
+            aviso = f"Já existe a categoria <b>{escape(existente)}</b>. Envie outro nome:"
+        elif erro.codigo == 'nome_invalido':
+            aviso = f"O nome precisa ter de 1 a {NOME_MAXIMO_CATEGORIA} caracteres. Envie outro nome:"
+        else:  # banco_ocupado
+            print(f"Erro ao criar a categoria do usuário {user_id}: {erro.codigo}")
+            aviso = "Não foi possível criar a categoria. Nada foi gravado.\n\nEnvie o nome novamente:"
+        await enviar_fluxo(context, user_id, aviso, reply_markup=TECLADO_VOLTAR)
+        return AGUARDANDO_NOME_CAT
+    finally:
+        conn.close()
 
-    await mostrar_resumo_temporario(context, update.effective_user.id, "Categoria criada com sucesso!")
+    await mostrar_resumo_temporario(context, user_id, "Categoria criada com sucesso!")
     return ConversationHandler.END
 
 # --- EDITAR CATEGORIAS E DADOS DA CONTA ---
@@ -1574,32 +1612,8 @@ async def ajustar_fatura_parcelamento(update: Update, context: ContextTypes.DEFA
     texto, teclado = _montar_tela_meses_parcelas(user_id, cat[0])
     await atualizar_callback(query, context, texto, reply_markup=teclado)
 
-# Toda coluna que guarda o nome de uma categoria (o vínculo é por nome, não por
-# id). Ao criar uma nova referência por nome em outra tabela, inclua-a aqui, ou
-# o rename deixará esses registros órfãos.
-_REFERENCIAS_NOME_CATEGORIA = (
-    ('transacoes', 'categoria_nome'),
-    ('parcelamentos', 'categoria_nome'),
-    ('gastos_recorrentes', 'categoria_nome'),
-    ('transferencias', 'categoria_origem'),
-    ('transferencias', 'categoria_destino'),
-)
-
-def renomear_categoria(conn, user_id, cat_id, nome_antigo, novo_nome):
-    """Renomeia a categoria e propaga o novo nome para todas as tabelas que a
-    referenciam pelo nome, numa única transação: se qualquer UPDATE falhar, o
-    rollback desfaz tudo e o erro é propagado para quem chamou."""
-    try:
-        conn.execute('UPDATE categorias SET nome = ? WHERE id = ? AND user_id = ?', (novo_nome, cat_id, user_id))
-        for tabela, coluna in _REFERENCIAS_NOME_CATEGORIA:
-            conn.execute(
-                f'UPDATE {tabela} SET {coluna} = ? WHERE user_id = ? AND {coluna} = ?',
-                (novo_nome, user_id, nome_antigo)
-            )
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
+# O renomear_categoria e a lista _REFERENCIAS_NOME_CATEGORIA (as 5 colunas que
+# guardam o nome da categoria) ficam no categorias.py desde a PRO-104.
 
 async def iniciar_renomear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1685,15 +1699,40 @@ async def salvar_novo_nome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await mostrar_resumo_temporario(context, user_id, f"Categoria renomeada para <b>{escape(novo_nome)}</b> com sucesso!")
     return ConversationHandler.END
 
+# Mensagens da exclusão recusada (PRO-104): nada é apagado nesses casos.
+MENSAGENS_EXCLUIR_CATEGORIA = {
+    'categoria_com_recorrentes': "Essa categoria tem gastos recorrentes. Mude a categoria deles em Recorrentes antes de excluir.",
+    'ultima_categoria': "Você precisa de pelo menos uma categoria.",
+    'categoria_inexistente': "Categoria não encontrada.",
+}
+
 async def excluir_categoria_botao(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await responder_callback(query)
     cat_id = int(query.data.replace('acao_excluir_', ''))
+    user_id = query.from_user.id
 
+    # Só a categoria de quem clicou (o DELETE vai com o user_id), sem a que
+    # tem gasto recorrente nem a última (categorias.py, PRO-104). Os gastos
+    # dela ficam no histórico e no total da fatura.
     conn = obter_conexao_db()
-    conn.execute('DELETE FROM categorias WHERE id = ?', (cat_id,))
-    conn.commit()
-    conn.close()
+    try:
+        excluir_categoria(conn, user_id, cat_id)
+    except ErroRegistro as erro:
+        if erro.codigo == 'categoria_inexistente':
+            teclado = obter_teclado_menu()
+        else:
+            # '← Voltar' retorna para o detalhe da categoria.
+            teclado = InlineKeyboardMarkup([linha_voltar_com_menu(f"edit_cat_{cat_id}")])
+        if erro.codigo not in MENSAGENS_EXCLUIR_CATEGORIA:  # banco_ocupado
+            print(f"Erro ao excluir a categoria {cat_id} do usuário {user_id}: {erro.codigo}")
+        texto = MENSAGENS_EXCLUIR_CATEGORIA.get(
+            erro.codigo, "Não foi possível excluir a categoria. Nada foi apagado."
+        )
+        await atualizar_callback(query, context, texto, reply_markup=teclado)
+        return
+    finally:
+        conn.close()
 
     await mostrar_resumo_temporario(context, query.message.chat_id, "Categoria excluída com sucesso!")
 

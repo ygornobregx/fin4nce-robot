@@ -24,6 +24,12 @@ POST /receitas-recorrentes (uma vez só por chave), PUT
 /receitas-recorrentes/{id} e DELETE /receitas-recorrentes/{id}. As regras
 também ficam no recorrentes.py; o lançamento no dia é do job do bot.
 
+Rotas das categorias (PRO-104): GET /categorias/ranking (o gasto de cada
+categoria na fatura vigente, com o id), POST /categorias (uma vez só por
+chave), PUT /categorias/{id} (renomeia e propaga o nome) e
+DELETE /categorias/{id}. As regras ficam no categorias.py, o mesmo módulo que
+o bot usa. O GET /categorias (só os nomes, PRO-87) não muda.
+
 Também serve, na mesma origem, a home do Mini App em /app (mini-apps/home, PRO-77)
 e a página de diagnóstico das rotas em /teste (mini-apps/teste-initdata).
 
@@ -47,6 +53,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import cadastro
+import categorias
 import recorrentes
 import registro
 from api.initdata import InitDataError, validate_init_data
@@ -324,7 +331,8 @@ def obter_limite_interpretacao() -> LimiteDeChamadas:
 # Códigos do registro.ErroRegistro que não são 422.
 STATUS_ERRO_REGISTRO = {"resposta_ia_invalida": 502, "ia_indisponivel": 503, "banco_ocupado": 503,
                         "recorrente_nao_encontrado": 404,            # PRO-87
-                        "receita_recorrente_nao_encontrada": 404}    # PRO-102
+                        "receita_recorrente_nao_encontrada": 404,    # PRO-102
+                        "categoria_inexistente": 404}                # PRO-104
 
 
 def erro_registro(erro: registro.ErroRegistro) -> HTTPException:
@@ -339,7 +347,8 @@ def erro_interno(erro: Exception, rotulo: str = "Registro") -> HTTPException:
     Nem a resposta nem o log levam a mensagem (a do banco pode trazer SQL ou
     dados) nem o traceback; o log leva só o código e o nome da classe.
     'rotulo' diz de que rota veio ("Registro", desde a PRO-96 "Cadastro",
-    desde a PRO-87 "Recorrentes" e, desde a PRO-102, "Receitas recorrentes")."""
+    desde a PRO-87 "Recorrentes", desde a PRO-102 "Receitas recorrentes" e,
+    desde a PRO-104, "Categorias")."""
     logger.error("%s falhou: erro_interno (%s)", rotulo, type(erro).__name__)
     return HTTPException(status_code=500, detail="erro_interno")
 
@@ -771,6 +780,117 @@ def apagar_receita_recorrente(receita_recorrente_id: int, usuario: dict = Depend
     except Exception as erro:
         raise erro_interno(erro, "Receitas recorrentes") from None
     return {"id": apagado, "apagado": True}
+
+
+# --- CATEGORIAS (PRO-104) ---
+# Contrato na nota da PRO-104 (base das telas da PRO-105). Os erros do
+# categorias.py são registro.ErroRegistro: 404 categoria_inexistente, 503
+# banco_ocupado e 422 nos demais (STATUS_ERRO_REGISTRO). O id da URL vai
+# sempre junto com o user_id do initData na consulta.
+class PedidoCategoria(BaseModel):
+    """Corpo do PUT. Campo solto (Any): quem confere é o categorias.py, com os
+    códigos do contrato. Campos a mais (user_id, descricao, tipo,
+    temporaria...) são ignorados e nunca gravados (D14)."""
+    nome: Any = None
+
+
+class PedidoNovaCategoria(PedidoCategoria):
+    """Corpo do POST: o do PUT mais a chave de toque duplo (UUID v4)."""
+    chave: Any = None
+
+
+@app.get("/categorias/ranking")
+def ranking_categorias(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db),
+                       agora: datetime = Depends(obter_agora)):
+    """O gasto de cada categoria na fatura vigente (a mesma do /resumo, D4),
+    com o id de cada uma. 'ano_mes' e 'total_gasto' são os do /resumo
+    (calcular_resumo_fatura). Ordem: gasto decrescente, nome sem acento e id.
+    Categoria excluída que ainda tem gasto na fatura: id null e ativa false
+    (D5). 'limite': o máximo de categorias (D11)."""
+    user_id = usuario["id"]
+    try:
+        _, _, dia_fechamento = carregar_cadastro(conn, user_id)
+        ranking = categorias.listar_ranking(conn, user_id, dia_fechamento, agora)
+    except HTTPException:
+        raise
+    except Exception as erro:
+        raise erro_interno(erro, "Categorias") from None
+    return {
+        "ano_mes": ranking.ano_mes,
+        "total_gasto": em_reais(ranking.total_gasto),
+        "categorias": [
+            {"id": item.id, "nome": item.nome, "gasto": em_reais(item.gasto), "ativa": item.ativa}
+            for item in ranking.categorias
+        ],
+        "limite": ranking.limite,
+    }
+
+
+@app.post("/categorias", status_code=201)
+def criar_categoria(pedido: PedidoNovaCategoria, response: Response, usuario: dict = Depends(usuario_autenticado),
+                    conn=Depends(obter_conexao_db), agora: datetime = Depends(obter_agora)):
+    """Cria a categoria. 201 se gravou; 200 com repetido=true se a mesma chave
+    já tinha sido gravada (a categoria como está agora). data_criacao do
+    servidor, em Brasília. Banco ocupado depois das novas tentativas: 503
+    banco_ocupado (a tela reenvia o MESMO corpo, com a MESMA chave). Erro
+    inesperado: 500 erro_interno, sem detalhes."""
+    user_id = usuario["id"]
+    try:
+        carregar_cadastro(conn, user_id)
+        categoria = categorias.criar_categoria_api(
+            conn, user_id, pedido.chave, pedido.nome, registro.momento_agora(agora)
+        )
+    except HTTPException:
+        raise
+    except registro.ErroRegistro as erro:
+        raise erro_registro(erro) from None
+    except Exception as erro:
+        raise erro_interno(erro, "Categorias") from None
+    if categoria.repetido:
+        response.status_code = 200
+    return {"id": categoria.id, "nome": categoria.nome, "repetido": categoria.repetido}
+
+
+@app.put("/categorias/{categoria_id}")
+def renomear_categoria(categoria_id: int, pedido: PedidoCategoria, usuario: dict = Depends(usuario_autenticado),
+                       conn=Depends(obter_conexao_db)):
+    """Renomeia a categoria do usuário e propaga o nome para os gastos,
+    parcelamentos, recorrentes e transferências dele (D7: sempre). 422
+    nome_invalido antes da existência; depois 404 categoria_inexistente
+    (inexistente ou de outro usuário, sem dizer qual); o mesmo nome de agora:
+    200 sem mudar nada; depois 422 nome_repetido. 200 com a categoria como
+    ficou."""
+    user_id = usuario["id"]
+    try:
+        carregar_cadastro(conn, user_id)
+        categoria = categorias.renomear_categoria_api(conn, user_id, categoria_id, pedido.nome)
+    except HTTPException:
+        raise
+    except registro.ErroRegistro as erro:
+        raise erro_registro(erro) from None
+    except Exception as erro:
+        raise erro_interno(erro, "Categorias") from None
+    return {"id": categoria.id, "nome": categoria.nome}
+
+
+@app.delete("/categorias/{categoria_id}")
+def excluir_categoria(categoria_id: int, usuario: dict = Depends(usuario_autenticado),
+                      conn=Depends(obter_conexao_db)):
+    """Exclui só a linha da categoria do usuário (D8: os gastos ficam no
+    histórico e no total). 404 categoria_inexistente se não existe, é de
+    outro usuário ou já foi excluída (a tela trata como "já excluída"); 422
+    categoria_com_recorrentes (D9) e ultima_categoria (D10), sem apagar nada."""
+    user_id = usuario["id"]
+    try:
+        carregar_cadastro(conn, user_id)
+        excluida = categorias.excluir_categoria(conn, user_id, categoria_id)
+    except HTTPException:
+        raise
+    except registro.ErroRegistro as erro:
+        raise erro_registro(erro) from None
+    except Exception as erro:
+        raise erro_interno(erro, "Categorias") from None
+    return {"id": excluida, "excluida": True}
 
 
 class ArquivosSemCache(StaticFiles):
