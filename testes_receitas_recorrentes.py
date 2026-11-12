@@ -208,8 +208,12 @@ class TestTabelaNoIniciarBanco(unittest.TestCase):
         conn.close()
         self.iniciar()
         depois = ler(self.caminho, "SELECT name, sql FROM sqlite_master ORDER BY name")
+        # Desde a PRO-106 o iniciar_banco também cria as tabelas assinaturas e
+        # uso_ia (e os índices delas), conferidas no testes_assinaturas.py.
+        da_pro106 = ('assinaturas', 'uso_ia', 'sqlite_autoindex_uso_ia_1', 'ux_assinaturas_pagamento',
+                     'ux_assinaturas_teste', 'ix_assinaturas_usuario')
         self.assertEqual([linha for linha in depois if linha[0] != 'receitas_recorrentes'
-                          and linha[0] != 'sqlite_sequence'],
+                          and linha[0] != 'sqlite_sequence' and linha[0] not in da_pro106],
                          [linha for linha in antes_esquema if linha[0] != 'sqlite_sequence'])
         self.assertIn('receitas_recorrentes', [linha[0] for linha in depois])
         self.assertEqual(ler(self.caminho, "SELECT * FROM receitas"), antes_dados)

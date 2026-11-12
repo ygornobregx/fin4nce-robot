@@ -494,6 +494,34 @@ class TestTextosEMensagens(unittest.TestCase):
             'Não consegui registrar isso. Volte e escreva de novo.',
         ])
 
+    def test_limite_diario_ia_vem_antes_do_429_por_minuto(self):
+        # PRO-106 (D5): o 429 limite_diario_ia tem mensagem própria, conferida antes da do 429 por minuto
+        # (mesmo com Retry-After). O número vem do 4º argumento (limite_ia_dia do GET /assinatura, PRO-108);
+        # sem ele, ou inválido, 17. Na gravação, o código não existe e nada muda.
+        entradas = [
+            [{'erro': 429, 'detalhe': 'limite_diario_ia', 'retryAfter': 3600}, 'interpretar', 'gasto', None],
+            [{'erro': 429, 'detalhe': 'limite_diario_ia'}, 'interpretar', 'receita', None],
+            [{'erro': 429, 'detalhe': 'limite_diario_ia', 'retryAfter': 30}, 'interpretar', 'gasto', 25],
+            [{'erro': 429, 'detalhe': 'limite_diario_ia'}, 'interpretar', 'gasto', 0],
+            [{'erro': 429, 'detalhe': 'limite_diario_ia'}, 'interpretar', 'gasto', '20'],
+            [{'erro': 429, 'detalhe': 'limite_diario_ia'}, 'interpretar', 'gasto', 2.5],
+            [{'erro': 429, 'detalhe': 'limite_excedido', 'retryAfter': 23}, 'interpretar', 'gasto', 25],
+            [{'erro': 429, 'detalhe': 'limite_diario_ia'}, 'gravar', 'gasto', None],
+        ]
+        obtido = rodar_node(com_funcoes_puras(
+            "console.log(JSON.stringify(ENTRADA.map(([r, m, t, l]) => mensagemErroRegistro(r, m, t, l === null ? undefined : l))));"
+        ), entradas)
+        dezessete = 'Você usou os 17 registros com IA de hoje. Amanhã o limite volta a zero.'
+        self.assertEqual(obtido, [
+            dezessete, dezessete,
+            'Você usou os 25 registros com IA de hoje. Amanhã o limite volta a zero.',
+            dezessete, dezessete, dezessete,
+            'Muitas tentativas seguidas. Espere 23 segundos.',
+            'Não consegui registrar agora. Toque em Confirmar para tentar de novo.',
+        ])
+        funcao = corpo_da_funcao(codigo_puro(HOME), 'function mensagemErroRegistro')
+        self.assertLess(funcao.index('"limite_diario_ia"'), funcao.index('Muitas tentativas seguidas'))
+
     def test_mensagem_nunca_traz_texto_cru_do_servidor(self):
         # Mesmo que o servidor mande um texto qualquer no 'detalhe', ele não vai para a tela.
         obtido = rodar_node(com_funcoes_puras(

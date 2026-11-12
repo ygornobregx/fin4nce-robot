@@ -30,6 +30,15 @@ chave), PUT /categorias/{id} (renomeia e propaga o nome) e
 DELETE /categorias/{id}. As regras ficam no categorias.py, o mesmo módulo que
 o bot usa. O GET /categorias (só os nomes, PRO-87) não muda.
 
+Assinatura (PRO-106): GET /assinatura (situação, teste, preço, uso de IA do
+dia e os campos do selo), POST /assinaturas/teste (teste grátis de 10 dias),
+o bloco "assinatura" no GET /me (só com ASSINATURAS_LIGADAS), a dependência
+acesso_liberado (403 assinatura_vencida ou assinatura_ausente nas rotas de
+escrita e de IA, só com a chave ligada; as leituras usam a leitura_liberada e
+nunca checam plano: modo somente leitura) e o limite diário de registros com IA no
+/registro/interpretar (429 limite_diario_ia, sempre ligado). As regras ficam
+no assinaturas.py, o mesmo módulo que o bot usa.
+
 Também serve, na mesma origem, a home do Mini App em /app (mini-apps/home, PRO-77)
 e a página de diagnóstico das rotas em /teste (mini-apps/teste-initdata).
 
@@ -52,6 +61,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import assinaturas
 import cadastro
 import categorias
 import recorrentes
@@ -69,6 +79,31 @@ from calculos import (
 )
 
 logger = logging.getLogger("api")
+
+FORMATO_LOG = "%(asctime)s %(name)s %(levelname)s %(message)s"
+
+
+def configurar_logs_do_dominio(nomes=("registro", "assinaturas")) -> None:
+    """Log dos módulos de regra no terminal (PRO-106): um StreamHandler só nos
+    loggers 'registro' (tokens de cada chamada à IA, INFO) e 'assinaturas',
+    nível INFO e propagate=False (não duplica no root). O 'api' fica como
+    estava (os WARNING dele já aparecem; os testes os calam). Não mexe no
+    root: o httpx loga cada requisição em INFO. Idempotente: o handler leva
+    uma marca e não é posto duas vezes (o módulo pode ser importado de novo
+    nos testes)."""
+    for nome in nomes:
+        alvo = logging.getLogger(nome)
+        if any(getattr(h, "_log_do_dominio", False) for h in alvo.handlers):
+            continue
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter(FORMATO_LOG))
+        handler._log_do_dominio = True
+        alvo.addHandler(handler)
+        alvo.setLevel(logging.INFO)
+        alvo.propagate = False
+
+
+configurar_logs_do_dominio()
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -133,6 +168,43 @@ def usuario_autenticado(authorization: str | None = Header(default=None),
         raise HTTPException(status_code=401, detail="nao_autorizado")
 
 
+def leitura_liberada(usuario: dict = Depends(usuario_autenticado)) -> dict:
+    """Rotas de LEITURA (todo GET com dados do usuário): só a autenticação.
+    Leitura nunca checa plano (PRO-106, modo somente leitura): quem venceu, e
+    quem nunca escolheu um plano, continua vendo os próprios dados; só não
+    grava nem usa a IA (acesso_liberado). Dependência explícita para a regra
+    ficar visível em cada rota."""
+    return usuario
+
+
+def acesso_liberado(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db),
+                    agora: datetime = Depends(obter_agora)) -> dict:
+    """Checagem de plano (PRO-106), depois da usuario_autenticado, só nas
+    rotas de ESCRITA e de IA (todo POST, PUT e DELETE com dados, e o
+    /registro/interpretar). As leituras usam a leitura_liberada (nunca checam
+    plano); ficam fora de qualquer checagem /saude, /me, /assinatura,
+    /assinaturas/teste e /cadastro. Com ASSINATURAS_LIGADAS desligada (o
+    padrão), não consulta nada e deixa passar, como antes. Ligada: o admin
+    (ADMIN_IDS) sempre passa; quem tem teste ou Pro valendo passa; o resto
+    recebe 403 assinatura_vencida (teve teste ou Pro e venceu) ou 403
+    assinatura_ausente (nunca escolheu), ANTES de qualquer consulta de dados e
+    antes da IA. Devolve o mesmo 'usuario' da autenticação."""
+    if not assinaturas.assinaturas_ligadas():
+        return usuario
+    user_id = usuario["id"]
+    if assinaturas.e_admin(user_id):
+        return usuario
+    try:
+        situacao = assinaturas.situacao_acesso(conn, user_id, agora, admin=False)
+    except Exception as erro:
+        raise erro_interno(erro, "Assinaturas") from None
+    if situacao.tem_acesso:
+        return usuario
+    codigo = "assinatura_ausente" if situacao.estado == "sem_plano" else "assinatura_vencida"
+    logger.warning("Acesso recusado: %s", codigo)
+    raise HTTPException(status_code=403, detail=codigo)
+
+
 app = FastAPI(title="Finance API")
 
 
@@ -142,12 +214,61 @@ def saude():
 
 
 @app.get("/me")
-def me(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db)):
+def me(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db),
+       agora: datetime = Depends(obter_agora)):
+    """Com ASSINATURAS_LIGADAS desligada, exatamente como antes da PRO-106
+    ({"user_id", "nome"}). Ligada, traz também o bloco "assinatura" (o mesmo
+    JSON do GET /assinatura, para a home não fazer chamada nova); se montar o
+    bloco falhar, "assinatura": null e só o código do erro no log: o /me nunca
+    falha por causa do bloco."""
     user_id = usuario["id"]
     linha = conn.execute("SELECT nome FROM usuarios WHERE user_id = ?", (user_id,)).fetchone()
     if linha is None:
         raise HTTPException(status_code=404, detail="usuario_nao_cadastrado")
-    return {"user_id": user_id, "nome": linha[0]}
+    resposta = {"user_id": user_id, "nome": linha[0]}
+    if assinaturas.assinaturas_ligadas():
+        try:
+            resposta["assinatura"] = assinaturas.montar_bloco_assinatura(conn, user_id, agora, ligada=True)
+        except Exception as erro:
+            logger.error("Bloco da assinatura falhou: erro_interno (%s)", type(erro).__name__)
+            resposta["assinatura"] = None
+    return resposta
+
+
+# --- ASSINATURA (PRO-106) ---
+# Contrato na nota da PRO-106 (base das telas da PRO-108). Nenhuma das duas
+# rotas exige cadastro em 'usuarios' (o teste começa antes do POST /cadastro).
+# A palavra "admin" nunca aparece na resposta: o admin vem como Pro.
+@app.get("/assinatura")
+def assinatura(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db),
+               agora: datetime = Depends(obter_agora)):
+    """Situação da assinatura da pessoa (estado, datas, teste, preço, uso de IA
+    do dia e os campos do selo e da folha Minha Assinatura), calculada no
+    servidor, em Brasília."""
+    try:
+        return assinaturas.montar_bloco_assinatura(conn, usuario["id"], agora)
+    except Exception as erro:
+        raise erro_interno(erro, "Assinaturas") from None
+
+
+@app.post("/assinaturas/teste", status_code=201)
+def comecar_teste(response: Response, usuario: dict = Depends(usuario_autenticado),
+                  conn=Depends(obter_conexao_db), agora: datetime = Depends(obter_agora)):
+    """Começa o teste grátis de 10 dias agora (o início é o toque). Sem corpo:
+    o que vier é ignorado (nenhum campo dá plano). 201 com {"inicio", "fim",
+    "repetido": false}; 200 com "repetido": true se já existe um teste ativo
+    (toque duplo); 409 teste_ja_usado (venceu) ou plano_ativo (Pro ativo ou
+    admin); 503 banco_ocupado; 500 erro_interno."""
+    try:
+        teste = assinaturas.iniciar_teste(conn, usuario["id"], agora)
+    except registro.ErroRegistro as erro:
+        raise erro_registro(erro) from None
+    except Exception as erro:
+        raise erro_interno(erro, "Assinaturas") from None
+    if teste.repetido:
+        response.status_code = 200
+    return {"inicio": assinaturas.data_texto(teste.inicio), "fim": assinaturas.data_texto(teste.fim),
+            "repetido": teste.repetido}
 
 
 def em_reais(valor: float) -> float:
@@ -170,7 +291,7 @@ def carregar_cadastro(conn, user_id: int) -> tuple:
 
 
 @app.get("/resumo")
-def resumo(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db),
+def resumo(usuario: dict = Depends(leitura_liberada), conn=Depends(obter_conexao_db),
            agora: datetime = Depends(obter_agora)):
     user_id = usuario["id"]
     _, _, dia_fechamento = carregar_cadastro(conn, user_id)
@@ -195,7 +316,7 @@ def resumo(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_cone
 
 
 @app.get("/historico")
-def historico(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db),
+def historico(usuario: dict = Depends(leitura_liberada), conn=Depends(obter_conexao_db),
               agora: datetime = Depends(obter_agora)):
     user_id = usuario["id"]
     _, _, dia_fechamento = carregar_cadastro(conn, user_id)
@@ -210,7 +331,7 @@ def historico(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_c
 
 
 @app.get("/gastos/recentes")
-def gastos_recentes(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db)):
+def gastos_recentes(usuario: dict = Depends(leitura_liberada), conn=Depends(obter_conexao_db)):
     user_id = usuario["id"]
     carregar_cadastro(conn, user_id)
     gastos = buscar_gastos_recentes(conn, user_id, LIMITE_GASTOS_RECENTES)
@@ -233,7 +354,7 @@ def gastos_recentes(usuario: dict = Depends(usuario_autenticado), conn=Depends(o
 
 
 @app.get("/movimentacoes/recentes")
-def movimentacoes_recentes(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db)):
+def movimentacoes_recentes(usuario: dict = Depends(leitura_liberada), conn=Depends(obter_conexao_db)):
     """Gastos e receitas numa lista só, para a home (PRO-92). Os dois tipos
     têm os mesmos campos; o front decide pela 'tipo' ("gasto" ou "receita").
     O valor vai sempre positivo: o sinal e a cor são da tela. Na receita,
@@ -263,7 +384,7 @@ def movimentacoes_recentes(usuario: dict = Depends(usuario_autenticado), conn=De
 
 
 @app.get("/gastos/{id_gasto}")
-def detalhe_gasto(id_gasto: int, usuario: dict = Depends(usuario_autenticado),
+def detalhe_gasto(id_gasto: int, usuario: dict = Depends(leitura_liberada),
                   conn=Depends(obter_conexao_db), agora: datetime = Depends(obter_agora)):
     user_id = usuario["id"]
     _, _, dia_fechamento = carregar_cadastro(conn, user_id)
@@ -332,7 +453,8 @@ def obter_limite_interpretacao() -> LimiteDeChamadas:
 STATUS_ERRO_REGISTRO = {"resposta_ia_invalida": 502, "ia_indisponivel": 503, "banco_ocupado": 503,
                         "recorrente_nao_encontrado": 404,            # PRO-87
                         "receita_recorrente_nao_encontrada": 404,    # PRO-102
-                        "categoria_inexistente": 404}                # PRO-104
+                        "categoria_inexistente": 404,                # PRO-104
+                        "teste_ja_usado": 409, "plano_ativo": 409}   # PRO-106
 
 
 def erro_registro(erro: registro.ErroRegistro) -> HTTPException:
@@ -351,6 +473,15 @@ def erro_interno(erro: Exception, rotulo: str = "Registro") -> HTTPException:
     desde a PRO-104, "Categorias")."""
     logger.error("%s falhou: erro_interno (%s)", rotulo, type(erro).__name__)
     return HTTPException(status_code=500, detail="erro_interno")
+
+
+def devolver_vaga_ia(conn, user_id: int, dia: str) -> None:
+    """Devolve a vaga do dia (a IA não respondeu). Nunca derruba a resposta:
+    se a devolução falhar, fica só o código no log."""
+    try:
+        assinaturas.devolver_uso_ia(conn, user_id, dia)
+    except Exception as erro:
+        logger.error("Devolucao da vaga de IA falhou: erro_interno (%s)", type(erro).__name__)
 
 
 class PedidoInterpretar(BaseModel):
@@ -377,13 +508,25 @@ class PedidoReceita(BaseModel):
 
 
 @app.post("/registro/interpretar")
-async def registro_interpretar(pedido: PedidoInterpretar, usuario: dict = Depends(usuario_autenticado),
+async def registro_interpretar(pedido: PedidoInterpretar, usuario: dict = Depends(acesso_liberado),
                                conn=Depends(obter_conexao_db),
-                               limite: LimiteDeChamadas = Depends(obter_limite_interpretacao)):
+                               limite: LimiteDeChamadas = Depends(obter_limite_interpretacao),
+                               agora: datetime = Depends(obter_agora)):
     """Prévia do texto livre pela IA, SEM gravar. Assíncrona: o banco roda em
     thread (run_in_threadpool) e a IA também (registro.gerar_conteudo_com_retry),
-    para o servidor não travar enquanto o Gemini responde."""
+    para o servidor não travar enquanto o Gemini responde.
+
+    Ordem (PRO-106): autenticação -> acesso (acesso_liberado, se a assinatura
+    estiver ligada) -> texto válido -> cadastro -> limite por minuto (429
+    limite_excedido) -> reserva da vaga do dia (assinaturas.reservar_uso_ia;
+    sem vaga, 429 limite_diario_ia com Retry-After até 00:00 de Brasília, SEM
+    chamar a IA) -> IA. O limite diário vale sempre, mesmo com a assinatura
+    desligada. A vaga é devolvida se a IA não respondeu (503 ia_indisponivel)
+    ou se o pedido parou antes de chegar à IA; resposta da IA que não serve
+    (502, 422) conta."""
     user_id = usuario["id"]
+    dia_reservado = None
+    chegou_na_ia = False
     try:
         tipo, texto = registro.validar_pedido_interpretacao(pedido.tipo, pedido.texto)
         await run_in_threadpool(carregar_cadastro, conn, user_id)
@@ -391,13 +534,23 @@ async def registro_interpretar(pedido: PedidoInterpretar, usuario: dict = Depend
         if espera is not None:
             logger.warning("Registro recusado: limite_excedido")
             raise HTTPException(status_code=429, detail="limite_excedido", headers={"Retry-After": str(espera)})
+        dia_reservado = await run_in_threadpool(assinaturas.reservar_uso_ia, conn, user_id, agora)
+        if dia_reservado is None:
+            logger.warning("Registro recusado: limite_diario_ia")
+            raise HTTPException(status_code=429, detail="limite_diario_ia",
+                                headers={"Retry-After": str(assinaturas.segundos_ate_meia_noite(agora))})
         categorias = await run_in_threadpool(registro.listar_categorias, conn, user_id)
+        chegou_na_ia = True
         previa = await registro.interpretar_previa(tipo, texto, categorias)
     except HTTPException:
         raise
     except registro.ErroRegistro as erro:
+        if dia_reservado is not None and (not chegou_na_ia or erro.codigo == "ia_indisponivel"):
+            await run_in_threadpool(devolver_vaga_ia, conn, user_id, dia_reservado)
         raise erro_registro(erro) from None
     except Exception as erro:
+        if dia_reservado is not None and not chegou_na_ia:
+            await run_in_threadpool(devolver_vaga_ia, conn, user_id, dia_reservado)
         raise erro_interno(erro) from None
     if previa.tipo == "receita":
         return {"tipo": "receita", "valor": em_reais(previa.valor), "descricao": previa.descricao}
@@ -412,7 +565,7 @@ async def registro_interpretar(pedido: PedidoInterpretar, usuario: dict = Depend
 
 
 @app.post("/gastos", status_code=201)
-def gravar_gasto(pedido: PedidoGasto, response: Response, usuario: dict = Depends(usuario_autenticado),
+def gravar_gasto(pedido: PedidoGasto, response: Response, usuario: dict = Depends(acesso_liberado),
                  conn=Depends(obter_conexao_db), agora: datetime = Depends(obter_agora)):
     """Grava o gasto confirmado (sem IA). 201 se gravou; 200 com
     repetido=true se a mesma chave já tinha sido gravada (lançamento original).
@@ -450,7 +603,7 @@ def gravar_gasto(pedido: PedidoGasto, response: Response, usuario: dict = Depend
 
 
 @app.post("/receitas", status_code=201)
-def gravar_receita(pedido: PedidoReceita, response: Response, usuario: dict = Depends(usuario_autenticado),
+def gravar_receita(pedido: PedidoReceita, response: Response, usuario: dict = Depends(acesso_liberado),
                    conn=Depends(obter_conexao_db), agora: datetime = Depends(obter_agora)):
     """Grava a receita confirmada. 201 ou 200 (repetido), como /gastos."""
     user_id = usuario["id"]
@@ -563,7 +716,7 @@ def recorrente_json(recorrente: recorrentes.Recorrente) -> dict:
 
 
 @app.get("/categorias")
-def listar_categorias(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db)):
+def listar_categorias(usuario: dict = Depends(leitura_liberada), conn=Depends(obter_conexao_db)):
     """Nomes das categorias do usuário, na ordem da registro.listar_categorias
     (a mesma do prompt da IA e da checagem da categoria)."""
     user_id = usuario["id"]
@@ -578,7 +731,7 @@ def listar_categorias(usuario: dict = Depends(usuario_autenticado), conn=Depends
 
 
 @app.get("/recorrentes")
-def listar_recorrentes(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db)):
+def listar_recorrentes(usuario: dict = Depends(leitura_liberada), conn=Depends(obter_conexao_db)):
     """Os gastos recorrentes do usuário, por dia de cobrança (e id), e o total
     mensal (soma dos valores; 0.0 sem nenhum)."""
     user_id = usuario["id"]
@@ -596,7 +749,7 @@ def listar_recorrentes(usuario: dict = Depends(usuario_autenticado), conn=Depend
 
 
 @app.post("/recorrentes", status_code=201)
-def criar_recorrente(pedido: PedidoNovoRecorrente, response: Response, usuario: dict = Depends(usuario_autenticado),
+def criar_recorrente(pedido: PedidoNovoRecorrente, response: Response, usuario: dict = Depends(acesso_liberado),
                      conn=Depends(obter_conexao_db), agora: datetime = Depends(obter_agora)):
     """Cria o gasto recorrente (sem IA). 201 se gravou; 200 com repetido=true
     se a mesma chave já tinha sido gravada (o recorrente original, como está
@@ -623,7 +776,7 @@ def criar_recorrente(pedido: PedidoNovoRecorrente, response: Response, usuario: 
 
 
 @app.put("/recorrentes/{recorrente_id}")
-def editar_recorrente(recorrente_id: int, pedido: PedidoRecorrente, usuario: dict = Depends(usuario_autenticado),
+def editar_recorrente(recorrente_id: int, pedido: PedidoRecorrente, usuario: dict = Depends(acesso_liberado),
                       conn=Depends(obter_conexao_db)):
     """Edita os 5 campos do recorrente do usuário: 422 dos campos antes da
     existência; depois 404 recorrente_nao_encontrado (inexistente ou de outro
@@ -646,7 +799,7 @@ def editar_recorrente(recorrente_id: int, pedido: PedidoRecorrente, usuario: dic
 
 
 @app.delete("/recorrentes/{recorrente_id}")
-def apagar_recorrente(recorrente_id: int, usuario: dict = Depends(usuario_autenticado),
+def apagar_recorrente(recorrente_id: int, usuario: dict = Depends(acesso_liberado),
                       conn=Depends(obter_conexao_db)):
     """Apaga o recorrente do usuário (as transações já lançadas ficam). 404
     recorrente_nao_encontrado se não existe, é de outro usuário ou já foi
@@ -695,7 +848,7 @@ def receita_recorrente_json(receita: recorrentes.ReceitaRecorrente) -> dict:
 
 
 @app.get("/receitas-recorrentes")
-def listar_receitas_recorrentes(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db)):
+def listar_receitas_recorrentes(usuario: dict = Depends(leitura_liberada), conn=Depends(obter_conexao_db)):
     """As receitas recorrentes do usuário, por dia de recebimento (e id), e o
     total mensal (soma dos valores; 0.0 sem nenhuma)."""
     user_id = usuario["id"]
@@ -714,7 +867,7 @@ def listar_receitas_recorrentes(usuario: dict = Depends(usuario_autenticado), co
 
 @app.post("/receitas-recorrentes", status_code=201)
 def criar_receita_recorrente(pedido: PedidoNovaReceitaRecorrente, response: Response,
-                             usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db),
+                             usuario: dict = Depends(acesso_liberado), conn=Depends(obter_conexao_db),
                              agora: datetime = Depends(obter_agora)):
     """Cria a receita recorrente (sem IA). 201 se gravou; 200 com
     repetido=true se a mesma chave já tinha sido gravada (a original, como
@@ -742,7 +895,7 @@ def criar_receita_recorrente(pedido: PedidoNovaReceitaRecorrente, response: Resp
 
 @app.put("/receitas-recorrentes/{receita_recorrente_id}")
 def editar_receita_recorrente(receita_recorrente_id: int, pedido: PedidoReceitaRecorrente,
-                              usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db)):
+                              usuario: dict = Depends(acesso_liberado), conn=Depends(obter_conexao_db)):
     """Edita os 3 campos da receita recorrente do usuário: 422 dos campos
     antes da existência; depois 404 receita_recorrente_nao_encontrada
     (inexistente ou de outro usuário, sem dizer qual); depois 422
@@ -764,7 +917,7 @@ def editar_receita_recorrente(receita_recorrente_id: int, pedido: PedidoReceitaR
 
 
 @app.delete("/receitas-recorrentes/{receita_recorrente_id}")
-def apagar_receita_recorrente(receita_recorrente_id: int, usuario: dict = Depends(usuario_autenticado),
+def apagar_receita_recorrente(receita_recorrente_id: int, usuario: dict = Depends(acesso_liberado),
                               conn=Depends(obter_conexao_db)):
     """Apaga a receita recorrente do usuário (as receitas já lançadas ficam).
     404 receita_recorrente_nao_encontrada se não existe, é de outro usuário ou
@@ -800,7 +953,7 @@ class PedidoNovaCategoria(PedidoCategoria):
 
 
 @app.get("/categorias/ranking")
-def ranking_categorias(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db),
+def ranking_categorias(usuario: dict = Depends(leitura_liberada), conn=Depends(obter_conexao_db),
                        agora: datetime = Depends(obter_agora)):
     """O gasto de cada categoria na fatura vigente (a mesma do /resumo, D4),
     com o id de cada uma. 'ano_mes' e 'total_gasto' são os do /resumo
@@ -827,7 +980,7 @@ def ranking_categorias(usuario: dict = Depends(usuario_autenticado), conn=Depend
 
 
 @app.post("/categorias", status_code=201)
-def criar_categoria(pedido: PedidoNovaCategoria, response: Response, usuario: dict = Depends(usuario_autenticado),
+def criar_categoria(pedido: PedidoNovaCategoria, response: Response, usuario: dict = Depends(acesso_liberado),
                     conn=Depends(obter_conexao_db), agora: datetime = Depends(obter_agora)):
     """Cria a categoria. 201 se gravou; 200 com repetido=true se a mesma chave
     já tinha sido gravada (a categoria como está agora). data_criacao do
@@ -852,7 +1005,7 @@ def criar_categoria(pedido: PedidoNovaCategoria, response: Response, usuario: di
 
 
 @app.put("/categorias/{categoria_id}")
-def renomear_categoria(categoria_id: int, pedido: PedidoCategoria, usuario: dict = Depends(usuario_autenticado),
+def renomear_categoria(categoria_id: int, pedido: PedidoCategoria, usuario: dict = Depends(acesso_liberado),
                        conn=Depends(obter_conexao_db)):
     """Renomeia a categoria do usuário e propaga o nome para os gastos,
     parcelamentos, recorrentes e transferências dele (D7: sempre). 422
@@ -874,7 +1027,7 @@ def renomear_categoria(categoria_id: int, pedido: PedidoCategoria, usuario: dict
 
 
 @app.delete("/categorias/{categoria_id}")
-def excluir_categoria(categoria_id: int, usuario: dict = Depends(usuario_autenticado),
+def excluir_categoria(categoria_id: int, usuario: dict = Depends(acesso_liberado),
                       conn=Depends(obter_conexao_db)):
     """Exclui só a linha da categoria do usuário (D8: os gastos ficam no
     histórico e no total). 404 categoria_inexistente se não existe, é de

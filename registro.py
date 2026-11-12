@@ -25,6 +25,7 @@ str(e) da IA). O bot usa só a validar_valor desta parte (PRO-93).
 """
 import asyncio
 import json
+import logging
 import re
 import time
 from datetime import datetime
@@ -37,6 +38,10 @@ MODELO_IA = 'gemini-3.6-flash'
 
 # --- IA ---
 _cliente_ia = None
+
+# Log dos tokens de cada chamada à IA (PRO-106, D5): só os números, nunca o
+# texto do usuário, o prompt, a resposta nem o id da pessoa.
+_log = logging.getLogger(__name__)
 
 
 def obter_cliente_ia():
@@ -59,6 +64,26 @@ def definir_cliente_ia(cliente):
     _cliente_ia = cliente
 
 
+def _registrar_tokens(resposta):
+    """Escreve no log (nível INFO) os tokens da resposta da IA: entrada, saída,
+    pensamento e total, lidos do 'usage_metadata' com getattr (a IA falsa dos
+    testes não tem esse campo; aí não escreve nada). Nunca levanta erro: o
+    log não pode mudar o retorno nem as exceções da chamada."""
+    try:
+        uso = getattr(resposta, 'usage_metadata', None)
+        if uso is None:
+            return
+        _log.info(
+            'Tokens da IA: entrada=%s saida=%s pensamento=%s total=%s',
+            getattr(uso, 'prompt_token_count', None),
+            getattr(uso, 'candidates_token_count', None),
+            getattr(uso, 'thoughts_token_count', None),
+            getattr(uso, 'total_token_count', None),
+        )
+    except Exception:
+        pass
+
+
 async def gerar_conteudo_com_retry(prompt, tentativas=3, espera_inicial=2):
     """
     Chama a API do Gemini com retry automático (backoff exponencial) quando o
@@ -70,11 +95,14 @@ async def gerar_conteudo_com_retry(prompt, tentativas=3, espera_inicial=2):
     os outros usuários e a API não trava o servidor. O cliente é obtido aqui,
     fora da thread, e as novas tentativas, as esperas e as exceções são as
     mesmas de antes.
+
+    Desde a PRO-106 (D5), cada resposta recebida escreve no log só os números
+    de tokens (_registrar_tokens); o retorno é o mesmo objeto de antes.
     """
     ultimo_erro = None
     for tentativa in range(tentativas):
         try:
-            return await asyncio.to_thread(
+            resposta = await asyncio.to_thread(
                 obter_cliente_ia().models.generate_content,
                 model=MODELO_IA,
                 contents=prompt,
@@ -88,6 +116,8 @@ async def gerar_conteudo_com_retry(prompt, tentativas=3, espera_inicial=2):
                 await asyncio.sleep(espera_inicial * (2 ** tentativa))
                 continue
             raise ultimo_erro
+        _registrar_tokens(resposta)
+        return resposta
 
 
 # Lê o JSON da resposta da IA: tira as cercas de código (```json) e, se houver

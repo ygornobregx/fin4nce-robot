@@ -1,5 +1,6 @@
 import os
 import re
+import logging
 import libsql
 import asyncio
 import calendar
@@ -39,9 +40,10 @@ from registro import (
     VALOR_MAXIMO,
     _ler_valor_receita,
     gerar_conteudo_com_retry,
-    interpretar_gasto,
+    ler_resposta_gasto,
     limpar_json_ia,
     listar_categorias,
+    montar_prompt_gasto,
     mover_lancamento_de_categoria,
     obter_cliente_ia,
     registrar_gasto_avulso,
@@ -66,15 +68,38 @@ from categorias import (
     renomear_categoria,
     validar_nome as validar_nome_categoria,
 )
+# Assinatura (PRO-106): teste grátis, Pro, admin (ADMIN_IDS), a checagem de
+# acesso (só com ASSINATURAS_LIGADAS), os comandos de admin e o limite diário
+# de registros com IA (sempre ligado). Tudo no assinaturas.py, o mesmo módulo
+# das rotas da API; o bot cuida só das mensagens e dos botões.
+from assinaturas import (
+    assinaturas_ligadas,
+    comandos_criar_tabelas,
+    dar_pro_manual,
+    devolver_uso_ia,
+    e_admin,
+    estender_teste,
+    iniciar_teste,
+    limite_ia_dia,
+    listar_usuarios_com_plano,
+    reiniciar_teste,
+    reservar_uso_ia,
+    situacao_acesso,
+    tem_acesso,
+    tem_cadastro,
+    tirar_pro_manual,
+)
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.error import BadRequest, NetworkError
 from telegram.ext import (
     ApplicationBuilder,
+    ApplicationHandlerStop,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
     ConversationHandler,
     ContextTypes,
+    TypeHandler,
     filters,
 )
 
@@ -244,6 +269,13 @@ def iniciar_banco():
         criado_em TEXT NOT NULL,
         ultimo_ciclo_recebido TEXT
     )''')
+    # Assinaturas e limite diário de IA (PRO-106): tabelas 'assinaturas' (uma
+    # linha por período: teste, cada pagamento, cada Pro dado) e 'uso_ia' (uma
+    # linha por pessoa e por dia de Brasília), com os índices, pelo texto
+    # SQL_CRIAR_TABELAS do assinaturas.py (o mesmo dos testes). Aditivas, só
+    # CREATE ... IF NOT EXISTS: nenhuma outra tabela muda.
+    for comando in comandos_criar_tabelas():
+        cursor.execute(comando)
 
     migrar_colunas_faltantes(cursor)
 
@@ -584,6 +616,408 @@ def obter_url_mini_app():
 def montar_teclado_porta_de_entrada(url_mini_app):
     return InlineKeyboardMarkup([[InlineKeyboardButton("Abrir o L1d3r", web_app=WebAppInfo(url=url_mini_app))]])
 
+# --- ASSINATURA (PRO-106) ---
+# Com ASSINATURAS_LIGADAS desligada (o padrão), nada disto consulta o banco nem
+# muda o que o bot responde. O limite diário de IA é a exceção: vale sempre.
+TEXTO_ASSINATURA_VENCIDA = (
+    "<b>Sua assinatura venceu.</b> Seus dados continuam guardados, e você ainda pode vê-los no L1d3r. "
+    "Assine o Plano Pro para voltar a registrar."
+)
+TEXTO_ESCOLHA_PLANO = "<b>Escolha como continuar:</b> teste grátis por 10 dias ou o Plano Pro."
+TEXTO_ERRO_TESTE = "Não consegui começar o teste agora. Tente de novo em instantes."
+CALLBACK_TESTAR_GRATIS = 'assinatura_testar'
+
+def url_tela_assinatura(url_mini_app):
+    """URL do Mini App abrindo direto na tela Assinaturas (D9: ?tela=assinatura)."""
+    separador = '&' if '?' in url_mini_app else '?'
+    return f"{url_mini_app}{separador}tela=assinatura"
+
+def montar_aviso_assinatura(situacao):
+    """(texto, teclado) do aviso de quem está sem acesso. Sem plano (nunca
+    começou nada): a escolha, com "Testar Grátis por 10 Dias"; vencido: o
+    aviso de assinatura vencida. "Abrir o L1d3r" (tela Assinaturas) só com
+    URL_MINI_APP. "Assinar com Stars" entra na PRO-107."""
+    linhas = []
+    if situacao.estado == 'sem_plano':
+        texto = TEXTO_ESCOLHA_PLANO
+        linhas.append([InlineKeyboardButton("Testar Grátis por 10 Dias", callback_data=CALLBACK_TESTAR_GRATIS)])
+    else:
+        texto = TEXTO_ASSINATURA_VENCIDA
+    url_mini_app = obter_url_mini_app()
+    if url_mini_app:
+        linhas.append([InlineKeyboardButton("Abrir o L1d3r", web_app=WebAppInfo(url=url_tela_assinatura(url_mini_app)))])
+    return texto, (InlineKeyboardMarkup(linhas) if linhas else None)
+
+def aviso_se_sem_acesso(user_id):
+    """(texto, teclado) do aviso se a assinatura está ligada e a pessoa (que
+    não é admin) está sem acesso; None em todo o resto, sem consultar o banco
+    com a chave desligada. Falha do banco: None (o fluxo segue, e as
+    gravações dependem do mesmo banco)."""
+    if not assinaturas_ligadas() or e_admin(user_id):
+        return None
+    try:
+        conn = obter_conexao_db()
+        try:
+            situacao = situacao_acesso(conn, user_id, datetime.now(FUSO_BRASILIA), admin=False)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"⚠️ Não consegui conferir a assinatura do usuário {user_id} (seguindo): {type(e).__name__}")
+        return None
+    if situacao.tem_acesso:
+        return None
+    return montar_aviso_assinatura(situacao)
+
+def acesso_no_job(user_id, conn=None):
+    """Os jobs (alerta diário, recorrentes das 05:00 e a mensagem do resumo
+    do fechamento) pulam quem está sem acesso (D6), só com a assinatura
+    ligada; o admin sempre tem. Desligada: True, sem consultar o banco. Falha
+    do banco: True (como antes da PRO-106)."""
+    if not assinaturas_ligadas():
+        return True
+    try:
+        if conn is not None:
+            return tem_acesso(conn, user_id, datetime.now(FUSO_BRASILIA))
+        conn = obter_conexao_db()
+        try:
+            return tem_acesso(conn, user_id, datetime.now(FUSO_BRASILIA))
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"⚠️ Não consegui conferir a assinatura do usuário {user_id} no job (seguindo): {type(e).__name__}")
+        return True
+
+# Porteiro (D9): um handler no grupo -1, antes de todos, que confere o acesso
+# de cada mensagem e botão. Livres: os comandos abaixo, o botão do teste, o
+# pre-checkout e o pagamento (PRO-107) e quem ainda não tem cadastro nem
+# assinatura (o cadastro antigo pelo chat). Os comandos de admin não estão na
+# lista: o admin sempre passa, e para os outros eles nem existem (cai no aviso
+# como qualquer mensagem, sem pista de que o comando existe).
+COMANDOS_LIVRES_PORTEIRO = ('start', 'assinatura', 'terms', 'paysupport')
+
+def _comando_da_mensagem(message):
+    texto = getattr(message, 'text', None) or ''
+    if not texto.startswith('/') or len(texto) == 1:
+        return None
+    return texto[1:].split()[0].split('@')[0].lower()
+
+async def porteiro(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bloqueia quem está sem acesso (assinatura ligada): mostra o aviso (a
+    escolha do plano ou o de vencido) e para o update aí
+    (ApplicationHandlerStop), limpando as conversas em andamento. Desligada,
+    não faz nada."""
+    if not assinaturas_ligadas():
+        return
+    usuario = update.effective_user
+    if usuario is None or update.pre_checkout_query is not None:
+        return
+    mensagem = update.effective_message
+    if mensagem is not None and getattr(mensagem, 'successful_payment', None) is not None:
+        return
+    query = update.callback_query
+    if query is not None and query.data == CALLBACK_TESTAR_GRATIS:
+        return
+    if query is None and update.message is not None and _comando_da_mensagem(update.message) in COMANDOS_LIVRES_PORTEIRO:
+        return
+    if e_admin(usuario.id):
+        return
+    try:
+        conn = obter_conexao_db()
+        try:
+            situacao = situacao_acesso(conn, usuario.id, datetime.now(FUSO_BRASILIA), admin=False)
+            if situacao.tem_acesso:
+                return
+            if situacao.estado == 'sem_plano' and not tem_cadastro(conn, usuario.id):
+                return  # cadastro pelo chat em andamento (ou ainda não começou)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"⚠️ Porteiro: não consegui conferir a assinatura do usuário {usuario.id} (seguindo): {type(e).__name__}")
+        return
+
+    if query is None and update.message is None:
+        # Mensagem editada ou outro tipo de update: só para aqui, sem responder.
+        if mensagem is not None:
+            raise ApplicationHandlerStop
+        return
+
+    chat_id = update.effective_chat.id if update.effective_chat is not None else usuario.id
+    resetar_conversas(context.application, chat_id, usuario.id)
+    for chave in CHAVES_ESTADO_TEMPORARIO:
+        context.user_data.pop(chave, None)
+    texto, teclado = montar_aviso_assinatura(situacao)
+    if query is not None:
+        await responder_callback(query)
+        await atualizar_callback(query, context, texto, reply_markup=teclado)
+    else:
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+        await enviar_fluxo(context, chat_id, texto, reply_markup=teclado)
+    raise ApplicationHandlerStop
+
+async def testar_gratis_botao(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Botão "Testar Grátis por 10 Dias": começa o teste agora, pelo
+    assinaturas.py (a mesma regra do POST /assinaturas/teste)."""
+    query = update.callback_query
+    await responder_callback(query)
+    user_id = query.from_user.id
+    try:
+        conn = obter_conexao_db()
+        try:
+            teste = iniciar_teste(conn, user_id, datetime.now(FUSO_BRASILIA))
+        finally:
+            conn.close()
+    except ErroRegistro as erro:
+        if erro.codigo == 'plano_ativo':
+            texto_menu = await montar_texto_menu_principal(user_id)
+            await atualizar_callback(query, context, texto_menu, reply_markup=obter_teclado_menu())
+        elif erro.codigo == 'teste_ja_usado':
+            texto, teclado = montar_aviso_assinatura(SimpleNamespace(estado='teste_vencido'))
+            await atualizar_callback(query, context, texto, reply_markup=teclado)
+        else:
+            _, teclado = montar_aviso_assinatura(SimpleNamespace(estado='sem_plano'))
+            await atualizar_callback(query, context, TEXTO_ERRO_TESTE, reply_markup=teclado)
+        return
+    except Exception as e:
+        print(f"⚠️ Não consegui começar o teste do usuário {user_id}: {type(e).__name__}")
+        _, teclado = montar_aviso_assinatura(SimpleNamespace(estado='sem_plano'))
+        await atualizar_callback(query, context, TEXTO_ERRO_TESTE, reply_markup=teclado)
+        return
+    texto = f"Seu teste começou! Vale até <b>{teste.fim.strftime('%d/%m/%Y')}</b>."
+    await atualizar_callback(query, context, texto, reply_markup=obter_teclado_menu())
+
+# Limite diário de registros com IA (D5): a reserva e a devolução ficam no
+# assinaturas.py; aqui só a conexão e a mensagem.
+TECLADO_VOLTAR_AO_MENU = InlineKeyboardMarkup([[InlineKeyboardButton("← Voltar ao Menu", callback_data='voltar_menu', style="danger")]])
+
+def montar_tela_limite_ia():
+    texto = (
+        f"Você chegou ao limite de <b>{limite_ia_dia()} registros com IA</b> por hoje. "
+        "A partir da meia-noite (horário de Brasília), o limite volta a zero."
+    )
+    return texto, TECLADO_VOLTAR_AO_MENU
+
+def reservar_vaga_ia(user_id):
+    """Reserva a vaga do dia antes de chamar a IA (o dia reservado, ou None
+    sem vaga). O admin nunca é recusado."""
+    conn = obter_conexao_db()
+    try:
+        return reservar_uso_ia(conn, user_id, datetime.now(FUSO_BRASILIA))
+    finally:
+        conn.close()
+
+def devolver_vaga_ia(user_id, dia):
+    """Devolve a vaga quando a IA não respondeu. Nunca levanta erro."""
+    try:
+        conn = obter_conexao_db()
+        try:
+            devolver_uso_ia(conn, user_id, dia)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"⚠️ Não consegui devolver a vaga de IA do usuário {user_id}: {type(e).__name__}")
+
+# --- COMANDOS DE ADMIN (PRO-106) ---
+# Só para os ids do ADMIN_IDS, lido na hora (o filtro confere a cada
+# mensagem). Para outra conta, o comando não existe: nenhum handler responde.
+class FiltroAdmin(filters.MessageFilter):
+    def filter(self, message):
+        return message.from_user is not None and e_admin(message.from_user.id)
+
+FILTRO_ADMIN = FiltroAdmin(name='FiltroAdmin')
+
+ROTULO_ESTADO_ADMIN = {
+    'sem_plano': 'sem plano', 'teste': 'teste', 'pro': 'pro', 'teste_vencido': 'teste vencido',
+    'pro_vencido': 'pro vencido', 'admin': 'admin',
+}
+TEXTO_COMANDOS_ADMIN = (
+    "<b>Comandos de Admin</b>\n\n"
+    "/usuarios: até 50 contas, as de validade mais próxima primeiro\n"
+    "/dar_pro &lt;id&gt; [dias]: dá Pro de 1 a 366 dias (sem número, 30); soma ao Pro atual\n"
+    "/tirar_pro &lt;id&gt;: tira só os dias dados que ainda não foram usados\n"
+    "/estender_teste &lt;id&gt; &lt;dias&gt;: soma de 1 a 60 dias ao fim do teste\n"
+    "/reiniciar_teste &lt;id&gt;: teste de 10 dias a partir de agora"
+)
+USO_DAR_PRO = "Uso: <code>/dar_pro &lt;id&gt; [dias]</code> (dias de 1 a 366; sem número, 30)."
+USO_TIRAR_PRO = "Uso: <code>/tirar_pro &lt;id&gt;</code>"
+USO_ESTENDER_TESTE = "Uso: <code>/estender_teste &lt;id&gt; &lt;dias&gt;</code> (dias de 1 a 60)."
+USO_REINICIAR_TESTE = "Uso: <code>/reiniciar_teste &lt;id&gt;</code>"
+TEXTO_USUARIO_NAO_ENCONTRADO = "Usuário não encontrado."
+
+def _ler_id_alvo(texto):
+    """Id do Telegram digitado no comando (inteiro positivo), ou None."""
+    texto = (texto or '').strip()
+    if not re.fullmatch(r'[0-9]+', texto) or int(texto) <= 0:
+        return None
+    return int(texto)
+
+def _nome_para_admin(conn, user_id):
+    linha = conn.execute('SELECT nome FROM usuarios WHERE user_id = ?', (user_id,)).fetchone()
+    return escape(linha[0]) if linha and linha[0] else f"<code>{user_id}</code>"
+
+async def _responder_admin(update, context, texto):
+    """Resposta curta no padrão de chat limpo: apaga o comando e edita a
+    última mensagem do bot (ou manda uma nova)."""
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+    await enviar_fluxo(context, update.effective_chat.id, texto, reply_markup=TECLADO_VOLTAR_AO_MENU)
+
+async def comando_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _responder_admin(update, context, TEXTO_COMANDOS_ADMIN)
+
+async def comando_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = obter_conexao_db()
+    try:
+        itens = listar_usuarios_com_plano(conn, datetime.now(FUSO_BRASILIA))
+    finally:
+        conn.close()
+    if not itens:
+        await _responder_admin(update, context, "Nenhuma conta encontrada.")
+        return
+    linhas = [
+        f"<code>{item.user_id}</code> · {escape(item.nome or '—')} · {ROTULO_ESTADO_ADMIN.get(item.estado, item.estado)}"
+        f" · {item.fim.strftime('%d/%m/%Y') if item.fim else '—'} · {item.origem or '—'}"
+        for item in itens
+    ]
+    texto = "<b>Usuários</b>\n\n" + "\n".join(linhas)
+    if len(texto) > 4000:
+        texto = texto[:3990].rsplit("\n", 1)[0] + "\n…"
+    await _responder_admin(update, context, texto)
+
+async def comando_dar_pro(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    alvo = _ler_id_alvo(args[0]) if args else None
+    if alvo is None or len(args) > 2:
+        await _responder_admin(update, context, USO_DAR_PRO)
+        return
+    admin_id = update.effective_user.id
+    conn = obter_conexao_db()
+    try:
+        lancado = dar_pro_manual(conn, alvo, args[1] if len(args) > 1 else None, admin_id,
+                                 datetime.now(FUSO_BRASILIA))
+        nome = _nome_para_admin(conn, alvo)
+    except ErroRegistro as erro:
+        texto = TEXTO_USUARIO_NAO_ENCONTRADO if erro.codigo == 'usuario_nao_encontrado' else USO_DAR_PRO
+        await _responder_admin(update, context, texto)
+        return
+    finally:
+        conn.close()
+    print(f"🛡️ Admin {admin_id}: /dar_pro {alvo} ({lancado.linha.dias} dias, linha {lancado.linha.id})")
+    await _responder_admin(update, context,
+                           f"Pro de {nome} vale até <b>{lancado.fim_do_pro.strftime('%d/%m/%Y')}</b>.")
+
+async def comando_tirar_pro(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    alvo = _ler_id_alvo(args[0]) if len(args) == 1 else None
+    if alvo is None:
+        await _responder_admin(update, context, USO_TIRAR_PRO)
+        return
+    admin_id = update.effective_user.id
+    conn = obter_conexao_db()
+    try:
+        retirado = tirar_pro_manual(conn, alvo, admin_id, datetime.now(FUSO_BRASILIA))
+        nome = _nome_para_admin(conn, alvo)
+    except ErroRegistro as erro:
+        texto = TEXTO_USUARIO_NAO_ENCONTRADO if erro.codigo == 'usuario_nao_encontrado' else USO_TIRAR_PRO
+        await _responder_admin(update, context, texto)
+        return
+    finally:
+        conn.close()
+    lembrete_pago = " O Pro pago só sai com /reembolsar."
+    if not retirado.alterou:
+        texto = "Esta pessoa não tem Pro dado." + (lembrete_pago if retirado.tem_pro_pago else "")
+    else:
+        print(f"🛡️ Admin {admin_id}: /tirar_pro {alvo} (linhas {retirado.linhas_retiradas})")
+        texto = f"Pro dado de {nome} retirado."
+        if retirado.tem_pro_pago and retirado.fim_do_pro is not None:
+            texto += f" O Pro pago vale até <b>{retirado.fim_do_pro.strftime('%d/%m/%Y')}</b>." + lembrete_pago
+        else:
+            texto += " Sem Pro valendo agora."
+    await _responder_admin(update, context, texto)
+
+async def comando_estender_teste(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    alvo = _ler_id_alvo(args[0]) if len(args) == 2 else None
+    if alvo is None:
+        await _responder_admin(update, context, USO_ESTENDER_TESTE)
+        return
+    admin_id = update.effective_user.id
+    conn = obter_conexao_db()
+    try:
+        fim = estender_teste(conn, alvo, args[1], admin_id, datetime.now(FUSO_BRASILIA))
+        nome = _nome_para_admin(conn, alvo)
+    except ErroRegistro as erro:
+        textos = {'usuario_nao_encontrado': TEXTO_USUARIO_NAO_ENCONTRADO,
+                  'sem_teste': "Esta pessoa ainda não começou o teste."}
+        await _responder_admin(update, context, textos.get(erro.codigo, USO_ESTENDER_TESTE))
+        return
+    finally:
+        conn.close()
+    print(f"🛡️ Admin {admin_id}: /estender_teste {alvo} {args[1]}")
+    await _responder_admin(update, context, f"Teste de {nome} vale até <b>{fim.strftime('%d/%m/%Y')}</b>.")
+
+async def comando_reiniciar_teste(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    alvo = _ler_id_alvo(args[0]) if len(args) == 1 else None
+    if alvo is None:
+        await _responder_admin(update, context, USO_REINICIAR_TESTE)
+        return
+    admin_id = update.effective_user.id
+    conn = obter_conexao_db()
+    try:
+        teste = reiniciar_teste(conn, alvo, admin_id, datetime.now(FUSO_BRASILIA))
+        nome = _nome_para_admin(conn, alvo)
+    except ErroRegistro as erro:
+        texto = TEXTO_USUARIO_NAO_ENCONTRADO if erro.codigo == 'usuario_nao_encontrado' else USO_REINICIAR_TESTE
+        await _responder_admin(update, context, texto)
+        return
+    finally:
+        conn.close()
+    print(f"🛡️ Admin {admin_id}: /reiniciar_teste {alvo}")
+    await _responder_admin(update, context,
+                           f"Teste de {nome} reiniciado: vale até <b>{teste.fim.strftime('%d/%m/%Y')}</b>.")
+
+COMANDOS_ADMIN = (
+    ('admin', comando_admin),
+    ('usuarios', comando_usuarios),
+    ('dar_pro', comando_dar_pro),
+    ('tirar_pro', comando_tirar_pro),
+    ('estender_teste', comando_estender_teste),
+    ('reiniciar_teste', comando_reiniciar_teste),
+)
+
+FORMATO_LOG = "%(asctime)s %(name)s %(levelname)s %(message)s"
+
+def configurar_logs_do_dominio(nomes=('registro', 'assinaturas')):
+    """Log dos módulos de regra no terminal (PRO-106): um StreamHandler só nos
+    loggers 'registro' (tokens de cada chamada à IA, INFO) e 'assinaturas',
+    nível INFO e propagate=False (não duplica no root). Não usa basicConfig no
+    root: o httpx e o PTB logam cada requisição em INFO. Idempotente: o
+    handler leva uma marca e não é posto duas vezes."""
+    for nome in nomes:
+        alvo = logging.getLogger(nome)
+        if any(getattr(h, '_log_do_dominio', False) for h in alvo.handlers):
+            continue
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter(FORMATO_LOG))
+        handler._log_do_dominio = True
+        alvo.addHandler(handler)
+        alvo.setLevel(logging.INFO)
+        alvo.propagate = False
+
+def registrar_handlers_assinatura(application):
+    """Porteiro no grupo -1 (antes de todos), o botão do teste e os comandos
+    de admin com o filtro de usuário (ADMIN_IDS lido a cada mensagem).
+    Chamado no __main__, antes dos outros handlers do grupo 0."""
+    application.add_handler(TypeHandler(Update, porteiro), group=-1)
+    application.add_handler(CallbackQueryHandler(testar_gratis_botao, pattern=f'^{CALLBACK_TESTAR_GRATIS}$'))
+    for nome, funcao in COMANDOS_ADMIN:
+        application.add_handler(CommandHandler(nome, funcao, filters=FILTRO_ADMIN))
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     iniciar_banco()
     try:
@@ -599,7 +1033,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ja_cadastrado:
         # Conta já existe: nunca refaz o cadastro (a etapa final apaga e
         # recria as categorias do zero) — um '/start' acidental só reabre o
-        # Menu Principal, sem tocar nos dados já configurados.
+        # Menu Principal, sem tocar nos dados já configurados. Com a
+        # assinatura ligada (PRO-106), quem está sem acesso recebe o aviso
+        # (escolha do plano ou assinatura vencida) no lugar do menu.
+        aviso = aviso_se_sem_acesso(user_id)
+        if aviso is not None:
+            texto_aviso, teclado_aviso = aviso
+            await enviar_fluxo(context, update.effective_chat.id, texto_aviso, reply_markup=teclado_aviso)
+            return ConversationHandler.END
         texto_menu = await montar_texto_menu_principal(user_id)
         await enviar_fluxo(context, update.effective_chat.id, texto_menu, reply_markup=obter_teclado_menu())
         return ConversationHandler.END
@@ -704,6 +1145,13 @@ async def receber_dia_fechamento(update: Update, context: ContextTypes.DEFAULT_T
     agendar_tarefa_alerta(context.job_queue, user_id, "20:00")
 
     texto_sucesso = f"Configuração Concluída, {nome}! Tudo pronto para começarmos."
+    # Assinatura ligada (PRO-106, D9): no fim do cadastro pelo chat, a mesma
+    # escolha do plano, com os botões, no lugar do Menu Principal.
+    aviso = aviso_se_sem_acesso(user_id)
+    if aviso is not None:
+        texto_aviso, teclado_aviso = aviso
+        await enviar_fluxo(context, user_id, f"{texto_sucesso}\n\n{texto_aviso}", reply_markup=teclado_aviso)
+        return ConversationHandler.END
     await enviar_fluxo(context, user_id, texto_sucesso, reply_markup=obter_teclado_menu())
 
     return ConversationHandler.END
@@ -844,17 +1292,37 @@ async def salvar_gasto_livre(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not texto_usuario:
         return ConversationHandler.END
 
+    # Limite diário de registros com IA (PRO-106, D5; vale sempre): reserva a
+    # vaga ANTES da IA. Sem vaga, a mensagem do limite e nada é chamado.
+    try:
+        dia_reservado = reservar_vaga_ia(user_id)
+    except Exception as e:
+        await enviar_fluxo(context, user_id, mensagem_erro_ia(e), reply_markup=obter_teclado_menu())
+        return ConversationHandler.END
+    if dia_reservado is None:
+        texto_limite, teclado_limite = montar_tela_limite_ia()
+        await enviar_fluxo(context, user_id, texto_limite, reply_markup=teclado_limite)
+        return ConversationHandler.END
+
     await enviar_fluxo(context, user_id, "Registrando seu gasto...")
 
     try:
-        # Busca as categorias cadastradas e formata em lista textual: a mesma
-        # lista vai para o prompt da IA (regra crítica 2, montado no
-        # registro.py) e para a mensagem de categoria não encontrada.
-        categorias_existentes = obter_categorias_usuario(user_id)
-        lista_categorias = formatar_lista_categorias(categorias_existentes)
+        try:
+            # Busca as categorias cadastradas e formata em lista textual: a mesma
+            # lista vai para o prompt da IA (regra crítica 2, montado no
+            # registro.py) e para a mensagem de categoria não encontrada.
+            categorias_existentes = obter_categorias_usuario(user_id)
+            lista_categorias = formatar_lista_categorias(categorias_existentes)
 
-        # Prompt + Gemini (com retry/backoff) + leitura do JSON: registro.py.
-        gasto = await interpretar_gasto(texto_usuario, categorias_existentes)
+            # Prompt + Gemini (com retry/backoff): registro.py. O mesmo que a
+            # interpretar_gasto faz, em dois passos (PRO-106) para separar "a IA
+            # não respondeu" (a vaga volta) de "a resposta não serve" (conta).
+            resposta_ia = await gerar_conteudo_com_retry(montar_prompt_gasto(categorias_existentes, texto_usuario))
+        except Exception:
+            devolver_vaga_ia(user_id, dia_reservado)
+            raise
+        # Leitura do JSON: registro.py.
+        gasto = ler_resposta_gasto(resposta_ia.text, categorias_existentes)
 
         # Receita (PRO-86): vem antes da checagem de categoria, porque a
         # receita não tem categoria (a que a IA devolver é ignorada). Valor
@@ -1943,6 +2411,21 @@ async def receber_texto_recorrente(update: Update, context: ContextTypes.DEFAULT
         return ConversationHandler.END
 
     teclado_voltar = InlineKeyboardMarkup([linha_voltar_com_menu(f"rec_cat_{cat_id}")])
+
+    # Limite diário de registros com IA (PRO-106, D5): o recorrente por texto
+    # também passa pela IA e conta. Sem vaga, a mensagem do limite.
+    try:
+        dia_reservado = reservar_vaga_ia(user_id)
+    except Exception as e:
+        await enviar_fluxo(context, user_id, mensagem_erro_ia(e), reply_markup=teclado_voltar)
+        return RECORRENTE_TEXTO_LIVRE
+    if dia_reservado is None:
+        for chave in ('recorrente_pendente', 'recorrente_cat_id', 'recorrente_cat_nome'):
+            context.user_data.pop(chave, None)
+        texto_limite, teclado_limite = montar_tela_limite_ia()
+        await enviar_fluxo(context, user_id, texto_limite, reply_markup=teclado_limite)
+        return ConversationHandler.END
+
     await enviar_fluxo(context, user_id, "Analisando...", reply_markup=teclado_voltar)
 
     try:
@@ -1965,7 +2448,11 @@ Mensagem do usuário: "{texto_usuario}"
 
 Retorne APENAS o JSON puro.
 """
-        response = await gerar_conteudo_com_retry(prompt)
+        try:
+            response = await gerar_conteudo_com_retry(prompt)
+        except Exception:
+            devolver_vaga_ia(user_id, dia_reservado)  # a IA não respondeu: a vaga volta
+            raise
         dados = limpar_json_ia(response.text)
     except Exception as e:
         await enviar_fluxo(context, user_id, mensagem_erro_ia(e), reply_markup=teclado_voltar)
@@ -2580,6 +3067,10 @@ async def enviar_resumo_diario(context: ContextTypes.DEFAULT_TYPE):
     """
     user_id = context.job.chat_id
     agora_brasilia = datetime.now(FUSO_BRASILIA)
+    # Assinatura ligada (PRO-106, D6): quem está sem acesso não recebe o alerta.
+    if not acesso_no_job(user_id):
+        print(f"⏭️ Resumo diário do usuário {user_id} pulado: sem assinatura ativa")
+        return
     print(f"📤 Enviando resumo diário para usuário {user_id} às {agora_brasilia.strftime('%H:%M:%S')} (Brasília)")
 
     conn = obter_conexao_db()
@@ -2753,6 +3244,12 @@ async def _executar_verificacao_resets(bot, user_data_global):
         conn.commit()
         resets_feitos += 1
 
+        # Assinatura ligada (PRO-106, D6): o fechamento é marcado igual, mas
+        # quem está sem acesso não recebe a mensagem do Resumo Mensal.
+        if not acesso_no_job(user_id, conn):
+            print(f"⏭️ Resumo Mensal do usuário {user_id} pulado: sem assinatura ativa")
+            continue
+
         try:
             await enviar_resumo_mensal(bot, user_data_global[user_id], user_id, nome, dia_fechamento, agora)
         except Exception as e:
@@ -2815,6 +3312,12 @@ async def verificar_gastos_recorrentes(context: ContextTypes.DEFAULT_TYPE):
     for rr_id, dia_recebimento, user_id in candidatas_receita:
         if min(dia_recebimento, ultimo_dia_mes) == dia_hoje:
             por_usuario.setdefault(user_id, {'gr_ids': [], 'rr_ids': []})['rr_ids'].append(rr_id)
+
+    # Assinatura ligada (PRO-106, D6): os recorrentes de quem está sem acesso
+    # não são lançados (nem os atrasados depois) e a mensagem não vai.
+    for user_id in [uid for uid in por_usuario if not acesso_no_job(uid)]:
+        print(f"⏭️ Recorrentes do usuário {user_id} pulados: sem assinatura ativa")
+        del por_usuario[user_id]
 
     for user_id, ids in por_usuario.items():
         context.job_queue.run_once(
@@ -3349,6 +3852,8 @@ if __name__ == '__main__':
     # Cria o cliente da IA já na subida (o registro.py só o criaria no primeiro
     # gasto): sem a chave do Gemini, o bot continua não subindo, como antes.
     obter_cliente_ia()
+    # Log dos tokens da IA e das ações de assinatura no terminal (PRO-106).
+    configurar_logs_do_dominio()
     print("Iniciando Bot Corrigido...")
     app = (
         ApplicationBuilder()
@@ -3560,6 +4065,9 @@ if __name__ == '__main__':
         allow_reentry=True,
     )
 
+    # Assinatura (PRO-106): porteiro no grupo -1, botão do teste e comandos de admin.
+    registrar_handlers_assinatura(app)
+
     app.add_handler(CallbackQueryHandler(excluir_categoria_botao, pattern='^acao_excluir_'))
     app.add_handler(CallbackQueryHandler(resumo_diario_menu_callback, pattern='^resumo_diario_menu$'))
 
@@ -3592,4 +4100,6 @@ if __name__ == '__main__':
     print("Bot rodando com sucesso!")
     # bootstrap_retries: tenta reconectar automaticamente algumas vezes antes
     # de desistir, em vez de encerrar na primeira falha de rede momentânea.
-    app.run_polling(bootstrap_retries=5)
+    # allowed_updates=Update.ALL_TYPES (PRO-106): recebe todos os tipos de
+    # update, inclusive o pre-checkout e o pagamento da PRO-107.
+    app.run_polling(bootstrap_retries=5, allowed_updates=Update.ALL_TYPES)

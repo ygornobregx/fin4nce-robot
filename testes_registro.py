@@ -167,7 +167,8 @@ class TestImportLimpo(unittest.TestCase):
 
         topo = modulos(arvore.body)
         # 'time' desde a PRO-88 (espera entre as tentativas de gravar com o banco ocupado).
-        self.assertEqual(set(topo), {'asyncio', 'json', 're', 'time', 'datetime', 'typing', 'calculos'})
+        # 'logging' desde a PRO-106 (log dos tokens de cada chamada à IA, D5).
+        self.assertEqual(set(topo), {'asyncio', 'json', 'logging', 're', 'time', 'datetime', 'typing', 'calculos'})
 
         todos = modulos(ast.walk(arvore))
         proibidos = [m for m in todos if m.split('.')[0] in ('telegram', 'bot', 'dotenv', 'libsql')]

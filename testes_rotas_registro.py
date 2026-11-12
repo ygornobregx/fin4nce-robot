@@ -35,6 +35,7 @@ if RAIZ not in sys.path:
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+import assinaturas  # noqa: E402
 import calculos  # noqa: E402
 import registro  # noqa: E402
 from api import main as api_main  # noqa: E402
@@ -79,6 +80,9 @@ def criar_banco(caminho):
     conn.execute("PRAGMA journal_mode = MEMORY")  # (vale só para esta conexão)
     conn.executescript(ESQUEMA)
     conn.execute(comando_chaves_registro())
+    # PRO-106: as tabelas assinaturas e uso_ia (o limite diário de IA do
+    # /registro/interpretar vale sempre), com o MESMO texto que o bot.py usa.
+    conn.executescript(assinaturas.SQL_CRIAR_TABELAS)
     for user_id, nome, renda, dia in ((UID, 'Ygor', 5000.0, 28), (OUTRO_UID, 'Outro', 1000.0, 10),
                                       (INCOMPLETO, 'Sem Fechamento', 1000.0, None)):
         conn.execute("INSERT INTO usuarios (user_id, nome, renda_mensal, dia_fechamento) VALUES (?, ?, ?, ?)",

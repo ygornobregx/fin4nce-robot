@@ -2643,9 +2643,14 @@
     const MSG_CADASTRO_404 = "Não encontramos o seu cadastro. Feche e abra o app de novo.";
     const MSG_CADASTRO_409 = "Seu cadastro está incompleto. Volte ao bot e informe o dia de fechamento da fatura.";
 
+    // Limite diário de registros com IA (PRO-106, D5): o número vem do GET /assinatura quando a tela tiver
+    // (PRO-108, pelo 4º argumento); sem ele, 17.
+    const LIMITE_IA_DIA_PADRAO = 17;
+
     // momento: "interpretar" (a prévia) ou "gravar" (o Confirmar). tipo: "gasto" ou "receita".
     // resultado: { erro: status HTTP (0 = rede), detalhe: código do servidor, retryAfter: segundos }.
-    function mensagemErroRegistro(resultado, momento, tipo) {
+    // limiteIaDia (opcional): o limite_ia_dia do GET /assinatura.
+    function mensagemErroRegistro(resultado, momento, tipo, limiteIaDia) {
       const status = resultado.erro;
       const codigo = typeof resultado.detalhe === "string" ? resultado.detalhe : "";
       if (status === 0) return MSG_SEM_CONEXAO;
@@ -2653,6 +2658,11 @@
       if (status === 404) return MSG_CADASTRO_404;
       if (status === 409) return MSG_CADASTRO_409;
       if (momento === "interpretar") {
+        // Antes da mensagem do 429 por minuto: o 429 do limite do dia não melhora esperando segundos.
+        if (status === 429 && codigo === "limite_diario_ia") {
+          const limite = Number.isInteger(limiteIaDia) && limiteIaDia > 0 ? limiteIaDia : LIMITE_IA_DIA_PADRAO;
+          return "Você usou os " + limite + " registros com IA de hoje. Amanhã o limite volta a zero.";
+        }
         if (status === 429) {
           const s = Number(resultado.retryAfter);
           if (Number.isFinite(s) && s >= 1) {
