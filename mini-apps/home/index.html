@@ -38,6 +38,10 @@
       --cor-receita-fundo: #15803D14;
       /* Botões Gasto/Receita da lista de Recorrentes (PRO-103, quadro FUTURO - RECORRENTES - LISTA - V3) */
       --cor-sombra-abas: #1212121A;
+      /* Barra do ranking de Categorias (PRO-105, quadro FUTURO - CATEGORIAS - PRINCIPAL - V1) */
+      --cor-barra-categoria: #D4D4D6;
+      --cor-categoria-excluida: #F6F6F7;  /* trilho da categoria excluída (quadro EXCLUÍDA COM GASTO - V1) */
+      --cor-borda-selo: #E0E0E2;          /* borda do selo "Excluída" */
     }
 
     * { box-sizing: border-box; }
@@ -1221,6 +1225,130 @@
     .categoria-linha[aria-checked="true"] .categoria-bolinha svg { display: block; }
     .folha-estado { padding: 8px 0; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; font-size: 15px; line-height: 22px; font-weight: 500; color: var(--cor-texto-2); }
     .folha-estado button { padding: 10px 20px; border-radius: 14px; background: var(--cor-grafite); color: var(--cor-branco); font-size: 15px; line-height: 20px; font-weight: 700; }
+
+    /* ---------- Categorias (PRO-105, quadros FUTURO - CATEGORIAS - ...) ---------- */
+    /* Só variáveis do :root (nenhuma cor solta). A barra mínima de 8px vale também para R$ 0,00. */
+    body.modo-categorias { padding-bottom: 0; }
+    .cat-corpo { flex-grow: 1; padding: 16px 24px 24px; display: flex; flex-direction: column; gap: 24px; }
+    .cat-topo { display: flex; flex-direction: column; gap: 12px; }
+    .cat-nova-linha { display: flex; justify-content: flex-end; }
+    .cat-nova {
+      height: 36px;
+      padding: 0 14px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 12px;
+      background: var(--cor-grafite);
+      color: var(--cor-branco);
+      font-size: 13px;
+      line-height: 18px;
+      font-weight: 700;
+    }
+    .cat-nova svg { width: 16px; height: 16px; fill: none; stroke: var(--cor-branco); stroke-width: 2; stroke-linecap: round; }
+    .cat-dica { font-size: 15px; line-height: 22px; font-weight: 500; color: var(--cor-texto-2); }
+    .cat-divisoria { height: 1px; width: 100%; background: var(--cor-divisoria); }
+
+    .cat-ranking { display: flex; flex-direction: column; gap: 16px; }
+    .cat-resumo { display: flex; flex-direction: column; gap: 6px; }
+    .cat-titulo { font-size: 18px; line-height: 24px; font-weight: 800; letter-spacing: -0.01em; color: var(--cor-texto); }
+    .cat-total-linha { font-size: 15px; line-height: 20px; font-weight: 700; color: var(--cor-texto); }
+    .cat-total { font-weight: 800; color: var(--cor-erro); overflow-wrap: anywhere; }
+
+    /* Carregando (quadro CARREGANDO): caixa de 320px, o quadrado de 64px da logo animada e o texto */
+    .cat-carregando { height: 320px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; font-size: 15px; line-height: 22px; font-weight: 600; color: var(--cor-texto-2); }
+    /* Erro de rede (quadro ERRO DE REDE): caixa tracejada de 180px e o botão Tentar de novo */
+    .cat-erro { display: flex; flex-direction: column; gap: 14px; }
+    .cat-erro-caixa {
+      height: 180px;
+      padding: 0 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      border: 1.5px dashed var(--cor-barra-fechado);
+      border-radius: 18px;
+      text-align: center;
+    }
+    .cat-erro-caixa svg { width: 28px; height: 28px; fill: none; stroke: var(--cor-tracejado); stroke-width: 2; stroke-linecap: round; }
+    .cat-erro-caixa svg .ponto { fill: var(--cor-tracejado); stroke: none; }
+    .cat-erro-titulo { font-size: 15px; line-height: 20px; font-weight: 700; color: var(--cor-texto); }
+    .cat-erro-texto { font-size: 13px; line-height: 18px; font-weight: 600; color: var(--cor-texto-3); }
+
+    /* Linha do ranking: o trilho de 44px com a barra por baixo e o nome por cima; o valor fica FORA do trilho, à direita */
+    .cat-lista { display: flex; flex-direction: column; gap: 10px; }
+    .cat-linha {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-align: left;
+      transition: transform 0.35s ease;
+    }
+    .cat-linha.excluida { cursor: default; }
+    .cat-trilho {
+      position: relative;
+      flex: 1 1 0;
+      min-width: 0;
+      height: 44px;
+      padding: 0 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 12px;
+      background: var(--cor-fundo-suave);
+      overflow: hidden;
+    }
+    .cat-barra { position: absolute; left: 0; top: 0; height: 44px; min-width: 8px; border-radius: 12px; background: var(--cor-barra-categoria); transition: width 0.45s ease; }
+    .cat-barra.maior { background: var(--cor-grafite); }
+    .cat-nome-texto { position: relative; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 20px; font-weight: 700; color: var(--cor-texto); }
+    .cat-trilho.maior .cat-nome-texto { color: var(--cor-branco); }
+    .cat-linha-valor { flex-shrink: 0; width: 96px; text-align: right; white-space: nowrap; font-size: 15px; line-height: 20px; font-weight: 700; color: var(--cor-erro); }
+    .cat-linha.excluida .cat-trilho { background: var(--cor-categoria-excluida); }
+    .cat-linha.excluida .cat-nome-texto { color: var(--cor-texto-3); }
+    .cat-selo {
+      position: relative;
+      flex-shrink: 0;
+      height: 22px;
+      padding: 0 8px;
+      display: flex;
+      align-items: center;
+      border: 1px solid var(--cor-borda-selo);
+      border-radius: 8px;
+      background: var(--cor-branco);
+      font-size: 11px;
+      line-height: 14px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      color: var(--cor-texto-2);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .cat-linha, .cat-barra { transition: none; }
+    }
+
+    /* Folhas das Categorias (quadros EDITAR, NOVA e CONFIRMAR EXCLUSÃO) */
+    .folha-titulos.compacto { gap: 4px; }
+    .folha-titulos.medio { gap: 8px; }
+    .folha-titulos .campo-erro { padding-top: 4px; }
+    .cat-folha-cabecalho { display: flex; flex-direction: column; gap: 14px; }
+    .cat-botoes { padding-top: 4px; }
+    /* Nova: seletor segmentado Fixa/Temporária (a Temporária fica apagada, sem selo) */
+    .cat-tipos { padding: 4px; display: flex; gap: 4px; border: 1px solid var(--cor-divisoria); border-radius: 16px; }
+    .cat-tipo {
+      flex: 1 1 0;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 12px;
+      font-size: 15px;
+      line-height: 20px;
+      font-weight: 700;
+      color: var(--cor-texto);
+    }
+    .cat-tipo[aria-selected="true"] { background: var(--cor-grafite); color: var(--cor-branco); }
+    .cat-tipo.apagada { color: var(--cor-desabilitado-texto); }
   </style>
 </head>
 <body>
@@ -1289,7 +1417,7 @@
     </header>
 
     <nav class="atalhos" aria-label="Atalhos">
-      <button class="atalho" type="button" aria-label="Categorias">
+      <button class="atalho" id="atalho-categorias" type="button" aria-label="Categorias">
         <span class="atalho-icone">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <rect x="3.5" y="3.5" width="7" height="7" rx="2"/>
@@ -2161,6 +2289,70 @@
     </div>
   </main>
 
+  <!-- Categorias (PRO-105): ranking do mês (GET /categorias/ranking), com Nova, Editar e Excluir em folhas de baixo (fora dos <main>) -->
+  <main id="categorias" class="tela-cheia" hidden>
+    <header class="cabecalho cabecalho-registro">
+      <div class="cabecalho-linha cabecalho-titulo">
+        <button class="botao-menu" id="cat-voltar" type="button" aria-label="Voltar">
+          <svg viewBox="0 0 22 22" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17 11H5"/><path d="M10 6l-5 5 5 5"/>
+          </svg>
+        </button>
+        <h1 class="titulo-tela">Categorias</h1>
+      </div>
+    </header>
+
+    <div class="cat-corpo">
+      <div class="cat-topo">
+        <div class="cat-nova-linha">
+          <button class="cat-nova" id="cat-nova" type="button">
+            <span>Nova Categoria</span>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg>
+          </button>
+        </div>
+        <p class="cat-dica">Clique Nas Barras Para Visualizar e Editar as Categorias</p>
+      </div>
+      <div class="cat-divisoria"></div>
+
+      <div class="cat-ranking">
+        <div class="cat-resumo">
+          <p class="cat-titulo" id="cat-titulo" hidden></p>
+          <p class="cat-total-linha" id="cat-total-linha" hidden>Total Gasto: <span class="cat-total" id="cat-total"></span></p>
+        </div>
+
+        <div class="cat-carregando" id="cat-carregando" role="status">
+          <span class="estado-icone">
+            <svg class="logo-animada" viewBox="0 0 32 32" aria-hidden="true">
+              <path class="base" d="M8 8L11.5 5"/>
+              <path class="base" d="M11.5 5V22.5C11.5 25.3 10 26.8 8 26.8C6.2 26.8 5.3 25.4 6.3 24.4C7.4 23.3 10.2 24 13 24H24.5L27.5 21.2L24.5 18.4H20.5"/>
+              <path class="base" d="M24.5 18.4L27.5 15.6L24.5 12.8H19.5"/>
+              <path class="traco traco-1" pathLength="1" d="M8 8L11.5 5"/>
+              <path class="traco traco-2" pathLength="1" d="M11.5 5V22.5C11.5 25.3 10 26.8 8 26.8C6.2 26.8 5.3 25.4 6.3 24.4C7.4 23.3 10.2 24 13 24H24.5L27.5 21.2L24.5 18.4H20.5"/>
+              <path class="traco traco-3" pathLength="1" d="M24.5 18.4L27.5 15.6L24.5 12.8H19.5"/>
+            </svg>
+          </span>
+          <p>Carregando...</p>
+        </div>
+
+        <div class="cat-erro" id="cat-erro" role="alert" hidden>
+          <div class="cat-erro-caixa">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M2.5 8.8a14 14 0 0 1 19 0"/><path d="M5.8 12.3a9 9 0 0 1 12.4 0"/><path d="M9.2 15.8a4 4 0 0 1 5.6 0"/>
+              <circle class="ponto" cx="12" cy="19.2" r="1.2"/><path d="M4 4l16 16"/>
+            </svg>
+            <p class="cat-erro-titulo" id="cat-erro-titulo"></p>
+            <p class="cat-erro-texto" id="cat-erro-texto"></p>
+          </div>
+          <button class="botao-principal" id="cat-erro-tentar" type="button">Tentar de novo</button>
+        </div>
+
+        <div class="cat-conteudo" id="cat-conteudo" hidden>
+          <div class="cat-lista" id="cat-lista"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
   <!-- Aviso no topo da home depois de registrar (some em 10 s) -->
   <div class="aviso-topo" id="aviso-topo" role="status" aria-live="polite" hidden>
     <div class="aviso-topo-linha">
@@ -2228,6 +2420,84 @@
       <div class="folha-botoes">
         <button class="botao-principal" id="folha-apagar-confirmar" type="button">Sim, Apagar</button>
         <button class="botao-texto" id="folha-apagar-cancelar" type="button">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Categorias (PRO-105), folhas de baixo: editar (renomear), excluir (confirmação) e nova. Fora dos <main>, como as dos
+       Recorrentes; o toque no fundo escuro fecha a folha. -->
+  <div class="folha-camada" id="folha-cat-editar" role="dialog" aria-modal="true" aria-labelledby="folha-cat-editar-titulo" hidden>
+    <div class="folha-fundo" data-fechar="folha-cat-editar"></div>
+    <div class="folha">
+      <div class="folha-alca"></div>
+      <div class="folha-titulos compacto">
+        <h2 class="folha-titulo" id="folha-cat-editar-titulo">Editar Categoria</h2>
+        <p class="folha-texto">Escolha um novo nome para essa categoria.</p>
+      </div>
+      <div class="campo-bloco">
+        <label class="campo-rotulo" for="cat-editar-campo">Nome:</label>
+        <input class="campo-form" id="cat-editar-campo" type="text" maxlength="30" autocomplete="off" enterkeyhint="done" placeholder="Nome da categoria">
+        <p class="campo-erro" id="cat-editar-erro" role="alert" hidden>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.8v3.7"/><circle class="ponto" cx="8" cy="11" r="0.9"/></svg>
+          <span></span>
+        </p>
+      </div>
+      <p class="erro-gravacao" id="cat-editar-erro-geral" role="alert" hidden></p>
+      <div class="folha-botoes cat-botoes">
+        <button class="botao-principal" id="cat-editar-salvar" type="button">Salvar Alterações</button>
+        <button class="botao-apagar" id="cat-editar-excluir" type="button">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M8 6V4.5h4V6M6 6l.7 9.5c.1.8.7 1.5 1.5 1.5h3.6c.8 0 1.4-.7 1.5-1.5L14 6"/></svg>
+          <span>Excluir Categoria</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="folha-camada" id="folha-cat-excluir" role="dialog" aria-modal="true" aria-labelledby="folha-cat-excluir-titulo" hidden>
+    <div class="folha-fundo" data-fechar="folha-cat-excluir"></div>
+    <div class="folha">
+      <div class="folha-alca"></div>
+      <span class="folha-icone-apagar">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M8 6V4.5h4V6M6 6l.7 9.5c.1.8.7 1.5 1.5 1.5h3.6c.8 0 1.4-.7 1.5-1.5L14 6"/></svg>
+      </span>
+      <div class="folha-titulos medio">
+        <h2 class="folha-titulo" id="folha-cat-excluir-titulo">Excluir Esta Categoria?</h2>
+        <p class="folha-texto" id="folha-cat-excluir-texto"></p>
+        <p class="campo-erro" id="folha-cat-excluir-erro" role="alert" hidden>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.8v3.7"/><circle class="ponto" cx="8" cy="11" r="0.9"/></svg>
+          <span></span>
+        </p>
+      </div>
+      <div class="folha-botoes">
+        <button class="botao-principal" id="folha-cat-excluir-confirmar" type="button">Sim, Excluir</button>
+        <button class="botao-texto" id="folha-cat-excluir-cancelar" type="button">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="folha-camada" id="folha-cat-nova" role="dialog" aria-modal="true" aria-labelledby="folha-cat-nova-titulo" hidden>
+    <div class="folha-fundo" data-fechar="folha-cat-nova"></div>
+    <div class="folha">
+      <div class="folha-alca"></div>
+      <div class="cat-folha-cabecalho">
+        <h2 class="folha-titulo" id="folha-cat-nova-titulo">Nova Categoria</h2>
+        <div class="cat-tipos" role="tablist" aria-label="Tipo da categoria">
+          <button class="cat-tipo" id="cat-tipo-fixa" type="button" role="tab" aria-selected="true">Fixa</button>
+          <button class="cat-tipo apagada" id="cat-tipo-temporaria" type="button" role="tab" aria-selected="false" aria-disabled="true">Temporária</button>
+        </div>
+      </div>
+      <div class="campo-bloco">
+        <label class="campo-rotulo" for="cat-nova-campo">Nome da Nova Categoria:</label>
+        <input class="campo-form" id="cat-nova-campo" type="text" maxlength="30" autocomplete="off" enterkeyhint="done" placeholder="Ex.: Pets">
+        <p class="campo-erro" id="cat-nova-erro" role="alert" hidden>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.8v3.7"/><circle class="ponto" cx="8" cy="11" r="0.9"/></svg>
+          <span></span>
+        </p>
+      </div>
+      <p class="erro-gravacao" id="cat-nova-erro-geral" role="alert" hidden></p>
+      <div class="folha-botoes cat-botoes">
+        <button class="botao-principal" id="cat-nova-salvar" type="button" disabled>Salvar</button>
+        <button class="botao-texto" id="cat-nova-cancelar" type="button">Cancelar</button>
       </div>
     </div>
   </div>
@@ -2971,6 +3241,137 @@
         depois: " deixa de entrar todo dia " + r.dia_cobranca + ". Os gastos que já entraram nos meses anteriores continuam no histórico.",
       };
     }
+
+    // ---------- Categorias: ranking, nova, editar e excluir (PRO-105) ----------
+    // Os textos e os códigos 422 são os do contrato da PRO-104 (categorias.py e api/main.py); o teste compara com o servidor.
+    // A tela não ordena nem soma: a ordem e o total vêm prontos do servidor. Só calcula a largura da barra (gasto ÷ maior).
+    const ROTA_RANKING_CATEGORIAS = "/categorias/ranking";
+
+    // Quadro ERRO DE REDE: a caixa tracejada da tela de Categorias.
+    const MSG_CATEGORIAS_ERRO_TITULO = "Não Conseguimos Carregar Suas Categorias";
+    const MSG_CATEGORIAS_ERRO_TEXTO = "Confira a sua conexão e tente de novo.";
+    const MSG_CATEGORIA_NOME_VAZIO = "Preencha o nome para continuar";
+    const MSG_CATEGORIA_REPETIDA = "Já existe uma categoria com esse nome.";
+    const MSG_CATEGORIA_COM_RECORRENTES = "Essa categoria tem gastos recorrentes. Mude a categoria deles em Recorrentes antes de excluir.";
+    const MSG_CATEGORIA_ULTIMA = "Você precisa de pelo menos uma categoria.";
+    const MSG_CATEGORIA_NAO_EXISTE = "Esta categoria não existe mais.";
+    const MSG_CATEGORIA_SALVAR_FALHOU = "Não foi possível salvar. Tente de novo.";
+    const MSG_CATEGORIA_EXCLUIR_FALHOU = "Não foi possível excluir. Tente de novo.";
+
+    // "/categorias" (POST) ou "/categorias/{id}" (PUT e DELETE).
+    function rotaCategorias(id) {
+      return id === undefined || id === null ? "/categorias" : "/categorias/" + encodeURIComponent(id);
+    }
+
+    // "Gastos Por Categoria em Novembro:" — o mês chega por fora, já tirado do ano_mes do servidor pela mesma
+    // MESES_COMPLETOS[indiceMes(ano_mes)] do "Gastos em ..." da home (nunca do relógio do aparelho).
+    function tituloDoRanking(mes) {
+      const nome = String(mes);
+      return "Gastos Por Categoria em " + nome.charAt(0).toUpperCase() + nome.slice(1) + ":";
+    }
+
+    // O maior gasto da lista (a base das barras); 0 se não há gasto.
+    function maiorGastoCategorias(categorias) {
+      return (Array.isArray(categorias) ? categorias : []).reduce((maior, c) => Math.max(maior, Number(c.gasto) || 0), 0);
+    }
+
+    // Largura da barra de 0 a 1 (gasto ÷ maior): a maior ocupa o trilho todo. Sem gasto (R$ 0,00), 0: o CSS garante o
+    // mínimo de 8px (min-width), então a categoria continua visível e tocável.
+    function proporcaoDaBarraCategoria(gasto, maior) {
+      const g = Number(gasto);
+      const m = Number(maior);
+      if (!(m > 0) || !(g > 0)) return 0;
+      return Math.min(g / m, 1);
+    }
+
+    // A barra grafite é a do maior gasto (em centavos; empate: todas as empatadas). Sem gasto, nenhuma.
+    function barraEhMaior(gasto, maior) {
+      return Number(maior) > 0 && Math.round(Number(gasto) * 100) === Math.round(Number(maior) * 100);
+    }
+
+    // Só a categoria ativa (ativa: true e com id) abre a folha; a excluída (ativa: false, id: null) não tem toque.
+    function linhaTocavelCategoria(c) {
+      return c.ativa === true && Number.isInteger(c.id);
+    }
+
+    // Identifica a linha entre dois desenhos da lista (para a animação): o id, ou o nome da excluída.
+    function chaveDaLinhaCategoria(c) {
+      return linhaTocavelCategoria(c) ? "id:" + c.id : "excluida:" + c.nome;
+    }
+
+    // "Você já tem N categorias. Exclua uma para criar outra." — o N é o 'limite' do ranking (D11); a tela não escreve o número.
+    function mensagemLimiteCategorias(limite) {
+      const n = Number(limite);
+      return Number.isInteger(n) && n > 0
+        ? "Você já tem " + n + " categorias. Exclua uma para criar outra."
+        : "Você já atingiu o limite de categorias. Exclua uma para criar outra.";
+    }
+
+    // Erro do nome vazio: só depois de a pessoa mexer no campo (a folha Nova abre limpa, sem erro).
+    function erroDoNomeCategoria(nome, tocado) {
+      return tocado && !String(nome).trim() ? MSG_CATEGORIA_NOME_VAZIO : null;
+    }
+
+    // O Salvar liga com o nome preenchido e nada em andamento.
+    function podeSalvarCategoria(f) {
+      return !f.salvando && String(f.nome).trim().length > 0;
+    }
+
+    // Corpo do POST: SÓ nome e chave (a aba Temporária não manda nada). O servidor faz o strip().capitalize().
+    function montarCorpoNovaCategoria(nome, chave) {
+      return { nome: String(nome).trim(), chave: chave };
+    }
+
+    // Corpo do PUT: só o nome (o novo nome vale sempre para os gastos antigos, D7).
+    function montarCorpoRenomearCategoria(nome) {
+      return { nome: String(nome).trim() };
+    }
+
+    // Textos da tela da logo (D7): criar e renomear. O excluir não usa a tela da logo.
+    function textosTelaLogoCategoria(operacao) {
+      if (operacao === "renomear") {
+        return { cabecalho: "Editar Categoria", titulo: "Salvando as Alterações...", texto: "Os gastos antigos também mudam de nome." };
+      }
+      return { cabecalho: "Nova Categoria", titulo: "Criando a Categoria...", texto: "Ela já pode ser usada nos seus gastos." };
+    }
+
+    // Folha "Excluir Esta Categoria?": negrito com o nome e o resto da frase.
+    function textoConfirmarExcluirCategoria(nome) {
+      return { negrito: nome, depois: " deixa de existir. Os gastos que já entraram continuam no histórico." };
+    }
+
+    // O que fazer com a resposta de uma gravação (já depois das novas tentativas do gravarComTentativas).
+    // operacao: "criar" (POST), "renomear" (PUT) ou "excluir" (DELETE); 'limite' é o do ranking. Devolve:
+    //   { acao: "sucesso" }                                            200, 201, e no excluir também o 404 (já excluída);
+    //   { acao: "erro", mensagem, noCampo: true, campoVermelho }       422 do nome (vazio, repetido) e o limite: embaixo do campo
+    //                                                                  (no limite o campo fica normal: o problema não é o nome);
+    //   { acao: "erro", mensagem, bloqueado: true }                    excluir recusado (recorrentes, última categoria): nada é apagado;
+    //   { acao: "erro", mensagem, voltarRanking: true }                404 no renomear: a categoria sumiu;
+    //   { acao: "erro", mensagem }                                     o resto (401, 404/409 de cadastro, 503, rede, 500, chave...).
+    function decisaoDaGravacaoCategoria(operacao, resultado, limite) {
+      const falhou = operacao === "excluir" ? MSG_CATEGORIA_EXCLUIR_FALHOU : MSG_CATEGORIA_SALVAR_FALHOU;
+      if (resultado.erro === undefined) return { acao: "sucesso" };
+      if (resultado.erro === 401) return { acao: "erro", mensagem: MSG_SESSAO };
+      if (resultado.erro === 404 && resultado.detalhe === "categoria_inexistente" && operacao !== "criar") {
+        if (operacao === "excluir") return { acao: "sucesso" };
+        return { acao: "erro", mensagem: MSG_CATEGORIA_NAO_EXISTE, voltarRanking: true };
+      }
+      if (resultado.erro === 404) return { acao: "erro", mensagem: MSG_CADASTRO_404 };
+      if (resultado.erro === 409) return { acao: "erro", mensagem: MSG_CADASTRO_409 };
+      if (resultado.erro === 422) {
+        if (operacao === "excluir") {
+          if (resultado.detalhe === "categoria_com_recorrentes") return { acao: "erro", mensagem: MSG_CATEGORIA_COM_RECORRENTES, bloqueado: true };
+          if (resultado.detalhe === "ultima_categoria") return { acao: "erro", mensagem: MSG_CATEGORIA_ULTIMA, bloqueado: true };
+        } else {
+          if (resultado.detalhe === "nome_invalido") return { acao: "erro", mensagem: MSG_CATEGORIA_NOME_VAZIO, noCampo: true, campoVermelho: true };
+          if (resultado.detalhe === "nome_repetido") return { acao: "erro", mensagem: MSG_CATEGORIA_REPETIDA, noCampo: true, campoVermelho: true };
+          if (resultado.detalhe === "limite_categorias" && operacao === "criar") {
+            return { acao: "erro", mensagem: mensagemLimiteCategorias(limite), noCampo: true, campoVermelho: false };
+          }
+        }
+      }
+      return { acao: "erro", mensagem: falhou };
+    }
   </script>
   <!-- FIM FUNCOES PURAS -->
 
@@ -2994,6 +3395,7 @@
     const $ = (id) => document.getElementById(id);
 
     let nomeDoUsuario = ""; // nome do /me, para a saudação da escolha dos Recorrentes (PRO-101)
+let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Categorias carregando ou com erro (PRO-105)
 
     // Cria um elemento com classe e texto (sempre textContent, nunca innerHTML com dados da API).
     function criar(tag, classe, texto) {
@@ -3054,6 +3456,7 @@
 
     function mostrarCabecalho(me, resumo) {
       nomeDoUsuario = me.nome || "";
+      anoMesDaHome = resumo.ano_mes;
       mostrarDataESaudacao(me.nome);
       $("gasto-rotulo").textContent = "Gastos em " + MESES_COMPLETOS[indiceMes(resumo.ano_mes)];
       mostrarValorGrande(resumo.total_gasto);
@@ -3519,6 +3922,10 @@
       if (!$("tela-logo").hidden) return; // a tela da logo está por cima: nada embaixo recebe comando (PRO-100)
       if (folhaAberta()) {                // folha de baixo aberta: fecha a folha (PRO-101)
         fecharFolhaAtual();
+        return;
+      }
+      if (!$("categorias").hidden) {      // ranking das Categorias (PRO-105): sem gravar, volta à home
+        voltarNasCategorias();
         return;
       }
       const telaRecorrentes = telaRecorrentesAtual();
@@ -4237,12 +4644,12 @@
     }
 
     function folhaAberta() {
-      return FOLHAS_RECORRENTES.find((f) => !$(f).hidden) || null;
+      return FOLHAS_RECORRENTES.concat(FOLHAS_CATEGORIAS).find((f) => !$(f).hidden) || null;
     }
 
     function fecharFolhaAtual() {
       const id = folhaAberta();
-      if (!id || (id === "folha-apagar" && apagarRec.apagando)) return;
+      if (!id || (id === "folha-apagar" && apagarRec.apagando) || categoriasOcupadas()) return;
       $(id).hidden = true;
     }
 
@@ -4756,6 +5163,357 @@
       $("folha-apagar-cancelar").addEventListener("click", fecharFolhaAtual);
     }
 
+    // ---------- Categorias (PRO-105) ----------
+    // Fluxo: atalho Categorias -> ranking do mês (GET /categorias/ranking). Toque numa linha ativa -> folha Editar (renomear
+    // com PUT, ou Excluir com a folha de confirmação e DELETE). "Nova Categoria +" -> folha Nova (POST). Tudo na mesma página,
+    // trocando blocos, como os Recorrentes. Criar e renomear mostram a tela da logo com o tempo mínimo; excluir NÃO
+    // (o botão mostra "Excluindo..."). A lista nova é buscada de novo depois de cada gravação e desenhada com a animação FLIP.
+    const FOLHAS_CATEGORIAS = ["folha-cat-editar", "folha-cat-excluir", "folha-cat-nova"];
+
+    const catEstado = {
+      dados: null,       // última resposta do ranking; null = nada desenhado ainda (ou a última carga falhou): sem animação
+      versao: 0,         // sobe a cada carga e ao sair da tela: descarta resposta atrasada
+      excluindo: false,  // DELETE em andamento
+    };
+    // Estado das folhas. Os campos de nome ficam aqui; a tela só desenha.
+    const catNova = { chave: null, nome: "", tocado: false, erroServidor: null, erroGeral: null, salvando: false };
+    const catEditar = { id: null, nomeOriginal: "", nome: "", tocado: false, erroServidor: null, erroGeral: null, salvando: false };
+    const catExcluir = { id: null, nome: "" };
+
+    // Criar, renomear ou excluir em andamento: a seta, o BackButton e o fundo escuro não fazem nada.
+    function categoriasOcupadas() {
+      return catNova.salvando || catEditar.salvando || catEstado.excluindo;
+    }
+
+    function movimentoReduzido() {
+      try { return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch (e) { return false; }
+    }
+
+    // --- Navegação ---
+    function mostrarTelaCategorias() {
+      $("tela").hidden = true;
+      $("categorias").hidden = false;
+      document.body.classList.add("modo-categorias");
+      ajustarAlturaTela();
+      window.scrollTo(0, 0);
+      mostrarBackButton(true);
+    }
+
+    function voltarCategoriasParaHome() {
+      catEstado.versao++;
+      FOLHAS_CATEGORIAS.forEach((f) => { $(f).hidden = true; });
+      $("categorias").hidden = true;
+      document.body.classList.remove("modo-categorias");
+      $("tela").hidden = false;
+      $("grafico-area").scrollLeft = rolagemGrafico;
+      window.scrollTo(0, rolagemHome);
+      mostrarBackButton(false);
+    }
+
+    // Seta e BackButton: a tela volta à home. Gravando ou excluindo, espera terminar.
+    function voltarNasCategorias() {
+      if (categoriasOcupadas()) return;
+      if (document.activeElement) document.activeElement.blur();
+      voltarCategoriasParaHome();
+    }
+
+    // --- Ranking ---
+    // O título "Gastos Por Categoria em {Mês}:" com a MESMA MESES_COMPLETOS[indiceMes(ano_mes)] do "Gastos em ..." da home.
+    // Sem ano_mes conhecido (carregando ou erro antes de qualquer /resumo), esconde só o título.
+    function mostrarTituloCategorias(anoMes) {
+      $("cat-titulo").hidden = !anoMes;
+      if (anoMes) $("cat-titulo").textContent = tituloDoRanking(MESES_COMPLETOS[indiceMes(anoMes)]);
+    }
+
+    // O botão Nova Categoria, a dica e a divisória ficam sempre; muda só a seção do ranking. Carregando e erro mostram
+    // o título (se o mês é conhecido, pelo /resumo da home) e nunca o "Total Gasto".
+    function mostrarEstadoCategorias(estado) {
+      $("cat-carregando").hidden = estado !== "carregando";
+      $("cat-erro").hidden = estado !== "erro";
+      $("cat-conteudo").hidden = estado !== "ok";
+      $("cat-total-linha").hidden = estado !== "ok";
+      if (estado !== "ok") mostrarTituloCategorias(anoMesDaHome);
+    }
+
+    // O trilho de 44px leva a barra (por baixo, mesma altura) e o nome (por cima); o valor vermelho fica FORA do trilho,
+    // à direita. Tudo que vem da API entra por textContent (criar). A categoria excluída que ainda tem gasto no mês
+    // (ativa: false) é uma linha sem toque, com o nome apagado e o selo "Excluída" dentro do trilho.
+    function criarLinhaRanking(c, maior, proporcaoInicial) {
+      const tocavel = linhaTocavelCategoria(c);
+      const linha = criar(tocavel ? "button" : "div", "cat-linha" + (tocavel ? "" : " excluida"));
+      linha.dataset.chave = chaveDaLinhaCategoria(c);
+      linha.dataset.proporcao = String(proporcaoDaBarraCategoria(c.gasto, maior));
+      if (tocavel) {
+        linha.type = "button";
+        linha.dataset.id = String(c.id);
+      }
+      const grafite = barraEhMaior(c.gasto, maior);
+      const barra = criar("span", "cat-barra" + (grafite ? " maior" : ""));
+      barra.style.width = (proporcaoInicial * 100) + "%";
+      const trilho = criar("span", "cat-trilho" + (grafite ? " maior" : ""));
+      trilho.append(barra, criar("span", "cat-nome-texto", c.nome));
+      if (!tocavel) trilho.append(criar("span", "cat-selo", "Excluída"));
+      linha.append(trilho, criar("span", "cat-linha-valor", formatarDinheiro(Number(c.gasto) || 0)));
+      return linha;
+    }
+
+    // Desenha o ranking. O mês do título sai do ano_mes da resposta, pela MESMA MESES_COMPLETOS[indiceMes(ano_mes)] que monta
+    // o "Gastos em ..." da home (mostrarCabecalho): nunca do relógio do aparelho. O total e a ordem são os do servidor.
+    // Animação FLIP (só transform e transition), quando já havia uma lista visível: First = onde cada linha estava;
+    // Last = onde ficou no desenho novo; Invert = a linha volta, sem transição, para onde estava; Play = a transição a leva
+    // até o lugar novo. A barra parte da largura antiga e estica (transition de width). Na primeira carga, e com
+    // prefers-reduced-motion, nada se move: a ordem e a largura mudam na hora.
+    function desenharRanking(dados, animar) {
+      const categorias = Array.isArray(dados.categorias) ? dados.categorias : [];
+      const lista = $("cat-lista");
+      const mover = animar && !movimentoReduzido() && !$("cat-conteudo").hidden;
+      const antes = new Map();
+      if (mover) {
+        lista.querySelectorAll(".cat-linha").forEach((el) => {
+          antes.set(el.dataset.chave, { topo: el.getBoundingClientRect().top, proporcao: Number(el.dataset.proporcao) || 0 });
+        });
+      }
+      mostrarTituloCategorias(dados.ano_mes);
+      $("cat-total").textContent = formatarDinheiro(Number(dados.total_gasto) || 0);
+      const maior = maiorGastoCategorias(categorias);
+      const linhas = categorias.map((c) => {
+        const velho = antes.get(chaveDaLinhaCategoria(c));
+        return criarLinhaRanking(c, maior, mover ? (velho ? velho.proporcao : 0) : proporcaoDaBarraCategoria(c.gasto, maior));
+      });
+      lista.replaceChildren(...linhas);
+      if (!mover) return;
+      void lista.offsetWidth; // fixa o estado de partida antes de mudar
+      linhas.forEach((el) => {
+        el.querySelector(".cat-barra").style.width = (Number(el.dataset.proporcao) * 100) + "%";
+        const velho = antes.get(el.dataset.chave);
+        if (!velho) return;
+        const delta = velho.topo - el.getBoundingClientRect().top;
+        if (delta !== 0) {
+          el.style.transition = "none";
+          el.style.transform = "translateY(" + delta + "px)";
+        }
+      });
+      void lista.offsetWidth;
+      linhas.forEach((el) => {
+        if (!el.style.transform) return;
+        el.style.transition = "";
+        el.style.transform = "";
+      });
+    }
+
+    // 'resultado' no formato do 'chamar': { dados } ou { erro }. 401, 404, 409 e rede com os textos de sempre.
+    function aplicarResultadoCategorias(resultado) {
+      if (resultado.erro !== undefined) {
+        catEstado.dados = null;
+        // Rede e erro do servidor: os textos do quadro ERRO DE REDE. 401, 404 e 409 de cadastro: as mensagens de sempre.
+        const erro = mensagemDeErro([resultado]);
+        $("cat-erro-titulo").textContent = erro.tentarDeNovo ? MSG_CATEGORIAS_ERRO_TITULO : erro.texto;
+        $("cat-erro-texto").textContent = MSG_CATEGORIAS_ERRO_TEXTO;
+        $("cat-erro-texto").hidden = !erro.tentarDeNovo;
+        mostrarEstadoCategorias("erro");
+        return;
+      }
+      const animar = catEstado.dados !== null; // só anima se já havia uma lista antes
+      desenharRanking(resultado.dados, animar);
+      catEstado.dados = resultado.dados;
+      mostrarEstadoCategorias("ok");
+    }
+
+    // Reabrindo a tela, a lista antiga continua visível enquanto a nova chega (é dela que a animação parte).
+    async function carregarCategorias() {
+      const versao = ++catEstado.versao;
+      mostrarEstadoCategorias(catEstado.dados ? "ok" : "carregando");
+      const resultado = await chamar(ROTA_RANKING_CATEGORIAS);
+      if (versao !== catEstado.versao) return; // o usuário já saiu da tela ou a lista foi recarregada
+      aplicarResultadoCategorias(resultado);
+    }
+
+    function abrirCategorias() {
+      rolagemHome = window.scrollY;
+      rolagemGrafico = $("grafico-area").scrollLeft;
+      mostrarTelaCategorias();
+      carregarCategorias();
+    }
+
+    // --- Folhas Nova e Editar (o mesmo molde: campo de nome, erro embaixo do campo, erro geral acima do Salvar) ---
+    // prefixo: "cat-nova" ou "cat-editar". Erro de campo: o do servidor (422) ou o nome vazio (depois de mexer no campo).
+    function desenharFolhaNome(prefixo, f) {
+      const vazio = erroDoNomeCategoria(f.nome, f.tocado);
+      const erro = f.erroServidor || (vazio ? { mensagem: vazio, campoVermelho: true } : null);
+      const campo = $(prefixo + "-campo");
+      campo.classList.toggle("com-erro", !!erro && erro.campoVermelho);
+      campo.disabled = f.salvando;
+      $(prefixo + "-erro").hidden = !erro;
+      $(prefixo + "-erro").querySelector("span").textContent = erro ? erro.mensagem : "";
+      $(prefixo + "-erro-geral").hidden = !f.erroGeral;
+      $(prefixo + "-erro-geral").textContent = f.erroGeral || "";
+      $(prefixo + "-salvar").disabled = !podeSalvarCategoria(f);
+      $(prefixo + "-salvar").textContent = f.salvando ? "Salvando..." : (prefixo === "cat-nova" ? "Salvar" : "Salvar Alterações");
+      // Os botões que só existem numa das folhas (Cancelar da Nova, Excluir da Editar) também travam.
+      ["-cancelar", "-excluir"].forEach((sufixo) => { if ($(prefixo + sufixo)) $(prefixo + sufixo).disabled = f.salvando; });
+    }
+
+    function aoDigitarNome(prefixo, f) {
+      f.nome = $(prefixo + "-campo").value;
+      f.tocado = true;
+      f.erroServidor = null; // o "já existe" some ao mudar o nome
+      f.erroGeral = null;
+      desenharFolhaNome(prefixo, f);
+    }
+
+    // A chave nasce AQUI, ao abrir a folha Nova, e se repete nas novas tentativas do mesmo Salvar.
+    function abrirFolhaNova() {
+      if (categoriasOcupadas()) return;
+      catNova.chave = gerarChave();
+      catNova.nome = "";
+      catNova.tocado = false;
+      catNova.erroServidor = null;
+      catNova.erroGeral = null;
+      catNova.salvando = false;
+      $("cat-nova-campo").value = "";
+      desenharFolhaNome("cat-nova", catNova);
+      $("folha-cat-nova").hidden = false;
+    }
+
+    function abrirFolhaEditar(c) {
+      if (categoriasOcupadas()) return;
+      catEditar.id = c.id;
+      catEditar.nomeOriginal = c.nome;
+      catEditar.nome = c.nome;
+      catEditar.tocado = false;
+      catEditar.erroServidor = null;
+      catEditar.erroGeral = null;
+      catEditar.salvando = false;
+      $("cat-editar-campo").value = c.nome;
+      desenharFolhaNome("cat-editar", catEditar);
+      $("folha-cat-editar").hidden = false;
+    }
+
+    // --- Salvar (criar e renomear): tela da logo por no mínimo TEMPO_MINIMO_LOGO_MS, contado do toque ---
+    // O primeiro toque trava campo e botão. O POST (ou PUT) sai na hora, com as novas tentativas de sempre (3 tentativas,
+    // só em 503 e rede, o MESMO corpo e a MESMA chave); no sucesso, o ranking novo é buscado já dentro da espera, para a
+    // logo sair direto na lista pronta. O erro tira a logo na hora e mostra a mensagem na folha.
+    async function salvarCategoria(operacao) {
+      const criarNova = operacao === "criar";
+      const f = criarNova ? catNova : catEditar;
+      const prefixo = criarNova ? "cat-nova" : "cat-editar";
+      const folha = criarNova ? "folha-cat-nova" : "folha-cat-editar";
+      if (!podeSalvarCategoria(f)) return;
+      f.salvando = true;
+      f.erroServidor = null;
+      f.erroGeral = null;
+      desenharFolhaNome(prefixo, f);
+      const logo = textosTelaLogoCategoria(operacao);
+      mostrarTelaLogo(logo.cabecalho, logo.titulo, logo.texto);
+      const limite = catEstado.dados ? catEstado.dados.limite : undefined;
+      const corpo = criarNova ? montarCorpoNovaCategoria(f.nome, f.chave) : montarCorpoRenomearCategoria(f.nome);
+      const rota = criarNova ? rotaCategorias() : rotaCategorias(f.id);
+      const metodo = criarNova ? "POST" : "PUT";
+      const resultado = await comTempoMinimo(
+        (async () => {
+          const r = await gravarComTentativas((c) => enviarComMetodo(metodo, rota, c, 15000), corpo, esperar);
+          if (decisaoDaGravacaoCategoria(operacao, r, limite).acao !== "sucesso") return { r: r };
+          return { r: r, ranking: await chamar(ROTA_RANKING_CATEGORIAS) };
+        })(),
+        TEMPO_MINIMO_LOGO_MS, (x) => decisaoDaGravacaoCategoria(operacao, x.r, limite).acao === "sucesso", () => performance.now(), esperar
+      );
+      f.salvando = false;
+      const decisao = decisaoDaGravacaoCategoria(operacao, resultado.r, limite);
+      if (decisao.acao === "sucesso") {
+        catEstado.versao++;
+        $(folha).hidden = true;
+        aplicarResultadoCategorias(resultado.ranking);
+        esconderTelaLogo(); // na mesma tarefa do desenho: a logo some sem um desenho no meio
+        return;
+      }
+      esconderTelaLogo();
+      if (decisao.voltarRanking) {
+        $(folha).hidden = true;
+        mostrarAlertaNativo(decisao.mensagem);
+        carregarCategorias();
+        return;
+      }
+      if (decisao.noCampo) f.erroServidor = { mensagem: decisao.mensagem, campoVermelho: decisao.campoVermelho };
+      else f.erroGeral = decisao.mensagem;
+      desenharFolhaNome(prefixo, f);
+    }
+
+    // --- Excluir: folha de confirmação, SEM tela da logo ("Excluindo..." no botão) ---
+    function mostrarErroExcluir(mensagem, bloqueado) {
+      $("folha-cat-excluir-erro").hidden = !mensagem;
+      $("folha-cat-excluir-erro").querySelector("span").textContent = mensagem || "";
+      // Bloqueado: "Sim, Excluir" apagado e só o "Cancelar"; nada é apagado.
+      $("folha-cat-excluir-confirmar").disabled = !!bloqueado || catEstado.excluindo;
+      $("folha-cat-excluir-confirmar").textContent = catEstado.excluindo ? "Excluindo..." : "Sim, Excluir";
+      $("folha-cat-excluir-cancelar").disabled = catEstado.excluindo;
+    }
+
+    function abrirFolhaExcluir() {
+      if (categoriasOcupadas() || catEditar.id === null) return;
+      catExcluir.id = catEditar.id;
+      catExcluir.nome = catEditar.nomeOriginal;
+      const texto = textoConfirmarExcluirCategoria(catExcluir.nome);
+      $("folha-cat-excluir-texto").replaceChildren(criar("strong", "", texto.negrito), document.createTextNode(texto.depois));
+      mostrarErroExcluir(null, false);
+      $("folha-cat-editar").hidden = true;
+      $("folha-cat-excluir").hidden = false;
+    }
+
+    // DELETE pelo mesmo gravarComTentativas. 200 e 404 (já excluída, inclusive depois de uma nova tentativa) são sucesso.
+    async function excluirCategoria() {
+      if (catEstado.excluindo) return;
+      catEstado.excluindo = true;
+      mostrarErroExcluir(null, false);
+      const limite = catEstado.dados ? catEstado.dados.limite : undefined;
+      const rota = rotaCategorias(catExcluir.id);
+      const resultado = await gravarComTentativas(() => enviarComMetodo("DELETE", rota, undefined, 15000), null, esperar);
+      const decisao = decisaoDaGravacaoCategoria("excluir", resultado, limite);
+      if (decisao.acao === "sucesso") {
+        const ranking = await chamar(ROTA_RANKING_CATEGORIAS);
+        catEstado.excluindo = false;
+        catEstado.versao++;
+        $("folha-cat-excluir").hidden = true;
+        aplicarResultadoCategorias(ranking);
+        return;
+      }
+      catEstado.excluindo = false;
+      mostrarErroExcluir(decisao.mensagem, decisao.bloqueado);
+    }
+
+    function iniciarCategorias() {
+      $("atalho-categorias").addEventListener("click", abrirCategorias);
+      $("cat-voltar").addEventListener("click", voltarUmNivel);
+      $("cat-erro-tentar").addEventListener("click", () => carregarCategorias());
+      $("cat-nova").addEventListener("click", abrirFolhaNova);
+      $("cat-lista").addEventListener("click", (evento) => {
+        const linha = evento.target.closest("button.cat-linha");
+        if (!linha || !catEstado.dados) return;
+        const c = catEstado.dados.categorias.find((item) => String(item.id) === linha.dataset.id);
+        if (c) abrirFolhaEditar(c);
+      });
+
+      // Nova. A aba "Temporária" não muda nada: só o alerta nativo "Em breve" (a "Fixa" continua marcada).
+      $("cat-tipo-temporaria").addEventListener("click", avisarEmBreve);
+      $("cat-nova-campo").addEventListener("input", () => aoDigitarNome("cat-nova", catNova));
+      $("cat-nova-campo").addEventListener("keydown", (evento) => {
+        if (evento.key === "Enter") { evento.preventDefault(); salvarCategoria("criar"); }
+      });
+      $("cat-nova-salvar").addEventListener("click", () => salvarCategoria("criar"));
+      $("cat-nova-cancelar").addEventListener("click", fecharFolhaAtual);
+
+      // Editar
+      $("cat-editar-campo").addEventListener("input", () => aoDigitarNome("cat-editar", catEditar));
+      $("cat-editar-campo").addEventListener("keydown", (evento) => {
+        if (evento.key === "Enter") { evento.preventDefault(); salvarCategoria("renomear"); }
+      });
+      $("cat-editar-salvar").addEventListener("click", () => salvarCategoria("renomear"));
+      $("cat-editar-excluir").addEventListener("click", abrirFolhaExcluir);
+
+      // Excluir. O toque no fundo escuro das três folhas já é ligado pelo [data-fechar] do iniciarRecorrentes.
+      $("folha-cat-excluir-confirmar").addEventListener("click", excluirCategoria);
+      $("folha-cat-excluir-cancelar").addEventListener("click", fecharFolhaAtual);
+    }
+
     function iniciar() {
       if (tg) {
         try { tg.ready(); } catch (e) { /* versão antiga */ }
@@ -4772,11 +5530,12 @@
       }
 
       $("botao-menu").addEventListener("click", avisarEmBreve);
-      // "Registrar" (PRO-89) e "Recorrentes" (PRO-101) abrem as suas telas; só "Categorias" segue com o "Em breve".
-      document.querySelectorAll(".atalho:not(#atalho-registrar):not(#atalho-recorrentes)").forEach((b) => b.addEventListener("click", avisarEmBreve));
+      // Os três atalhos da home abrem telas: "Registrar" (PRO-89), "Recorrentes" (PRO-101) e "Categorias" (PRO-105).
+      // Nenhum segue com o "Em breve".
       iniciarRegistro();
       iniciarBoasVindas();
       iniciarRecorrentes();
+      iniciarCategorias();
       $("aviso-botao").addEventListener("click", () => carregar()); // sem o evento no lugar do 'abertura'
 
       // Detalhe do gasto: toque na linha, voltar (cabeçalho, erro ou BackButton do Telegram) e ações "Em breve".

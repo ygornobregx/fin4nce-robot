@@ -37,6 +37,14 @@ e descrição, sem aviso de renda), a folha do dia com os textos da receita, os 
 (com o total em verde e o vazio da receita), a gravação pelas rotas /receitas-recorrentes (chave só no Novo,
 tela da logo no criar e no editar, nenhuma no apagar), o cartão do salário abrindo direto a Nova Receita e,
 no node, as funções puras novas (dica e corpo sem categoria, textos, rota, aba e decisão por status da receita).
+
+Desde a PRO-105, a tela Categorias no Mini App: o atalho ligado (nenhum atalho da home segue em "Em breve"), o ranking do
+mês (título pela mesma MESES_COMPLETOS[indiceMes(ano_mes)] da home, sem new Date), as barras (largura mínima de 8px, a maior
+em grafite, a função pura da proporção), a linha excluída sem toque, a animação FLIP só com transform e transition (e nada se
+move com prefers-reduced-motion), as folhas Nova (sem descrição, sem "Em breve" visível, a Temporária só mostra o alerta
+nativo), Editar e Excluir (bloqueado: só o Cancelar), a chave só ao abrir a folha Nova, a tela da logo com o tempo mínimo
+no criar e no renomear e fora do excluir, o corpo do POST só com nome e chave, os códigos 422 e os limites comparados com o
+categorias.py e a api/main.py, e a decisão por status de cada gravação no node.
 """
 import json
 import os
@@ -51,6 +59,7 @@ import unittest
 RAIZ = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, RAIZ)
 import cadastro  # noqa: E402  (só a biblioteca padrão e o registro.py: sem .env, rede nem banco)
+import categorias  # noqa: E402  (PRO-105: idem; os limites, os códigos e o título são comparados com o servidor)
 import recorrentes  # noqa: E402  (idem: só o cadastro.py e o registro.py)
 import registro  # noqa: E402
 CAMINHO_HOME = os.path.join(RAIZ, 'mini-apps', 'home', 'index.html')
@@ -148,14 +157,15 @@ class TestEstruturaDaHome(unittest.TestCase):
         principal = codigo_principal(HOME)
         self.assertIn('$("atalho-registrar").addEventListener("click", abrirOpcoes)', principal)
 
-    def test_so_categorias_continua_em_breve(self):
+    def test_categorias_ligado_nenhum_atalho_segue_em_breve(self):
+        # PRO-105: era "Categorias ainda Em breve" (o seletor .atalho:not(#atalho-registrar):not(#atalho-recorrentes) ligava o
+        # aviso só nele). Agora o "Categorias" abre a tela e o seletor saiu: nenhum atalho da home segue com o "Em breve".
         principal = codigo_principal(HOME)
-        # Todo .atalho, MENOS o Registrar e (desde a PRO-101) o Recorrentes, segue com o aviso "Em breve".
-        self.assertIn('document.querySelectorAll(".atalho:not(#atalho-registrar):not(#atalho-recorrentes)")'
-                      '.forEach((b) => b.addEventListener("click", avisarEmBreve))', principal)
+        self.assertNotIn('document.querySelectorAll(".atalho', principal)
+        self.assertRegex(HOME, r'<button class="atalho" id="atalho-categorias" type="button" aria-label="Categorias">')
+        self.assertIn('$("atalho-categorias").addEventListener("click", abrirCategorias);', principal)
         self.assertRegex(HOME, r'<button class="atalho" id="atalho-recorrentes" type="button" aria-label="Recorrentes">')
         self.assertIn('$("atalho-recorrentes").addEventListener("click", abrirRecorrentes);', principal)
-        self.assertIn('aria-label="Categorias"', HOME)
         self.assertIn('aria-label="Recorrentes"', HOME)
         # As ações e os lápis do detalhe continuam com o seletor de antes.
         self.assertIn('document.querySelectorAll(".acao, .cartao-icone").forEach((b) => b.addEventListener("click", avisarEmBreve))',
@@ -207,10 +217,12 @@ class TestEstruturaDaHome(unittest.TestCase):
 
     def test_chave_so_nasce_com_a_previa_ou_o_formulario_novo(self):
         principal = codigo_principal(HOME)
-        # Duas chamadas só: a prévia do Registrar (interpretar) e o formulário Novo dos recorrentes (PRO-101).
-        self.assertEqual(principal.count('gerarChave('), 2)
+        # Três chamadas só: a prévia do Registrar (interpretar), o formulário Novo dos recorrentes (PRO-101) e, desde a
+        # PRO-105, a abertura da folha Nova Categoria (eram 2; a terceira é a da folha, nunca o Salvar).
+        self.assertEqual(principal.count('gerarChave('), 3)
         self.assertIn('gerarChave()', corpo_da_funcao(principal, 'async function interpretar'))
         self.assertIn('gerarChave()', corpo_da_funcao(principal, 'function abrirFormNovo'))
+        self.assertIn('gerarChave()', corpo_da_funcao(principal, 'function abrirFolhaNova'))
         self.assertNotIn('gerarChave', corpo_da_funcao(principal, 'async function confirmar'))
         # A gravação usa o corpo guardado, e as novas tentativas passam por gravarComTentativas.
         confirmar = corpo_da_funcao(principal, 'async function confirmar')
@@ -846,8 +858,9 @@ class TestEstruturaDasBoasVindas(unittest.TestCase):
         raiz = HOME[HOME.index(':root {'):HOME.index('}', HOME.index(':root {'))]
         for token in ('--cor-erro: #D93025;', '--cor-erro-fundo: #FFF5F4;', '--cor-receita-fundo: #15803D14;'):
             self.assertIn(token, raiz)
-        # 6 = os 3 traços do "Buscando o Seu Cadastro..." + os 3 da tela da logo (PRO-100).
-        self.assertEqual(HOME.count('pathLength="1"'), 6)
+        # 9 = os 3 traços do "Buscando o Seu Cadastro..." + os 3 da tela da logo (PRO-100) + os 3 do "Carregando..." das
+        # Categorias (PRO-105, a logo pequena do quadro CARREGANDO; eram 6).
+        self.assertEqual(HOME.count('pathLength="1"'), 9)
         for quadro in ('@keyframes tracar-1', '@keyframes tracar-2', '@keyframes tracar-3', 'prefers-reduced-motion'):
             self.assertIn(quadro, HOME)
 
@@ -1406,6 +1419,7 @@ class TestEstruturaDaTelaDaLogo(unittest.TestCase):
         self.assertIn('comTempoMinimo(', corpo_da_funcao(principal, 'async function carregar'))
         self.assertIn('comTempoMinimo(', corpo_da_funcao(principal, 'async function enviarCadastro'))
         self.assertIn('comTempoMinimo(', corpo_da_funcao(principal, 'async function salvarRecorrente'))  # PRO-101: criar e editar
+        self.assertIn('comTempoMinimo(', corpo_da_funcao(principal, 'async function salvarCategoria'))   # PRO-105: criar e renomear
         for assinatura in ('async function interpretar', 'async function confirmar', 'function concluirRegistro',
                            'async function buscarCadastroDoAmigo', 'async function carregarDetalhe',
                            'function terminarTour', 'async function apagarRecorrente',
@@ -1414,9 +1428,10 @@ class TestEstruturaDaTelaDaLogo(unittest.TestCase):
                 corpo = corpo_da_funcao(principal, assinatura)
                 self.assertNotIn('comTempoMinimo', corpo)
                 self.assertNotIn('mostrarTelaLogo', corpo)
-        # Fora dessas três funções (abertura, cadastro e salvar recorrente), ninguém chama o tempo mínimo.
+        # Fora dessas quatro funções (abertura, cadastro, salvar recorrente e, desde a PRO-105, salvar categoria; eram
+        # três), ninguém chama o tempo mínimo.
         chamadas = principal.count('comTempoMinimo(')
-        self.assertEqual(chamadas, 3)
+        self.assertEqual(chamadas, 4)
 
     def test_abertura_so_na_primeira_carga(self):
         principal = codigo_principal(HOME)
@@ -1660,18 +1675,23 @@ class TestEstruturaDosRecorrentes(unittest.TestCase):
         # A folha pede a confirmação antes: "Apagar Recorrente" só abre a folha.
         self.assertIn('$("rf-apagar").addEventListener("click", abrirFolhaApagar);', principal)
         self.assertNotIn('DELETE', corpo_da_funcao(principal, 'function abrirFolhaApagar'))
-        self.assertEqual(principal.count('"DELETE"'), 1)
+        # Dois DELETE: o do recorrente (aqui) e, desde a PRO-105, o da categoria (eram 1; o outro é o excluirCategoria).
+        self.assertEqual(principal.count('"DELETE"'), 2)
+        self.assertEqual(corpo_da_funcao(principal, 'async function excluirCategoria').count('"DELETE"'), 1)
 
-    def test_comTempoMinimo_so_nos_tres_lugares(self):
+    def test_comTempoMinimo_so_nos_quatro_lugares(self):
+        # Eram três (abertura, cadastro e salvar recorrente); a PRO-105 acrescenta o salvar categoria (criar e renomear).
         principal = codigo_principal(HOME)
-        for assinatura in ('async function carregar(', 'async function enviarCadastro', 'async function salvarRecorrente'):
+        for assinatura in ('async function carregar(', 'async function enviarCadastro', 'async function salvarRecorrente',
+                           'async function salvarCategoria'):
             with self.subTest(funcao=assinatura):
                 self.assertIn('comTempoMinimo(', corpo_da_funcao(principal, assinatura))
-        # Chamadas à tela da logo (fora a definição): o cadastro e o salvar recorrente. A abertura já vem visível no HTML.
+        # Chamadas à tela da logo (fora a definição): o cadastro, o salvar recorrente e (PRO-105) o salvar categoria.
+        # A abertura já vem visível no HTML.
         sem_comentarios = re.sub(r'//[^\n]*', '', principal)
         chamadas = [m for m in re.finditer(r'\bmostrarTelaLogo\(', sem_comentarios)
                     if not sem_comentarios[:m.start()].endswith('function ')]
-        self.assertEqual(len(chamadas), 2)
+        self.assertEqual(len(chamadas), 3)
 
     def test_voltar_sobe_um_nivel_e_a_logo_bloqueia(self):
         principal = codigo_principal(HOME)
@@ -1855,7 +1875,7 @@ class TestEstruturaDosRecorrentes(unittest.TestCase):
         self.assertIn('listaRecorrentes.aba = abaDepoisDeSalvar(tipo);', apagar)
         self.assertIn('chamar(rotaRecorrentes(tipo))', apagar)
         # A tela da logo e o tempo mínimo seguem só no criar/editar (um lugar), nunca no apagar nem na lista.
-        self.assertEqual(principal.count('comTempoMinimo('), 3)
+        self.assertEqual(principal.count('comTempoMinimo('), 4)   # eram 3; o quarto é o salvarCategoria (PRO-105)
         self.assertEqual(salvar.count('comTempoMinimo('), 1)
         # O texto do apagar da receita vem da função pura, por textContent (criar).
         self.assertIn('textoConfirmarApagar(r, formRec.tipo)', corpo_da_funcao(principal, 'function abrirFolhaApagar'))
@@ -2409,6 +2429,708 @@ class TestRecorrentesFuncoesPuras(unittest.TestCase):
             })();
         """))
         self.assertEqual(obtido, {'iguais': True, 'n': 3, 'status': 201, 'tem_chave': 'chave-do-formulario'})
+
+
+# ----------------------------------------------------------------------------
+# 6. Categorias no Mini App (PRO-105)
+# ----------------------------------------------------------------------------
+
+def bloco_folha(identificador):
+    """Texto de uma folha de baixo (<div class="folha-camada" id="...">) até a próxima folha ou o bloco de funções puras."""
+    inicio = HOME.index('<div class="folha-camada" id="%s"' % identificador)
+    fim = len(HOME)
+    for marca in ('<div class="folha-camada"', '<!-- INICIO FUNCOES PURAS'):
+        achou = HOME.find(marca, inicio + 10)
+        if achou != -1:
+            fim = min(fim, achou)
+    return HOME[inicio:fim]
+
+
+def css_da_home():
+    return HOME[HOME.index('<style>'):HOME.index('</style>')]
+
+
+def regra_css(seletor):
+    """Corpo da primeira regra '<seletor> { ... }' que começa uma linha do CSS."""
+    return re.search(r'(?m)^\s*' + re.escape(seletor) + r'\s*\{([^}]*)\}', css_da_home()).group(1)
+
+
+class TestEstruturaDasCategorias(unittest.TestCase):
+    FOLHAS = ('folha-cat-editar', 'folha-cat-excluir', 'folha-cat-nova')
+
+    def test_bloco_main_e_folhas_fora_dos_main(self):
+        self.assertRegex(HOME, r'<main id="categorias" class="tela-cheia" hidden>')
+        ultimo_main = HOME.rindex('</main>')
+        for identificador in self.FOLHAS:
+            with self.subTest(folha=identificador):
+                self.assertRegex(HOME, r'<div class="folha-camada" id="%s" role="dialog" aria-modal="true" aria-labelledby="[^"]+" hidden>' % identificador)
+                self.assertGreater(HOME.index('id="%s"' % identificador), ultimo_main)
+                # O toque no fundo escuro fecha a folha (o [data-fechar] do iniciarRecorrentes liga todos).
+                self.assertIn('<div class="folha-fundo" data-fechar="%s"></div>' % identificador, bloco_folha(identificador))
+        # A tela entra antes do aviso do topo (que continua depois do último </main>).
+        self.assertLess(HOME.index('<main id="categorias"'), HOME.index('id="aviso-topo"'))
+
+    def test_ids_unicos(self):
+        ids = ('atalho-categorias', 'cat-voltar', 'cat-nova', 'cat-carregando', 'cat-erro', 'cat-erro-texto', 'cat-erro-tentar',
+               'cat-conteudo', 'cat-titulo', 'cat-total', 'cat-lista',
+               'cat-editar-campo', 'cat-editar-erro', 'cat-editar-erro-geral', 'cat-editar-salvar', 'cat-editar-excluir',
+               'folha-cat-excluir-texto', 'folha-cat-excluir-erro', 'folha-cat-excluir-confirmar', 'folha-cat-excluir-cancelar',
+               'cat-tipo-fixa', 'cat-tipo-temporaria', 'cat-nova-campo', 'cat-nova-erro', 'cat-nova-erro-geral',
+               'cat-nova-salvar', 'cat-nova-cancelar') + self.FOLHAS
+        for identificador in ids:
+            with self.subTest(id=identificador):
+                self.assertEqual(HOME.count('id="%s"' % identificador), 1)
+
+    def test_textos_dos_quadros(self):
+        tela = bloco_main('categorias')
+        for texto in ('>Categorias<', 'Nova Categoria', 'Clique Nas Barras Para Visualizar e Editar as Categorias',
+                      'Carregando...', 'Tentar de novo', 'Total Gasto:'):
+            with self.subTest(texto=texto):
+                self.assertIn(texto, tela)
+        self.assertIn('Editar Categoria', bloco_folha('folha-cat-editar'))
+        for texto in ('Nome:', 'Salvar Alterações', 'Excluir Categoria'):
+            self.assertIn(texto, bloco_folha('folha-cat-editar'))
+        for texto in ('Excluir Esta Categoria?', 'Sim, Excluir', 'Cancelar'):
+            self.assertIn(texto, bloco_folha('folha-cat-excluir'))
+        for texto in ('Nova Categoria', 'Fixa', 'Temporária', 'Nome da Nova Categoria:', 'Ex.: Pets', 'Salvar', 'Cancelar'):
+            self.assertIn(texto, bloco_folha('folha-cat-nova'))
+        # O nome exibido é L1d3r; "Fin4nce" não aparece na tela nova.
+        self.assertNotIn('Fin4nce', tela)
+
+    def test_atalho_ligado_e_nenhum_atalho_da_home_segue_em_breve(self):
+        principal = codigo_principal(HOME)
+        self.assertRegex(HOME, r'<button class="atalho" id="atalho-categorias" type="button" aria-label="Categorias">')
+        self.assertIn('$("atalho-categorias").addEventListener("click", abrirCategorias);', corpo_da_funcao(principal, 'function iniciarCategorias'))
+        self.assertIn('iniciarCategorias();', corpo_da_funcao(principal, 'function iniciar()'))
+        # Os três atalhos abrem telas: nenhum seletor de ".atalho" liga o aviso "Em breve" (o atalho Categorias saiu dele).
+        self.assertNotIn('document.querySelectorAll(".atalho', principal)
+        abrir = corpo_da_funcao(principal, 'function abrirCategorias')
+        self.assertIn('mostrarTelaCategorias();', abrir)
+        self.assertIn('carregarCategorias();', abrir)
+        self.assertIn('chamar(ROTA_RANKING_CATEGORIAS)', corpo_da_funcao(principal, 'async function carregarCategorias('))
+
+    def test_chave_so_nasce_ao_abrir_a_folha_nova(self):
+        principal = codigo_principal(HOME)
+        self.assertEqual(corpo_da_funcao(principal, 'function abrirFolhaNova').count('gerarChave()'), 1)
+        self.assertIn('catNova.chave = gerarChave();', corpo_da_funcao(principal, 'function abrirFolhaNova'))
+        for assinatura in ('async function salvarCategoria', 'function abrirFolhaEditar', 'async function excluirCategoria',
+                           'function aoDigitarNome', 'function desenharFolhaNome'):
+            with self.subTest(funcao=assinatura):
+                self.assertNotIn('gerarChave', corpo_da_funcao(principal, assinatura))
+        # A chave vale para todas as tentativas do mesmo Salvar: o corpo é montado uma vez, antes de gravarComTentativas.
+        salvar = corpo_da_funcao(principal, 'async function salvarCategoria')
+        self.assertEqual(salvar.count('montarCorpoNovaCategoria('), 1)
+        self.assertIn('montarCorpoNovaCategoria(f.nome, f.chave)', salvar)
+        self.assertLess(salvar.index('const corpo ='), salvar.index('gravarComTentativas('))
+        self.assertIn('gravarComTentativas((c) => enviarComMetodo(metodo, rota, c, 15000), corpo, esperar)', salvar)
+
+    def test_logo_com_tempo_minimo_no_criar_e_no_renomear_e_fora_do_excluir(self):
+        principal = codigo_principal(HOME)
+        salvar = corpo_da_funcao(principal, 'async function salvarCategoria').replace('\r\n', '\n')
+        # Uma função só para criar (POST) e renomear (PUT): os dois passam pela tela da logo com o tempo mínimo.
+        self.assertIn('const metodo = criarNova ? "POST" : "PUT";', salvar)
+        self.assertIn('TEMPO_MINIMO_LOGO_MS, (x) => decisaoDaGravacaoCategoria(operacao, x.r, limite).acao === "sucesso", () => performance.now(), esperar', salvar)
+        self.assertIn('mostrarTelaLogo(logo.cabecalho, logo.titulo, logo.texto);', salvar)
+        self.assertIn('textosTelaLogoCategoria(operacao)', salvar)
+        self.assertEqual(salvar.count('comTempoMinimo('), 1)
+        # Trava no primeiro toque, antes de qualquer chamada; a logo entra antes do POST/PUT; sai no erro na hora.
+        self.assertLess(salvar.index('f.salvando = true;'), salvar.index('mostrarTelaLogo('))
+        self.assertLess(salvar.index('mostrarTelaLogo('), salvar.index('gravarComTentativas('))
+        self.assertLess(salvar.index('comTempoMinimo('), salvar.index('f.salvando = false;'))
+        self.assertIn('if (!podeSalvarCategoria(f)) return;', salvar)
+        self.assertEqual(salvar.count('esconderTelaLogo();'), 2)
+        # Sucesso: o ranking novo é desenhado na mesma tarefa em que a logo sai.
+        sucesso = salvar[salvar.index('if (decisao.acao === "sucesso")'):]
+        self.assertLess(sucesso.index('aplicarResultadoCategorias(resultado.ranking);'), sucesso.index('esconderTelaLogo();'))
+        self.assertIn('chamar(ROTA_RANKING_CATEGORIAS)', salvar)
+        # Excluir: sem logo e sem tempo mínimo; "Excluindo..." no botão.
+        excluir = corpo_da_funcao(principal, 'async function excluirCategoria')
+        for proibido in ('comTempoMinimo', 'mostrarTelaLogo', 'esconderTelaLogo'):
+            with self.subTest(proibido=proibido):
+                self.assertNotIn(proibido, excluir)
+        self.assertIn('"Excluindo..."', corpo_da_funcao(principal, 'function mostrarErroExcluir'))
+        self.assertIn('gravarComTentativas(() => enviarComMetodo("DELETE", rota, undefined, 15000), null, esperar)', excluir)
+        self.assertIn('if (catEstado.excluindo) return;', excluir)
+        self.assertLess(excluir.index('catEstado.excluindo = true;'), excluir.index('gravarComTentativas('))
+        # A abertura da folha de exclusão só abre a folha (o DELETE está só no excluirCategoria).
+        self.assertNotIn('DELETE', corpo_da_funcao(principal, 'function abrirFolhaExcluir'))
+        # Quem mais chama o tempo mínimo e a logo: a abertura, o cadastro, o salvar recorrente e este (nada no resto).
+        for assinatura in ('function abrirCategorias', 'async function carregarCategorias(', 'function abrirFolhaNova',
+                           'function abrirFolhaEditar', 'function aplicarResultadoCategorias', 'function desenharRanking'):
+            with self.subTest(funcao=assinatura):
+                corpo = corpo_da_funcao(principal, assinatura)
+                self.assertNotIn('comTempoMinimo', corpo)
+                self.assertNotIn('mostrarTelaLogo', corpo)
+
+    def test_rotas_campos_codigos_e_limites_sao_os_do_servidor(self):
+        api = open(os.path.join(RAIZ, 'api', 'main.py'), encoding='utf-8').read()
+        fonte = open(os.path.join(RAIZ, 'categorias.py'), encoding='utf-8').read()
+        for rota in ('@app.get("/categorias/ranking")', '@app.post("/categorias", status_code=201)',
+                     '@app.put("/categorias/{categoria_id}")', '@app.delete("/categorias/{categoria_id}")'):
+            with self.subTest(rota=rota):
+                self.assertIn(rota, api)
+        for campo in ('"ano_mes"', '"total_gasto"', '"categorias"', '"limite"', '"ativa"'):
+            with self.subTest(campo=campo):
+                self.assertIn(campo, api)
+        puro = codigo_puro(HOME)
+        self.assertIn('const ROTA_RANKING_CATEGORIAS = "/categorias/ranking";', puro)
+        # Os códigos de erro tratados pela tela existem no categorias.py; o 404 está em STATUS_ERRO_REGISTRO.
+        for codigo in ('nome_invalido', 'nome_repetido', 'limite_categorias', 'categoria_com_recorrentes', 'ultima_categoria',
+                       'categoria_inexistente'):
+            with self.subTest(codigo=codigo):
+                self.assertIn("ErroRegistro('%s')" % codigo, fonte)
+                self.assertIn('"%s"' % codigo, puro)
+        self.assertIn('"categoria_inexistente": 404', api)
+        # O limite de 30 caracteres do campo é o NOME_MAXIMO do servidor, nas duas folhas.
+        self.assertEqual(categorias.NOME_MAXIMO, 30)
+        for campo in ('cat-editar-campo', 'cat-nova-campo'):
+            with self.subTest(campo=campo):
+                self.assertRegex(HOME, r'<input class="campo-form" id="%s" type="text" maxlength="%d"' % (campo, categorias.NOME_MAXIMO))
+        # O limite de categorias vem do ranking (o campo "limite"): o número não é escrito na tela.
+        principal = codigo_principal(HOME)
+        self.assertIn('catEstado.dados.limite', corpo_da_funcao(principal, 'async function salvarCategoria'))
+        self.assertNotIn('Você já tem 20', HOME)
+        self.assertNotRegex(puro[puro.index('// ---------- Categorias: ranking'):], r'\b20\b')
+
+    def test_barra_minima_de_8px_e_a_maior_em_grafite(self):
+        barra = regra_css('.cat-barra')
+        self.assertIn('min-width: 8px;', barra)            # vale também para R$ 0,00
+        self.assertIn('transition: width', barra)          # a barra estica com transition própria
+        self.assertIn('.cat-barra.maior { background: var(--cor-grafite); }', css_da_home())
+        self.assertIn('background: var(--cor-barra-categoria);', barra)
+        self.assertIn('--cor-barra-categoria: #D4D4D6;', HOME[HOME.index(':root {'):HOME.index('}', HOME.index(':root {'))])
+        self.assertIn('background: var(--cor-fundo-suave);', regra_css('.cat-trilho'))
+        self.assertIn('color: var(--cor-erro);', regra_css('.cat-linha-valor'))
+        self.assertIn('color: var(--cor-erro);', regra_css('.cat-total'))
+        # O desenho usa a função pura para a largura e para a barra grafite.
+        criar_linha = corpo_da_funcao(codigo_principal(HOME), 'function criarLinhaRanking')
+        self.assertIn('proporcaoDaBarraCategoria(c.gasto, maior)', criar_linha)
+        self.assertIn('barraEhMaior(c.gasto, maior)', criar_linha)
+
+    def test_animacao_so_com_transform_e_transition_e_com_movimento_reduzido_nada_se_move(self):
+        css = css_da_home()
+        self.assertIn('transition: transform 0.35s ease;', regra_css('.cat-linha'))
+        # A regra do movimento reduzido da lista (depois da regra geral da logo, que continua a primeira).
+        inicio = css.index('/* ---------- Categorias (PRO-105')
+        reduzido = css[inicio:]
+        reduzido = reduzido[reduzido.index('@media (prefers-reduced-motion: reduce)'):]
+        reduzido = reduzido[:160]
+        self.assertIn('.cat-linha, .cat-barra { transition: none; }', reduzido)
+        # E no JS: a animação é calculada só se NÃO houver movimento reduzido e se já havia uma lista antes.
+        principal = codigo_principal(HOME)
+        self.assertIn('window.matchMedia("(prefers-reduced-motion: reduce)").matches', corpo_da_funcao(principal, 'function movimentoReduzido'))
+        desenhar = corpo_da_funcao(principal, 'function desenharRanking')
+        self.assertIn('const mover = animar && !movimentoReduzido() && !$("cat-conteudo").hidden;', desenhar)
+        self.assertIn('if (!mover) return;', desenhar)
+        # FLIP: First (antes de redesenhar), Last (depois), Invert (transform sem transição), Play (transição de volta).
+        self.assertLess(desenhar.index('getBoundingClientRect().top'), desenhar.index('lista.replaceChildren('))
+        self.assertLess(desenhar.index('lista.replaceChildren('), desenhar.index('translateY('))
+        self.assertIn('el.style.transition = "none";', desenhar)
+        self.assertIn('el.style.transition = "";', desenhar)
+        self.assertIn('el.style.transform = "";', desenhar)
+        # Só transform e a largura se movem: nenhuma outra propriedade de layout mexida pela animação (top/left/height/margin).
+        for proibido in ('style.top', 'style.left', 'style.height', 'style.margin', 'requestAnimationFrame'):
+            with self.subTest(proibido=proibido):
+                self.assertNotIn(proibido, desenhar)
+        self.assertNotIn('setInterval', HOME)
+        # Primeira carga: sem lista antes, nada se move (animar só quando catEstado.dados já existia).
+        aplicar = corpo_da_funcao(principal, 'function aplicarResultadoCategorias')
+        self.assertIn('const animar = catEstado.dados !== null;', aplicar)
+        self.assertIn('desenharRanking(resultado.dados, animar);', aplicar)
+        # Erro: a lista antiga deixa de valer (a próxima carga volta a ser "primeira").
+        self.assertIn('catEstado.dados = null;', aplicar)
+
+    def test_titulo_do_ranking_vem_da_mesma_funcao_e_do_mesmo_ano_mes_da_home(self):
+        principal = codigo_principal(HOME)
+        desenhar = corpo_da_funcao(principal, 'function desenharRanking')
+        home = corpo_da_funcao(principal, 'function mostrarCabecalho')
+        self.assertIn('"Gastos em " + MESES_COMPLETOS[indiceMes(resumo.ano_mes)]', home)
+        self.assertIn('mostrarTituloCategorias(dados.ano_mes);', desenhar)
+        titulo = corpo_da_funcao(principal, 'function mostrarTituloCategorias')
+        self.assertIn('tituloDoRanking(MESES_COMPLETOS[indiceMes(anoMes)])', titulo)
+        # Nenhum relógio do aparelho nem mês escrito no código no rótulo.
+        for nome, corpo in (('desenharRanking', desenhar), ('mostrarTituloCategorias', titulo),
+                            ('mostrarEstadoCategorias', corpo_da_funcao(principal, 'function mostrarEstadoCategorias')),
+                            ('tituloDoRanking', corpo_da_funcao(codigo_puro(HOME), 'function tituloDoRanking')),
+                            ('carregarCategorias', corpo_da_funcao(principal, 'async function carregarCategorias(')),
+                            ('aplicarResultadoCategorias', corpo_da_funcao(principal, 'function aplicarResultadoCategorias'))):
+            with self.subTest(funcao=nome):
+                self.assertNotIn('new Date', corpo)
+                self.assertNotIn('Date.now', corpo)
+                self.assertNotIn('agoraEmBrasilia', corpo)
+        for mes in ('janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro',
+                    'novembro', 'dezembro'):
+            with self.subTest(mes=mes):
+                self.assertNotIn('"' + mes + '"', corpo_da_funcao(principal, 'function desenharRanking'))
+        # O total é o do servidor, por formatarDinheiro; nenhuma soma na tela.
+        self.assertIn('formatarDinheiro(Number(dados.total_gasto) || 0)', desenhar)
+        for proibido in ('+=', '.reduce('):
+            with self.subTest(proibido=proibido):
+                self.assertNotIn(proibido, desenhar)
+        self.assertNotIn('.sort(', desenhar)   # a ordem vem pronta do servidor
+
+    def test_linha_excluida_sem_toque_e_nome_por_textcontent(self):
+        principal = codigo_principal(HOME)
+        linha = corpo_da_funcao(principal, 'function criarLinhaRanking')
+        self.assertIn('criar(tocavel ? "button" : "div", "cat-linha" + (tocavel ? "" : " excluida"))', linha)
+        self.assertIn('criar("span", "cat-nome-texto", c.nome)', linha)
+        self.assertIn('if (!tocavel) trilho.append(criar("span", "cat-selo", "Excluída"));', linha)
+        self.assertIn('formatarDinheiro(Number(c.gasto) || 0)', linha)
+        self.assertNotIn('innerHTML', linha)
+        # Só a linha ativa (um <button> com data-id) abre a folha; a delegação procura "button.cat-linha".
+        self.assertIn('evento.target.closest("button.cat-linha")', corpo_da_funcao(principal, 'function iniciarCategorias'))
+        self.assertIn('.cat-linha.excluida .cat-nome-texto { color: var(--cor-texto-3); }', css_da_home())
+
+    def test_folha_nova_sem_em_breve_sem_descricao_e_a_temporaria_so_mostra_o_alerta(self):
+        nova = bloco_folha('folha-cat-nova')
+        # Nenhum texto "Em breve" visível (nem em atributo), e nenhum campo de descrição.
+        self.assertNotRegex(nova, r'(?i)em\s+breve')
+        self.assertNotRegex(nova, r'(?i)descri')
+        self.assertNotIn('<textarea', nova)
+        self.assertEqual(nova.count('<input'), 1)            # só o campo do nome
+        self.assertNotIn('selo', nova)
+        # A "Fixa" começa marcada e a "Temporária" fica apagada, sem selo, e continua tocável (nada de atributo disabled).
+        self.assertIn('id="cat-tipo-fixa" type="button" role="tab" aria-selected="true">Fixa</button>', nova)
+        self.assertIn('id="cat-tipo-temporaria" type="button" role="tab" aria-selected="false" aria-disabled="true">Temporária</button>', nova)
+        self.assertNotRegex(nova, r'id="cat-tipo-temporaria"[^>]*\sdisabled')
+        self.assertIn('.cat-tipo.apagada {', css_da_home())
+        # O toque só chama o alerta nativo (o mesmo avisarEmBreve: showAlert("Em breve"), com window.alert de reserva).
+        principal = codigo_principal(HOME)
+        iniciar = corpo_da_funcao(principal, 'function iniciarCategorias')
+        self.assertIn('$("cat-tipo-temporaria").addEventListener("click", avisarEmBreve);', iniciar)
+        self.assertIn('tg.showAlert("Em breve")', corpo_da_funcao(principal, 'function avisarEmBreve'))
+        self.assertIn('window.alert("Em breve")', corpo_da_funcao(principal, 'function avisarEmBreve'))
+        # Nada da aba é guardado nem enviado, e a aba escolhida não muda.
+        self.assertNotIn('$("cat-tipo-fixa")', iniciar)   # a "Fixa" já vem marcada e não faz nada
+        for guardar in ('localStorage', 'CloudStorage', 'temporaria', 'temporária'):
+            self.assertNotIn(guardar, corpo_da_funcao(principal, 'async function salvarCategoria'))
+        self.assertNotIn('aria-selected', corpo_da_funcao(principal, 'function iniciarCategorias'))
+        # A folha Editar também não tem descrição.
+        self.assertNotRegex(bloco_folha('folha-cat-editar'), r'(?i)descri')
+
+    def test_corpo_do_post_so_com_nome_e_chave(self):
+        puro = codigo_puro(HOME)
+        corpo = corpo_da_funcao(puro, 'function montarCorpoNovaCategoria')
+        self.assertIn('return { nome: String(nome).trim(), chave: chave };', corpo)
+        for proibido in ('descricao', 'tipo', 'temporaria', 'fixa', 'user_id'):
+            with self.subTest(proibido=proibido):
+                self.assertNotIn(proibido, corpo)
+        self.assertIn('return { nome: String(nome).trim() };', corpo_da_funcao(puro, 'function montarCorpoRenomearCategoria'))
+
+    def test_voltar_das_categorias(self):
+        principal = codigo_principal(HOME)
+        voltar = corpo_da_funcao(principal, 'function voltarUmNivel')
+        # Com a logo na frente, nada; folha aberta, fecha a folha; depois a tela das Categorias; senão as outras.
+        self.assertLess(voltar.index('if (!$("tela-logo").hidden) return;'), voltar.index('folhaAberta()'))
+        self.assertLess(voltar.index('folhaAberta()'), voltar.index('if (!$("categorias").hidden)'))
+        self.assertIn('voltarNasCategorias();', voltar)
+        self.assertIn('FOLHAS_RECORRENTES.concat(FOLHAS_CATEGORIAS)', corpo_da_funcao(principal, 'function folhaAberta'))
+        # Salvando ou excluindo, nada: nem a seta, nem o fundo escuro, nem o Cancelar.
+        self.assertIn('if (categoriasOcupadas()) return;', corpo_da_funcao(principal, 'function voltarNasCategorias'))
+        self.assertIn('categoriasOcupadas()', corpo_da_funcao(principal, 'function fecharFolhaAtual'))
+        ocupadas = corpo_da_funcao(principal, 'function categoriasOcupadas')
+        for trecho in ('catNova.salvando', 'catEditar.salvando', 'catEstado.excluindo'):
+            self.assertIn(trecho, ocupadas)
+        # A volta esconde o BackButton e devolve a rolagem da home; a seta usa o mesmo voltarUmNivel.
+        home = corpo_da_funcao(principal, 'function voltarCategoriasParaHome')
+        self.assertIn('mostrarBackButton(false);', home)
+        self.assertIn('window.scrollTo(0, rolagemHome);', home)
+        self.assertIn('catEstado.versao++;', home)
+        self.assertIn('mostrarBackButton(true);', corpo_da_funcao(principal, 'function mostrarTelaCategorias'))
+        self.assertIn('$("cat-voltar").addEventListener("click", voltarUmNivel);', corpo_da_funcao(principal, 'function iniciarCategorias'))
+
+    def test_estados_carregando_erro_e_tentar_de_novo(self):
+        principal = codigo_principal(HOME)
+        tela = bloco_main('categorias')
+        carregando = tela[tela.index('id="cat-carregando"'):tela.index('id="cat-erro"')]
+        self.assertIn('class="logo-animada"', carregando)     # a logo pequena do quadro CARREGANDO
+        self.assertIn('<p>Carregando...</p>', carregando)
+        self.assertIn('mensagemDeErro([resultado])', corpo_da_funcao(principal, 'function aplicarResultadoCategorias'))
+        self.assertIn('$("cat-erro-tentar").addEventListener("click", () => carregarCategorias());', corpo_da_funcao(principal, 'function iniciarCategorias'))
+        # Reabrindo, a lista antiga continua visível enquanto a nova chega; sem lista antes, "Carregando...".
+        self.assertIn('mostrarEstadoCategorias(catEstado.dados ? "ok" : "carregando");', corpo_da_funcao(principal, 'async function carregarCategorias('))
+        self.assertIn('if (versao !== catEstado.versao) return;', corpo_da_funcao(principal, 'async function carregarCategorias('))
+        self.assertNotIn('mostrarTelaLogo', corpo_da_funcao(principal, 'async function carregarCategorias('))
+        # Quadro CARREGANDO: caixa de 320px, o quadrado de 64px (.estado-icone) com a logo de 40px (.logo-animada) e o texto.
+        self.assertIn('class="estado-icone"', carregando)
+        self.assertIn('height: 320px;', regra_css('.cat-carregando'))
+        self.assertIn('width: 64px;', regra_css('.estado-icone'))
+        self.assertIn('width: 40px; height: 40px;', regra_css('.logo-animada'))
+
+    def test_excluir_bloqueado_deixa_so_o_cancelar(self):
+        principal = codigo_principal(HOME)
+        mostrar = corpo_da_funcao(principal, 'function mostrarErroExcluir')
+        self.assertIn('$("folha-cat-excluir-confirmar").disabled = !!bloqueado || catEstado.excluindo;', mostrar)
+        excluir = corpo_da_funcao(principal, 'async function excluirCategoria')
+        self.assertIn('mostrarErroExcluir(decisao.mensagem, decisao.bloqueado);', excluir)
+        self.assertIn('textoConfirmarExcluirCategoria(catExcluir.nome)', corpo_da_funcao(principal, 'function abrirFolhaExcluir'))
+        self.assertIn('criar("strong", "", texto.negrito)', corpo_da_funcao(principal, 'function abrirFolhaExcluir'))
+        # O erro é vermelho (campo-erro), fica entre o texto e os botões.
+        folha = bloco_folha('folha-cat-excluir')
+        self.assertLess(folha.index('id="folha-cat-excluir-texto"'), folha.index('id="folha-cat-excluir-erro"'))
+        self.assertLess(folha.index('id="folha-cat-excluir-erro"'), folha.index('id="folha-cat-excluir-confirmar"'))
+        self.assertIn('class="campo-erro" id="folha-cat-excluir-erro"', folha)
+
+
+    def test_cabecalho_so_com_voltar_e_titulo_e_o_topo_do_conteudo(self):
+        tela = bloco_main('categorias')
+        cabecalho = tela[:tela.index('</header>')]
+        # Como as outras telas cheias: só a seta e o título. O botão e a dica NÃO ficam no cabeçalho.
+        self.assertIn('id="cat-voltar"', cabecalho)
+        self.assertIn('<h1 class="titulo-tela">Categorias</h1>', cabecalho)
+        self.assertNotIn('Nova Categoria', cabecalho)
+        self.assertNotIn('cat-nova', cabecalho)
+        self.assertNotIn('Clique Nas Barras', cabecalho)
+        self.assertEqual(cabecalho.count('<button'), 1)
+        # No conteúdo, nesta ordem: botão escuro à direita, dica, divisória e só depois o ranking.
+        corpo = tela[tela.index('</header>'):]
+        ordem = [corpo.index(x) for x in ('id="cat-nova"', 'Clique Nas Barras Para Visualizar e Editar as Categorias',
+                                          'class="cat-divisoria"', 'class="cat-ranking"')]
+        self.assertEqual(ordem, sorted(ordem))
+        self.assertIn('justify-content: flex-end;', regra_css('.cat-nova-linha'))
+        botao = regra_css('.cat-nova')
+        for trecho in ('height: 36px;', 'border-radius: 12px;', 'background: var(--cor-grafite);'):
+            with self.subTest(trecho=trecho):
+                self.assertIn(trecho, botao)
+        self.assertIn('color: var(--cor-texto-2);', regra_css('.cat-dica'))
+        self.assertIn('font-size: 15px;', regra_css('.cat-dica'))
+        divisoria = regra_css('.cat-divisoria')
+        self.assertIn('height: 1px;', divisoria)
+        self.assertIn('background: var(--cor-divisoria);', divisoria)
+        # O botão, a dica e a divisória não somem em nenhum estado: nenhum deles é escondido pelo código.
+        principal = codigo_principal(HOME)
+        estado = corpo_da_funcao(principal, 'function mostrarEstadoCategorias')
+        for identificador in ('cat-nova', 'cat-divisoria'):
+            self.assertNotIn(identificador, estado)
+        self.assertNotRegex(HOME, r'id="cat-nova"[^>]*\bhidden\b')
+        self.assertNotIn('$("cat-nova").hidden', principal)
+
+    def test_linha_do_ranking_tem_o_nome_no_trilho_e_o_valor_fora(self):
+        principal = codigo_principal(HOME)
+        linha = corpo_da_funcao(principal, 'function criarLinhaRanking')
+        # O trilho leva a barra e o nome; o valor é irmão do trilho (fora dele), na ordem trilho, valor.
+        self.assertIn('trilho.append(barra, criar("span", "cat-nome-texto", c.nome));', linha)
+        self.assertIn('linha.append(trilho, criar("span", "cat-linha-valor", formatarDinheiro(Number(c.gasto) || 0)));', linha)
+        self.assertNotIn('trilho.append(criar("span", "cat-linha-valor"', linha)
+        trilho = regra_css('.cat-trilho')
+        for trecho in ('position: relative;', 'flex: 1 1 0;', 'height: 44px;', 'padding: 0 14px;', 'border-radius: 12px;',
+                       'background: var(--cor-fundo-suave);', 'overflow: hidden;'):
+            with self.subTest(trilho=trecho):
+                self.assertIn(trecho, trilho)
+        barra = regra_css('.cat-barra')
+        for trecho in ('position: absolute;', 'left: 0;', 'top: 0;', 'height: 44px;', 'min-width: 8px;'):
+            with self.subTest(barra=trecho):
+                self.assertIn(trecho, barra)
+        valor = regra_css('.cat-linha-valor')
+        for trecho in ('flex-shrink: 0;', 'width: 96px;', 'text-align: right;', 'color: var(--cor-erro);'):
+            with self.subTest(valor=trecho):
+                self.assertIn(trecho, valor)
+        self.assertIn('gap: 12px;', regra_css('.cat-linha'))       # entre o trilho e o valor
+        self.assertIn('gap: 10px;', regra_css('.cat-lista'))       # entre as linhas
+        # A maior: barra grafite e o nome em branco. Nenhuma barrinha embaixo do nome.
+        self.assertIn('.cat-trilho.maior .cat-nome-texto { color: var(--cor-branco); }', css_da_home())
+        self.assertNotIn('height: 12px', regra_css('.cat-trilho'))
+        # Excluída: trilho #F6F6F7, selo branco com borda #E0E2E2 dentro do trilho (o selo é filho do trilho).
+        raiz = HOME[HOME.index(':root {'):HOME.index('}', HOME.index(':root {'))]
+        self.assertIn('--cor-categoria-excluida: #F6F6F7;', raiz)
+        self.assertIn('--cor-borda-selo: #E0E0E2;', raiz)
+        self.assertIn('.cat-linha.excluida .cat-trilho { background: var(--cor-categoria-excluida); }', css_da_home())
+        selo = regra_css('.cat-selo')
+        for trecho in ('background: var(--cor-branco);', 'border: 1px solid var(--cor-borda-selo);', 'height: 22px;'):
+            with self.subTest(selo=trecho):
+                self.assertIn(trecho, selo)
+        self.assertLess(linha.index('trilho.append(criar("span", "cat-selo"'), linha.index('linha.append(trilho'))
+
+    def test_titulo_e_total_do_bloco_e_o_que_aparece_em_cada_estado(self):
+        principal = codigo_principal(HOME)
+        self.assertIn('font-size: 18px;', regra_css('.cat-titulo'))
+        self.assertIn('font-weight: 800;', regra_css('.cat-titulo'))
+        self.assertIn('gap: 6px;', regra_css('.cat-resumo'))
+        total = regra_css('.cat-total-linha')
+        self.assertIn('font-size: 15px;', total)
+        self.assertIn('font-weight: 700;', total)
+        self.assertIn('font-weight: 800;', regra_css('.cat-total'))
+        self.assertIn('color: var(--cor-erro);', regra_css('.cat-total'))
+        # O mês conhecido vem do ano_mes do último /resumo da home (mostrarCabecalho), pela mesma MESES_COMPLETOS.
+        self.assertIn('anoMesDaHome = resumo.ano_mes;', corpo_da_funcao(principal, 'function mostrarCabecalho'))
+        estado = corpo_da_funcao(principal, 'function mostrarEstadoCategorias')
+        self.assertIn('if (estado !== "ok") mostrarTituloCategorias(anoMesDaHome);', estado)
+        self.assertIn('$("cat-total-linha").hidden = estado !== "ok";', estado)   # o "Total Gasto" só aparece com o ranking
+        titulo = corpo_da_funcao(principal, 'function mostrarTituloCategorias')
+        self.assertIn('$("cat-titulo").hidden = !anoMes;', titulo)                 # sem mês conhecido, esconde só o título
+        self.assertRegex(HOME, r'id="cat-titulo" hidden>')
+        self.assertRegex(HOME, r'id="cat-total-linha" hidden>Total Gasto: ')
+
+    def test_carregando_e_erro_de_rede_seguem_os_quadros(self):
+        principal = codigo_principal(HOME)
+        tela = bloco_main('categorias')
+        erro = tela[tela.index('id="cat-erro"'):tela.index('id="cat-conteudo"')]
+        self.assertIn('class="cat-erro-caixa"', erro)
+        self.assertIn('id="cat-erro-titulo"', erro)
+        self.assertIn('id="cat-erro-texto"', erro)
+        self.assertIn('M4 4l16 16', erro)                                    # o wi-fi cortado
+        self.assertIn('<button class="botao-principal" id="cat-erro-tentar" type="button">Tentar de novo</button>', erro)
+        self.assertLess(erro.index('cat-erro-caixa'), erro.index('cat-erro-tentar'))
+        caixa = regra_css('.cat-erro-caixa')
+        for trecho in ('height: 180px;', 'border: 1.5px dashed var(--cor-barra-fechado);', 'border-radius: 18px;'):
+            with self.subTest(caixa=trecho):
+                self.assertIn(trecho, caixa)
+        self.assertIn('font-weight: 700;', regra_css('.cat-erro-titulo'))
+        self.assertIn('color: var(--cor-texto-3);', regra_css('.cat-erro-texto'))
+        # Os textos do quadro estão nas constantes puras e são os escritos no aplicarResultadoCategorias.
+        puro = codigo_puro(HOME)
+        self.assertIn('const MSG_CATEGORIAS_ERRO_TITULO = "Não Conseguimos Carregar Suas Categorias";', puro)
+        self.assertIn('const MSG_CATEGORIAS_ERRO_TEXTO = "Confira a sua conexão e tente de novo.";', puro)
+        aplicar = corpo_da_funcao(principal, 'function aplicarResultadoCategorias')
+        self.assertIn('erro.tentarDeNovo ? MSG_CATEGORIAS_ERRO_TITULO : erro.texto', aplicar)   # 401, 404, 409: as mensagens de sempre
+        self.assertIn('$("cat-erro-texto").hidden = !erro.tentarDeNovo;', aplicar)
+
+    def test_folha_editar_tem_subtitulo_e_placeholder(self):
+        editar = bloco_folha('folha-cat-editar')
+        self.assertRegex(editar, r'<h2 class="folha-titulo" id="folha-cat-editar-titulo">Editar Categoria</h2>\s*'
+                                 r'<p class="folha-texto">Escolha um novo nome para essa categoria.</p>')
+        self.assertIn('<div class="folha-titulos compacto">', editar)
+        self.assertIn('.folha-titulos.compacto { gap: 4px; }', css_da_home())
+        self.assertIn('placeholder="Nome da categoria"', editar)
+        self.assertIn('Ex.: Pets', bloco_folha('folha-cat-nova'))
+
+    def test_folhas_nova_e_excluir_seguem_os_quadros(self):
+        nova = bloco_folha('folha-cat-nova')
+        # Título e seletor segmentado no mesmo cabeçalho (gap 14px); abas de 40px dentro da caixa de 4px de folga.
+        self.assertLess(nova.index('folha-cat-nova-titulo'), nova.index('class="cat-tipos"'))
+        self.assertIn('gap: 14px;', regra_css('.cat-folha-cabecalho'))
+        caixa = regra_css('.cat-tipos')
+        for trecho in ('padding: 4px;', 'gap: 4px;', 'border: 1px solid var(--cor-divisoria);', 'border-radius: 16px;'):
+            with self.subTest(tipos=trecho):
+                self.assertIn(trecho, caixa)
+        tipo = regra_css('.cat-tipo')
+        self.assertIn('height: 40px;', tipo)
+        self.assertIn('border-radius: 12px;', tipo)
+        self.assertIn('.cat-tipo.apagada { color: var(--cor-desabilitado-texto); }', css_da_home())
+        # Salvar desativado: #E8E8E8 e #A3A3A3 (o botão principal desativado); ativo: grafite e branco.
+        raiz = HOME[HOME.index(':root {'):HOME.index('}', HOME.index(':root {'))]
+        self.assertIn('--cor-desabilitado-fundo: #E8E8E8;', raiz)
+        self.assertIn('--cor-desabilitado-texto: #A3A3A3;', raiz)
+        self.assertIn('.botao-confirmar:disabled, .botao-principal:disabled { background: var(--cor-desabilitado-fundo); color: var(--cor-desabilitado-texto);',
+                      css_da_home())
+        self.assertIn('<button class="botao-principal" id="cat-nova-salvar" type="button" disabled>Salvar</button>', nova)
+        # Excluir: ícone, o erro do bloqueio DENTRO do bloco de texto e os botões depois.
+        excluir = bloco_folha('folha-cat-excluir')
+        bloco = excluir[excluir.index('<div class="folha-titulos medio">'):excluir.index('<div class="folha-botoes">')]
+        self.assertIn('id="folha-cat-excluir-texto"', bloco)
+        self.assertIn('id="folha-cat-excluir-erro"', bloco)
+        self.assertLess(excluir.index('folha-icone-apagar'), excluir.index('folha-titulos medio'))
+        self.assertIn('width: 56px; height: 56px;', regra_css('.folha-icone-apagar'))
+
+    def test_css_novo_so_com_variaveis(self):
+        css = css_da_home()
+        novo = css[css.index('/* ---------- Categorias (PRO-105'):]
+        self.assertEqual(sorted(set(re.findall(r'#[0-9A-Fa-f]{3,8}\b', novo))), [])
+
+
+@unittest.skipUnless(NODE, 'node não encontrado no PATH')
+class TestCategoriasFuncoesPuras(unittest.TestCase):
+    def test_proporcao_da_barra_e_a_maior(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            const lista = [{ gasto: 612.4 }, { gasto: 117.8 }, { gasto: 20 }, { gasto: 0 }];
+            const maior = maiorGastoCategorias(lista);
+            console.log(JSON.stringify({
+              maior,
+              proporcoes: lista.map((c) => proporcaoDaBarraCategoria(c.gasto, maior)),
+              grafite: lista.map((c) => barraEhMaior(c.gasto, maior)),
+              semGasto: [proporcaoDaBarraCategoria(0, 0), proporcaoDaBarraCategoria(0, 100), barraEhMaior(0, 0), maiorGastoCategorias([]),
+                         maiorGastoCategorias(undefined), maiorGastoCategorias([{ gasto: 0 }, { gasto: 0 }])],
+              empate: [barraEhMaior(50, 50), barraEhMaior(50.004, 50), barraEhMaior(49.99, 50)],
+              limites: [proporcaoDaBarraCategoria(80, 100), proporcaoDaBarraCategoria(100, 100), proporcaoDaBarraCategoria(120, 100),
+                        proporcaoDaBarraCategoria(-5, 100), proporcaoDaBarraCategoria('x', 100), proporcaoDaBarraCategoria(5, null)],
+            }));
+        """))
+        self.assertEqual(obtido['maior'], 612.4)
+        self.assertEqual(obtido['proporcoes'][0], 1)                  # a maior ocupa o trilho todo
+        self.assertAlmostEqual(obtido['proporcoes'][1], 117.8 / 612.4)
+        self.assertAlmostEqual(obtido['proporcoes'][2], 20 / 612.4)
+        self.assertEqual(obtido['proporcoes'][3], 0)                  # R$ 0,00: 0 (o CSS garante os 8px)
+        self.assertEqual(obtido['grafite'], [True, False, False, False])
+        self.assertEqual(obtido['semGasto'], [0, 0, False, 0, 0, 0])
+        self.assertEqual(obtido['empate'], [True, True, False])
+        self.assertEqual(obtido['limites'], [0.8, 1, 1, 0, 0, 0])
+
+    def test_linha_tocavel_e_chave_da_linha(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            const ativa = { id: 70, nome: 'Alimentação', gasto: 1, ativa: true };
+            const excluida = { id: null, nome: 'Pets', gasto: 20, ativa: false };
+            console.log(JSON.stringify({
+              tocavel: [linhaTocavelCategoria(ativa), linhaTocavelCategoria(excluida), linhaTocavelCategoria({ id: 5, ativa: false }),
+                        linhaTocavelCategoria({ id: null, ativa: true })],
+              chaves: [chaveDaLinhaCategoria(ativa), chaveDaLinhaCategoria(excluida)],
+            }));
+        """))
+        self.assertEqual(obtido['tocavel'], [True, False, False, False])
+        self.assertEqual(obtido['chaves'], ['id:70', 'excluida:Pets'])
+
+    def test_titulo_e_mensagem_do_limite(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            console.log(JSON.stringify({
+              titulo: [tituloDoRanking('novembro'), tituloDoRanking('março'), tituloDoRanking('Dezembro')],
+              limite: [mensagemLimiteCategorias(20), mensagemLimiteCategorias(15), mensagemLimiteCategorias(undefined),
+                       mensagemLimiteCategorias(null), mensagemLimiteCategorias('x'), mensagemLimiteCategorias(0)],
+            }));
+        """))
+        self.assertEqual(obtido['titulo'], ['Gastos Por Categoria em Novembro:', 'Gastos Por Categoria em Março:',
+                                            'Gastos Por Categoria em Dezembro:'])
+        self.assertEqual(obtido['limite'][0], 'Você já tem %d categorias. Exclua uma para criar outra.' % categorias.LIMITE_CATEGORIAS)
+        self.assertEqual(obtido['limite'][1], 'Você já tem 15 categorias. Exclua uma para criar outra.')
+        for texto in obtido['limite'][2:]:
+            self.assertEqual(texto, 'Você já atingiu o limite de categorias. Exclua uma para criar outra.')
+
+    def test_mes_do_titulo_igual_ao_da_home_com_o_ciclo_do_servidor(self):
+        # Dia 11 de novembro com o fechamento no dia 5: a fatura vigente é a de dezembro (D4 da PRO-104). A home e o título
+        # do ranking recebem o MESMO ano_mes do servidor e mostram o mesmo mês, sem olhar o calendário do aparelho.
+        import calculos
+        from datetime import datetime
+        ano_mes = calculos.obter_ciclo_atual(5, datetime(2026, 11, 11, 12, 0, tzinfo=calculos.FUSO_BRASILIA))
+        self.assertEqual(ano_mes, '2026-12')
+        principal = codigo_principal(HOME)
+        constantes = re.search(r'const MESES_COMPLETOS = \[[^\]]*\];', principal).group(0)
+        indice = corpo_da_funcao(principal, 'function indiceMes')
+        obtido = rodar_node(com_funcoes_puras(constantes + "\n" + indice + """
+            const anoMes = ENTRADA.ano_mes;
+            // A expressão da home (mostrarCabecalho) e a do ranking (desenharRanking), iguais às do código da página.
+            console.log(JSON.stringify({
+              home: 'Gastos em ' + MESES_COMPLETOS[indiceMes(anoMes)],
+              ranking: tituloDoRanking(MESES_COMPLETOS[indiceMes(anoMes)]),
+            }));
+        """), {'ano_mes': ano_mes})
+        self.assertEqual(obtido['home'], 'Gastos em dezembro')
+        self.assertEqual(obtido['ranking'], 'Gastos Por Categoria em Dezembro:')
+
+    def test_nome_vazio_e_salvar(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            console.log(JSON.stringify({
+              erro: [erroDoNomeCategoria('', false), erroDoNomeCategoria('', true), erroDoNomeCategoria('   ', true),
+                     erroDoNomeCategoria('Pets', true), erroDoNomeCategoria(' a ', true)],
+              pode: [podeSalvarCategoria({ nome: '', salvando: false }), podeSalvarCategoria({ nome: '   ', salvando: false }),
+                     podeSalvarCategoria({ nome: 'Pets', salvando: false }), podeSalvarCategoria({ nome: 'Pets', salvando: true }),
+                     podeSalvarCategoria({ nome: ' x ', salvando: false })],
+            }));
+        """))
+        self.assertEqual(obtido['erro'], [None, 'Preencha o nome para continuar', 'Preencha o nome para continuar', None, None])
+        self.assertEqual(obtido['pode'], [False, False, True, False, True])
+
+    def test_corpos_rotas_e_textos(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            console.log(JSON.stringify({
+              post: montarCorpoNovaCategoria('  pets ', 'chave-1'), put: montarCorpoRenomearCategoria(' Bichos '),
+              rotas: [rotaCategorias(), rotaCategorias(null), rotaCategorias(79), rotaCategorias('7/9')],
+              logoCriar: textosTelaLogoCategoria('criar'), logoRenomear: textosTelaLogoCategoria('renomear'),
+              excluir: textoConfirmarExcluirCategoria('Pets'),
+            }));
+        """))
+        self.assertEqual(obtido['post'], {'nome': 'pets', 'chave': 'chave-1'})   # só nome e chave
+        self.assertEqual(list(obtido['post'].keys()), ['nome', 'chave'])
+        self.assertEqual(obtido['put'], {'nome': 'Bichos'})
+        self.assertEqual(obtido['rotas'], ['/categorias', '/categorias', '/categorias/79', '/categorias/7%2F9'])
+        self.assertEqual(obtido['logoCriar'], {'cabecalho': 'Nova Categoria', 'titulo': 'Criando a Categoria...',
+                                               'texto': 'Ela já pode ser usada nos seus gastos.'})
+        self.assertEqual(obtido['logoRenomear'], {'cabecalho': 'Editar Categoria', 'titulo': 'Salvando as Alterações...',
+                                                  'texto': 'Os gastos antigos também mudam de nome.'})
+        self.assertEqual(obtido['excluir'], {'negrito': 'Pets',
+                                             'depois': ' deixa de existir. Os gastos que já entraram continuam no histórico.'})
+
+    def test_decisao_por_status_das_tres_gravacoes(self):
+        sessao = 'Sua sessão expirou. Feche e abra o app de novo.'
+        c404 = 'Não encontramos o seu cadastro. Feche e abra o app de novo.'
+        c409 = 'Seu cadastro está incompleto. Volte ao bot e informe o dia de fechamento da fatura.'
+        salvar = 'Não foi possível salvar. Tente de novo.'
+        excluir = 'Não foi possível excluir. Tente de novo.'
+        casos = [
+            # (operacao, resultado, esperado)
+            ('criar', {'dados': {'id': 79}, 'status': 201}, {'acao': 'sucesso'}),
+            ('criar', {'dados': {'id': 79, 'repetido': True}, 'status': 200}, {'acao': 'sucesso'}),
+            ('renomear', {'dados': {'id': 79}, 'status': 200}, {'acao': 'sucesso'}),
+            ('excluir', {'dados': {'id': 79, 'excluida': True}, 'status': 200}, {'acao': 'sucesso'}),
+            # 404 no excluir conta como "já excluída"
+            ('excluir', {'erro': 404, 'detalhe': 'categoria_inexistente'}, {'acao': 'sucesso'}),
+            ('renomear', {'erro': 404, 'detalhe': 'categoria_inexistente'},
+             {'acao': 'erro', 'mensagem': 'Esta categoria não existe mais.', 'voltarRanking': True}),
+            ('criar', {'erro': 404, 'detalhe': 'categoria_inexistente'}, {'acao': 'erro', 'mensagem': c404}),
+            # 422 de nome: embaixo do campo, em vermelho
+            ('criar', {'erro': 422, 'detalhe': 'nome_repetido'},
+             {'acao': 'erro', 'mensagem': 'Já existe uma categoria com esse nome.', 'noCampo': True, 'campoVermelho': True}),
+            ('renomear', {'erro': 422, 'detalhe': 'nome_repetido'},
+             {'acao': 'erro', 'mensagem': 'Já existe uma categoria com esse nome.', 'noCampo': True, 'campoVermelho': True}),
+            ('criar', {'erro': 422, 'detalhe': 'nome_invalido'},
+             {'acao': 'erro', 'mensagem': 'Preencha o nome para continuar', 'noCampo': True, 'campoVermelho': True}),
+            ('renomear', {'erro': 422, 'detalhe': 'nome_invalido'},
+             {'acao': 'erro', 'mensagem': 'Preencha o nome para continuar', 'noCampo': True, 'campoVermelho': True}),
+            # limite: o número vem do ranking; o campo fica normal (o problema não é o nome)
+            ('criar', {'erro': 422, 'detalhe': 'limite_categorias'},
+             {'acao': 'erro', 'mensagem': 'Você já tem 20 categorias. Exclua uma para criar outra.', 'noCampo': True, 'campoVermelho': False}),
+            ('renomear', {'erro': 422, 'detalhe': 'limite_categorias'}, {'acao': 'erro', 'mensagem': salvar}),
+            # excluir bloqueado: erro embaixo do texto, só o Cancelar
+            ('excluir', {'erro': 422, 'detalhe': 'categoria_com_recorrentes'},
+             {'acao': 'erro', 'bloqueado': True,
+              'mensagem': 'Essa categoria tem gastos recorrentes. Mude a categoria deles em Recorrentes antes de excluir.'}),
+            ('excluir', {'erro': 422, 'detalhe': 'ultima_categoria'},
+             {'acao': 'erro', 'bloqueado': True, 'mensagem': 'Você precisa de pelo menos uma categoria.'}),
+            ('excluir', {'erro': 422, 'detalhe': 'nome_repetido'}, {'acao': 'erro', 'mensagem': excluir}),
+            # o resto: as mensagens de sempre
+            ('criar', {'erro': 401}, {'acao': 'erro', 'mensagem': sessao}),
+            ('excluir', {'erro': 401}, {'acao': 'erro', 'mensagem': sessao}),
+            ('renomear', {'erro': 404, 'detalhe': 'usuario_nao_cadastrado'}, {'acao': 'erro', 'mensagem': c404}),
+            ('criar', {'erro': 409, 'detalhe': 'cadastro_incompleto'}, {'acao': 'erro', 'mensagem': c409}),
+            ('criar', {'erro': 422, 'detalhe': 'chave_invalida'}, {'acao': 'erro', 'mensagem': salvar}),
+            ('criar', {'erro': 503, 'detalhe': 'banco_ocupado'}, {'acao': 'erro', 'mensagem': salvar}),
+            ('renomear', {'erro': 0}, {'acao': 'erro', 'mensagem': salvar}),
+            ('criar', {'erro': 500, 'detalhe': 'erro_interno'}, {'acao': 'erro', 'mensagem': salvar}),
+            ('excluir', {'erro': 503, 'detalhe': 'banco_ocupado'}, {'acao': 'erro', 'mensagem': excluir}),
+            ('excluir', {'erro': 0}, {'acao': 'erro', 'mensagem': excluir}),
+            ('excluir', {'erro': 500}, {'acao': 'erro', 'mensagem': excluir}),
+        ]
+        obtido = rodar_node(com_funcoes_puras(
+            "console.log(JSON.stringify(ENTRADA.map(([op, r]) => decisaoDaGravacaoCategoria(op, r, 20))));"
+        ), [[operacao, resultado] for operacao, resultado, _ in casos])
+        for (operacao, resultado, esperado), recebido in zip(casos, obtido):
+            with self.subTest(operacao=operacao, resultado=resultado):
+                self.assertEqual(recebido, esperado)
+        # O texto cru do servidor nunca aparece na mensagem.
+        for recebido in obtido:
+            for codigo in ('nome_repetido', 'categoria_inexistente', 'banco_ocupado', 'limite_categorias', 'ultima_categoria'):
+                self.assertNotIn(codigo, recebido.get('mensagem', ''))
+        # O limite da mensagem é o do ranking (não um 20 fixo): com 15, a mensagem diz 15.
+        quinze = rodar_node(com_funcoes_puras(
+            "console.log(JSON.stringify(decisaoDaGravacaoCategoria('criar', { erro: 422, detalhe: 'limite_categorias' }, 15)));"
+        ))
+        self.assertEqual(quinze['mensagem'], 'Você já tem 15 categorias. Exclua uma para criar outra.')
+
+    def test_codigos_e_mensagens_tratados_sao_os_do_servidor(self):
+        # Todo código que a decisão trata existe no categorias.py/api; as constantes do servidor valem o que a tela usa.
+        puro = codigo_puro(HOME)
+        tratados = set(re.findall(r'resultado\.detalhe === "(\w+)"', corpo_da_funcao(puro, 'function decisaoDaGravacaoCategoria')))
+        self.assertEqual(tratados, {'categoria_inexistente', 'categoria_com_recorrentes', 'ultima_categoria', 'nome_invalido',
+                                    'nome_repetido', 'limite_categorias'})
+        fonte = open(os.path.join(RAIZ, 'categorias.py'), encoding='utf-8').read()
+        for codigo in tratados:
+            with self.subTest(codigo=codigo):
+                self.assertIn("ErroRegistro('%s')" % codigo, fonte)
+        self.assertEqual(categorias.LIMITE_CATEGORIAS, 20)    # o valor que a nota cita; a tela lê o do ranking
+
+    def test_novas_tentativas_do_criar_repetem_o_mesmo_corpo_e_a_mesma_chave(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            (async () => {
+              const corpo = montarCorpoNovaCategoria('Pets', 'chave-da-folha');
+              const enviados = [];
+              const respostas = [{ erro: 503, detalhe: 'banco_ocupado' }, { erro: 0 }, { dados: { id: 79, repetido: false }, status: 201 }];
+              const resultado = await gravarComTentativas(async (c) => { enviados.push(JSON.stringify(c)); return respostas.shift(); }, corpo, async () => {});
+              // 422 não é repetido sozinho.
+              const outros = [];
+              await gravarComTentativas(async (c) => { outros.push(1); return { erro: 422, detalhe: 'nome_repetido' }; }, corpo, async () => {});
+              console.log(JSON.stringify({ iguais: enviados.every((x) => x === enviados[0]), n: enviados.length,
+                                           status: resultado.status, corpo: JSON.parse(enviados[0]), tentativas422: outros.length }));
+            })();
+        """))
+        self.assertEqual(obtido, {'iguais': True, 'n': 3, 'status': 201, 'corpo': {'nome': 'Pets', 'chave': 'chave-da-folha'},
+                                  'tentativas422': 1})
 
 
 if __name__ == '__main__':
