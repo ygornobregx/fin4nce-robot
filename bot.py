@@ -72,25 +72,53 @@ from categorias import (
 # acesso (só com ASSINATURAS_LIGADAS), os comandos de admin e o limite diário
 # de registros com IA (sempre ligado). Tudo no assinaturas.py, o mesmo módulo
 # das rotas da API; o bot cuida só das mensagens e dos botões.
+# Pagamento em Telegram Stars (PRO-107): fatura, pre-checkout, pagamento,
+# renovação, reembolso, avisos de vencimento e termos. As regras ficam no
+# assinaturas.py (o mesmo módulo das rotas da API); o bot só chama a Bot API
+# pelo PTB e cuida das mensagens.
 from assinaturas import (
+    SITUACAO_FALHOU,
+    SITUACAO_PRO_GRAVADO,
+    SITUACAO_REEMBOLSADO,
     assinaturas_ligadas,
+    avisos_devidos,
+    buscar_comprovante,
+    buscar_linha,
+    comprovante_sem_pro,
+    marcar_comprovante,
+    primeiro_pagamento_conhecido,
+    registrar_comprovante,
+    registrar_reembolso_sem_pro,
     comandos_criar_tabelas,
+    concluir_renovacao,
+    conferir_pre_checkout,
     dar_pro_manual,
+    desmarcar_aviso,
     devolver_uso_ia,
     e_admin,
     estender_teste,
+    gravar_renovacao,
     iniciar_teste,
+    ler_admin_ids,
     limite_ia_dia,
     listar_usuarios_com_plano,
+    marcar_aviso,
+    preparar_fatura,
+    preparar_renovacao,
+    primeiro_pagamento_da_assinatura,
+    registrar_pagamento_stars,
+    registrar_reembolso,
     reiniciar_teste,
     reservar_uso_ia,
     situacao_acesso,
     tem_acesso,
     tem_cadastro,
+    texto_termos,
     tirar_pro_manual,
+    ultimo_pagamento_reembolsavel,
 )
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-from telegram.error import BadRequest, NetworkError
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, WebAppInfo
+from telegram.error import BadRequest, Forbidden, NetworkError
 from telegram.ext import (
     ApplicationBuilder,
     ApplicationHandlerStop,
@@ -99,6 +127,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     ConversationHandler,
     ContextTypes,
+    PreCheckoutQueryHandler,
     TypeHandler,
     filters,
 )
@@ -120,6 +149,10 @@ def obter_conexao_db():
 # chance de coincidir com o horário do Resumo Diário, que é configurável por
 # usuário e não tem um valor fixo a checar.
 HORARIO_COBRANCA_RECORRENTE = time(hour=5, minute=0, tzinfo=FUSO_BRASILIA)
+
+# Avisos de vencimento do teste e do Pro (PRO-107): uma vez por dia, às 10:00
+# de Brasília.
+HORARIO_AVISOS_VENCIMENTO = time(hour=10, minute=0, tzinfo=FUSO_BRASILIA)
 
 # Estados das conversas
 # (Os números 3, 11 e 61 eram das etapas de limite de categoria, removidas na
@@ -632,27 +665,41 @@ def url_tela_assinatura(url_mini_app):
     separador = '&' if '?' in url_mini_app else '?'
     return f"{url_mini_app}{separador}tela=assinatura"
 
-def montar_aviso_assinatura(situacao):
+def linha_abrir_l1d3r():
+    """Linha com o botão "Abrir o L1d3r" (Mini App na tela Assinaturas), ou
+    None sem URL_MINI_APP."""
+    url_mini_app = obter_url_mini_app()
+    if not url_mini_app:
+        return None
+    return [InlineKeyboardButton("Abrir o L1d3r", web_app=WebAppInfo(url=url_tela_assinatura(url_mini_app)))]
+
+def linha_assinar(link_fatura):
+    """Linha com o botão "Assinar com Stars" (abre a janela de pagamento do
+    Telegram pelo link da fatura, PRO-107), ou None sem link."""
+    if not link_fatura:
+        return None
+    return [InlineKeyboardButton("Assinar com Stars", url=link_fatura)]
+
+def montar_aviso_assinatura(situacao, link_fatura=None):
     """(texto, teclado) do aviso de quem está sem acesso. Sem plano (nunca
     começou nada): a escolha, com "Testar Grátis por 10 Dias"; vencido: o
-    aviso de assinatura vencida. "Abrir o L1d3r" (tela Assinaturas) só com
-    URL_MINI_APP. "Assinar com Stars" entra na PRO-107."""
+    aviso de assinatura vencida. "Assinar com Stars" (PRO-107) só com o link
+    da fatura; "Abrir o L1d3r" (tela Assinaturas) só com URL_MINI_APP."""
     linhas = []
     if situacao.estado == 'sem_plano':
         texto = TEXTO_ESCOLHA_PLANO
         linhas.append([InlineKeyboardButton("Testar Grátis por 10 Dias", callback_data=CALLBACK_TESTAR_GRATIS)])
     else:
         texto = TEXTO_ASSINATURA_VENCIDA
-    url_mini_app = obter_url_mini_app()
-    if url_mini_app:
-        linhas.append([InlineKeyboardButton("Abrir o L1d3r", web_app=WebAppInfo(url=url_tela_assinatura(url_mini_app)))])
+    for linha in (linha_assinar(link_fatura), linha_abrir_l1d3r()):
+        if linha is not None:
+            linhas.append(linha)
     return texto, (InlineKeyboardMarkup(linhas) if linhas else None)
 
-def aviso_se_sem_acesso(user_id):
-    """(texto, teclado) do aviso se a assinatura está ligada e a pessoa (que
-    não é admin) está sem acesso; None em todo o resto, sem consultar o banco
-    com a chave desligada. Falha do banco: None (o fluxo segue, e as
-    gravações dependem do mesmo banco)."""
+def _situacao_sem_acesso(user_id):
+    """A situação de quem está sem acesso (assinatura ligada, não admin), ou
+    None em todo o resto, sem consultar o banco com a chave desligada. Falha
+    do banco: None (o fluxo segue, e as gravações dependem do mesmo banco)."""
     if not assinaturas_ligadas() or e_admin(user_id):
         return None
     try:
@@ -664,9 +711,22 @@ def aviso_se_sem_acesso(user_id):
     except Exception as e:
         print(f"⚠️ Não consegui conferir a assinatura do usuário {user_id} (seguindo): {type(e).__name__}")
         return None
-    if situacao.tem_acesso:
+    return None if situacao.tem_acesso else situacao
+
+def aviso_se_sem_acesso(user_id):
+    """(texto, teclado) do aviso se a assinatura está ligada e a pessoa (que
+    não é admin) está sem acesso; None em todo o resto. Sem o botão de
+    assinar (ver aviso_se_sem_acesso_com_fatura)."""
+    situacao = _situacao_sem_acesso(user_id)
+    return None if situacao is None else montar_aviso_assinatura(situacao)
+
+async def aviso_se_sem_acesso_com_fatura(context, user_id):
+    """O mesmo aviso, com o botão "Assinar com Stars" (PRO-107): o /start de
+    quem está sem acesso e o fim do cadastro pelo chat."""
+    situacao = _situacao_sem_acesso(user_id)
+    if situacao is None:
         return None
-    return montar_aviso_assinatura(situacao)
+    return montar_aviso_assinatura(situacao, await criar_link_fatura(context.bot, user_id))
 
 def acesso_no_job(user_id, conn=None):
     """Os jobs (alerta diário, recorrentes das 05:00 e a mensagem do resumo
@@ -712,7 +772,8 @@ async def porteiro(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if usuario is None or update.pre_checkout_query is not None:
         return
     mensagem = update.effective_message
-    if mensagem is not None and getattr(mensagem, 'successful_payment', None) is not None:
+    if mensagem is not None and (getattr(mensagem, 'successful_payment', None) is not None
+                                 or getattr(mensagem, 'refunded_payment', None) is not None):
         return
     query = update.callback_query
     if query is not None and query.data == CALLBACK_TESTAR_GRATIS:
@@ -745,7 +806,7 @@ async def porteiro(update: Update, context: ContextTypes.DEFAULT_TYPE):
     resetar_conversas(context.application, chat_id, usuario.id)
     for chave in CHAVES_ESTADO_TEMPORARIO:
         context.user_data.pop(chave, None)
-    texto, teclado = montar_aviso_assinatura(situacao)
+    texto, teclado = montar_aviso_assinatura(situacao, await criar_link_fatura(context.bot, usuario.id))
     if query is not None:
         await responder_callback(query)
         await atualizar_callback(query, context, texto, reply_markup=teclado)
@@ -774,7 +835,8 @@ async def testar_gratis_botao(update: Update, context: ContextTypes.DEFAULT_TYPE
             texto_menu = await montar_texto_menu_principal(user_id)
             await atualizar_callback(query, context, texto_menu, reply_markup=obter_teclado_menu())
         elif erro.codigo == 'teste_ja_usado':
-            texto, teclado = montar_aviso_assinatura(SimpleNamespace(estado='teste_vencido'))
+            texto, teclado = montar_aviso_assinatura(SimpleNamespace(estado='teste_vencido'),
+                                                     await criar_link_fatura(context.bot, user_id))
             await atualizar_callback(query, context, texto, reply_markup=teclado)
         else:
             _, teclado = montar_aviso_assinatura(SimpleNamespace(estado='sem_plano'))
@@ -838,7 +900,9 @@ TEXTO_COMANDOS_ADMIN = (
     "/dar_pro &lt;id&gt; [dias]: dá Pro de 1 a 366 dias (sem número, 30); soma ao Pro atual\n"
     "/tirar_pro &lt;id&gt;: tira só os dias dados que ainda não foram usados\n"
     "/estender_teste &lt;id&gt; &lt;dias&gt;: soma de 1 a 60 dias ao fim do teste\n"
-    "/reiniciar_teste &lt;id&gt;: teste de 10 dias a partir de agora"
+    "/reiniciar_teste &lt;id&gt;: teste de 10 dias a partir de agora\n"
+    "/reembolsar &lt;id&gt;: reembolsa o último pagamento em Stars e cancela a renovação\n"
+    "/avisos_agora: manda agora os avisos de vencimento (com uma cópia para você)"
 )
 USO_DAR_PRO = "Uso: <code>/dar_pro &lt;id&gt; [dias]</code> (dias de 1 a 366; sem número, 30)."
 USO_TIRAR_PRO = "Uso: <code>/tirar_pro &lt;id&gt;</code>"
@@ -990,6 +1054,703 @@ COMANDOS_ADMIN = (
     ('reiniciar_teste', comando_reiniciar_teste),
 )
 
+# --- PAGAMENTO EM TELEGRAM STARS (PRO-107) ---
+# O Telegram é o caixa e o bot é o porteiro: o Pro só nasce aqui, no
+# successful_payment conferido (D1). As regras (fatura, conferências, soma da
+# D17, reembolso, renovação, avisos e termos) ficam no assinaturas.py; aqui
+# ficam as chamadas à Bot API pelo PTB e as mensagens. Nunca vão para o log o
+# token nem o payload inteiro: só códigos e ids.
+TEXTO_PRE_CHECKOUT_RECUSADO = "O preço mudou ou a fatura não é sua. Abra a assinatura de novo."
+TEXTO_TELEGRAM_INDISPONIVEL = "Não consegui falar com o Telegram agora. Tente de novo em instantes."
+TEXTO_LINHA_TERMOS = "Ao assinar, você concorda com os Termos de Uso (/terms)."
+TEXTO_ASSINATURAS_DESLIGADAS = "As assinaturas ainda não estão abertas. Por enquanto, tudo segue liberado."
+TEXTO_PAGAMENTO_NAO_GRAVADO = (
+    "Recebemos o seu pagamento, mas não consegui confirmar o Plano Pro agora. "
+    "Fale com a gente por /paysupport: nada se perde."
+)
+TEXTO_REATIVACAO_RECUSADA = (
+    "O Telegram não deixou reativar esta assinatura (ela foi cancelada nas configurações do Telegram). "
+    "Assine de novo: os 30 dias somam ao fim do seu Pro, sem perder nenhum dia."
+)
+TEXTO_PAYSUPPORT_RECEBIDO = "Recebemos o seu pedido. Responderemos por aqui."
+USO_PAYSUPPORT = (
+    "Para falar sobre um pagamento, mande o comando com a sua mensagem, por exemplo:\n"
+    "<code>/paysupport quero o reembolso do Plano Pro</code>"
+)
+USO_REEMBOLSAR = "Uso: <code>/reembolsar &lt;id&gt;</code>"
+PAYSUPPORT_MAXIMO = 1000
+CALLBACK_CANCELAR_RENOVACAO = 'assinatura_cancelar'
+CALLBACK_REATIVAR_RENOVACAO = 'assinatura_reativar'
+PADRAO_CALLBACK_REEMBOLSO = r'^reembolsar_(\d+)_(\d+)$'
+PADRAO_CALLBACK_REEMBOLSO_COMPROVANTE = r'^reembolsarc_(\d+)_(\d+)$'   # cobrança sem Pro gravado
+# Recusa da Bot API (o pedido chegou e foi negado). Rede, tempo esgotado e
+# fora do ar são "indisponível". BadRequest é filho de NetworkError no PTB:
+# por isso a recusa é conferida antes.
+ERROS_DE_RECUSA = (BadRequest, Forbidden)
+
+def _fatura_para_ptb(fatura):
+    """Os campos da assinaturas.montar_fatura_pro no formato do
+    create_invoice_link do PTB (os preços viram LabeledPrice)."""
+    return {
+        'title': fatura['title'],
+        'description': fatura['description'],
+        'payload': fatura['payload'],
+        'currency': fatura['currency'],
+        'prices': [LabeledPrice(preco['label'], preco['amount']) for preco in fatura['prices']],
+        'subscription_period': fatura['subscription_period'],
+    }
+
+async def criar_link_fatura(bot_tg, user_id):
+    """Link da fatura de assinatura (createInvoiceLink, XTR, 30 dias) para o
+    botão "Assinar com Stars", ou None quando a pessoa não pode assinar agora
+    (chave desligada, admin ou Pro de Stars renovando) ou o Telegram falhou:
+    aí a mensagem sai sem o botão."""
+    try:
+        conn = obter_conexao_db()
+        try:
+            fatura = preparar_fatura(conn, user_id, datetime.now(FUSO_BRASILIA))
+        finally:
+            conn.close()
+    except ErroRegistro:
+        return None
+    except Exception as e:
+        print(f"⚠️ Não consegui preparar a fatura do usuário {user_id}: {type(e).__name__}")
+        return None
+    try:
+        link = await bot_tg.create_invoice_link(**_fatura_para_ptb(fatura))
+    except Exception as e:
+        print(f"⚠️ Não consegui criar a fatura do usuário {user_id}: {type(e).__name__}")
+        return None
+    if not isinstance(link, str) or not link.startswith('https://t.me/'):
+        print(f"⚠️ Link de fatura inesperado para o usuário {user_id}")
+        return None
+    return link
+
+def _data_br(momento):
+    return momento.strftime('%d/%m/%Y')
+
+async def montar_tela_assinatura(context, user_id, aviso=None):
+    """(texto, teclado) do /assinatura: o estado e os botões que valem.
+    Teste: "Teste até ..."; Pro de Stars renovando: "Pro até ..., renova
+    sozinho" com "Cancelar Renovação"; Pro de Stars cancelado: "Pro até ...,
+    não renova" com "Reativar Renovação"; Pro dado: "Pro até ..., não
+    renova"; vencida; sem plano: a escolha. "Assinar com Stars" onde dá para
+    assinar; "Abrir o L1d3r" (com URL_MINI_APP) e "← Voltar ao Menu" (para
+    quem tem acesso). 'aviso' entra antes do estado (ex.: "Renovação
+    cancelada.")."""
+    agora = datetime.now(FUSO_BRASILIA)
+    if not assinaturas_ligadas():
+        return TEXTO_ASSINATURAS_DESLIGADAS, TECLADO_VOLTAR_AO_MENU
+    admin = e_admin(user_id)
+    conn = obter_conexao_db()
+    try:
+        situacao = situacao_acesso(conn, user_id, agora, admin=admin)
+    finally:
+        conn.close()
+    linhas = []
+    pode_assinar = True
+    if admin:
+        estado = "Plano Pro, sem vencimento."
+        pode_assinar = False
+    elif situacao.estado == 'teste':
+        estado = f"Teste até <b>{_data_br(situacao.fim)}</b>."
+    elif situacao.estado == 'pro' and situacao.proxima_renovacao is not None:
+        estado = f"Pro até <b>{_data_br(situacao.vale_ate)}</b>, renova sozinho."
+        linhas.append([InlineKeyboardButton("Cancelar Renovação", callback_data=CALLBACK_CANCELAR_RENOVACAO)])
+        pode_assinar = False
+    elif situacao.estado == 'pro':
+        estado = f"Pro até <b>{_data_br(situacao.vale_ate)}</b>, não renova."
+        if situacao.renovacao_cancelada:
+            linhas.append([InlineKeyboardButton("Reativar Renovação", callback_data=CALLBACK_REATIVAR_RENOVACAO)])
+            pode_assinar = False
+    elif situacao.estado == 'sem_plano':
+        estado = TEXTO_ESCOLHA_PLANO
+        linhas.append([InlineKeyboardButton("Testar Grátis por 10 Dias", callback_data=CALLBACK_TESTAR_GRATIS)])
+    else:
+        estado = "<b>Assinatura vencida.</b> Seus dados continuam guardados."
+    link = await criar_link_fatura(context.bot, user_id) if pode_assinar else None
+    partes = [p for p in (aviso, estado) if p]
+    if link:
+        linhas.append(linha_assinar(link))
+        partes.append(TEXTO_LINHA_TERMOS)
+    for linha in (linha_abrir_l1d3r(),):
+        if linha is not None:
+            linhas.append(linha)
+    if admin or situacao.tem_acesso:
+        linhas.append([InlineKeyboardButton("← Voltar ao Menu", callback_data='voltar_menu', style="danger")])
+    texto = "<b>Sua Assinatura</b>\n\n" + "\n\n".join(partes)
+    return texto, (InlineKeyboardMarkup(linhas) if linhas else None)
+
+async def comando_assinatura(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/assinatura (todos, livre no porteiro): o estado e os botões."""
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+    user_id = update.effective_user.id
+    try:
+        texto, teclado = await montar_tela_assinatura(context, user_id)
+    except Exception as e:
+        print(f"⚠️ /assinatura do usuário {user_id} falhou: {type(e).__name__}")
+        texto, teclado = "Não consegui ver a sua assinatura agora. Tente de novo em instantes.", TECLADO_VOLTAR_AO_MENU
+    await enviar_fluxo(context, update.effective_chat.id, texto, reply_markup=teclado)
+
+async def renovacao_botao(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """"Cancelar Renovação" e "Reativar Renovação" do /assinatura:
+    editUserStarSubscription com o id da PRIMEIRA cobrança, pelas mesmas
+    regras do POST /assinaturas/renovacao (assinaturas.preparar_renovacao e
+    concluir_renovacao). O Pro cancelado continua valendo até o fim."""
+    query = update.callback_query
+    await responder_callback(query)
+    user_id = query.from_user.id
+    cancelar = query.data == CALLBACK_CANCELAR_RENOVACAO
+    agora = datetime.now(FUSO_BRASILIA)
+    try:
+        conn = obter_conexao_db()
+        try:
+            alvo = preparar_renovacao(conn, user_id, cancelar, agora)
+        finally:
+            conn.close()
+    except ErroRegistro:
+        texto, teclado = await montar_tela_assinatura(context, user_id)
+        await atualizar_callback(query, context, texto, reply_markup=teclado)
+        return
+    recusou = False
+    if not alvo.ja_no_estado:
+        try:
+            await context.bot.edit_user_star_subscription(
+                user_id=user_id, telegram_payment_charge_id=alvo.pagamento_id, is_canceled=cancelar)
+        except ERROS_DE_RECUSA:
+            recusou = True
+        except Exception as e:
+            print(f"⚠️ editUserStarSubscription do usuário {user_id} falhou: {type(e).__name__}")
+            texto, teclado = await montar_tela_assinatura(context, user_id, aviso=TEXTO_TELEGRAM_INDISPONIVEL)
+            await atualizar_callback(query, context, texto, reply_markup=teclado)
+            return
+    conn = obter_conexao_db()
+    try:
+        concluir_renovacao(conn, alvo, cancelar, telegram_recusou=recusou)
+    except ErroRegistro as erro:
+        if erro.codigo != 'reativacao_recusada':
+            raise
+        linhas = [linha_assinar(await criar_link_fatura(context.bot, user_id)), linha_abrir_l1d3r(),
+                  [InlineKeyboardButton("← Voltar ao Menu", callback_data='voltar_menu', style="danger")]]
+        teclado = InlineKeyboardMarkup([linha for linha in linhas if linha is not None])
+        await atualizar_callback(query, context, TEXTO_REATIVACAO_RECUSADA, reply_markup=teclado)
+        return
+    finally:
+        conn.close()
+    aviso = ("Renovação cancelada. O Pro continua valendo até o fim." if cancelar
+             else "Renovação reativada, sem cobrança agora.")
+    texto, teclado = await montar_tela_assinatura(context, user_id, aviso=aviso)
+    await atualizar_callback(query, context, texto, reply_markup=teclado)
+
+async def comando_terms(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/terms (todos, livre no porteiro): os 7 itens aprovados, da mesma
+    função do GET /termos (assinaturas.texto_termos)."""
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+    await enviar_fluxo(context, update.effective_chat.id, texto_termos(html=True), reply_markup=TECLADO_VOLTAR_AO_MENU)
+
+def _texto_depois_do_comando(message):
+    """O texto depois de '/comando' (com as quebras de linha), ou ''."""
+    partes = (getattr(message, 'text', None) or '').split(maxsplit=1)
+    return partes[1].strip() if len(partes) > 1 else ''
+
+async def comando_paysupport(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/paysupport <mensagem> (todos, livre no porteiro; exigência do
+    Telegram): repassa a mensagem aos ids do ADMIN_IDS, com o id e o nome da
+    pessoa (escapados), e confirma. Sem mensagem: explica como usar."""
+    mensagem = _texto_depois_do_comando(update.message)
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+    chat_id = update.effective_chat.id
+    if not mensagem:
+        await enviar_fluxo(context, chat_id, USO_PAYSUPPORT, reply_markup=TECLADO_VOLTAR_AO_MENU)
+        return
+    usuario = update.effective_user
+    nome = (getattr(usuario, 'full_name', None) or getattr(usuario, 'first_name', None) or '—')
+    texto_admin = (
+        "<b>Pedido de suporte (/paysupport)</b>\n"
+        f"De: {escape(nome)} (<code>{usuario.id}</code>)\n\n"
+        f"{escape(mensagem[:PAYSUPPORT_MAXIMO])}"
+    )
+    admins = sorted(ler_admin_ids())
+    if not admins:
+        print("⚠️ /paysupport sem ADMIN_IDS: o pedido não foi repassado")
+    for admin_id in admins:
+        try:
+            await context.bot.send_message(chat_id=admin_id, text=texto_admin, parse_mode='HTML')
+        except Exception as e:
+            print(f"⚠️ Não consegui repassar o /paysupport ao admin {admin_id}: {type(e).__name__}")
+    print(f"📨 /paysupport do usuário {usuario.id} repassado a {len(admins)} admin(s)")
+    await enviar_fluxo(context, chat_id, TEXTO_PAYSUPPORT_RECEBIDO, reply_markup=TECLADO_VOLTAR_AO_MENU)
+
+async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """pre_checkout_query: responde em menos de 10 s, sem IA e sem rede
+    (fora a própria resposta): assinaturas.conferir_pre_checkout lê o payload
+    e faz UMA consulta ao banco. Falha do banco: recusa (nada é cobrado)."""
+    query = update.pre_checkout_query
+    user_id = query.from_user.id
+    try:
+        conn = obter_conexao_db()
+        try:
+            codigo = conferir_pre_checkout(conn, user_id, query.currency, query.total_amount, query.invoice_payload,
+                                           datetime.now(FUSO_BRASILIA))
+        finally:
+            conn.close()
+    except Exception as e:
+        codigo = f'erro_interno ({type(e).__name__})'
+    try:
+        if codigo is None:
+            await query.answer(ok=True)
+            print(f"✅ Pre-checkout aceito para o usuário {user_id}")
+        else:
+            print(f"⚠️ Pre-checkout recusado para o usuário {user_id}: {codigo}")
+            await query.answer(ok=False, error_message=TEXTO_PRE_CHECKOUT_RECUSADO)
+    except Exception as e:
+        print(f"⚠️ Não consegui responder o pre-checkout do usuário {user_id}: {type(e).__name__}")
+
+async def _avisar_admins(bot_tg, texto):
+    for admin_id in sorted(ler_admin_ids()):
+        try:
+            await bot_tg.send_message(chat_id=admin_id, text=texto, parse_mode='HTML')
+        except Exception as e:
+            print(f"⚠️ Não consegui avisar o admin {admin_id}: {type(e).__name__}")
+
+async def pagamento_confirmado(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """successful_payment: primeiro grava o COMPROVANTE (pagamentos_recebidos,
+    sem conferir nada), depois grava o Pro pela
+    assinaturas.registrar_pagamento_stars (a soma da D17, uma vez só pelo id
+    do pagamento) e confirma: "Pagamento confirmado!" na primeira cobrança,
+    "Assinatura renovada." na renovação. O mesmo pagamento entregue de novo
+    não grava nem manda nada. Se não der para gravar o Pro (conferência ou
+    banco), o comprovante fica 'falhou', a pessoa é avisada para usar o
+    /paysupport e os admins recebem o id dela e o da cobrança (o dinheiro já
+    saiu; o /reembolsar acha o comprovante)."""
+    mensagem = update.effective_message
+    pagamento = mensagem.successful_payment
+    user_id = update.effective_user.id
+    cobranca = pagamento.telegram_payment_charge_id
+    agora = datetime.now(FUSO_BRASILIA)
+    renovacao_recebida = bool(pagamento.is_recurring) and not bool(pagamento.is_first_recurring)
+    # O id da cobrança vai sempre para o log (é o que o refundStarPayment
+    # pede); o token e o payload nunca.
+    print(f"🧾 Pagamento em Stars recebido: usuário {user_id}, cobrança {cobranca}, "
+          f"{pagamento.total_amount} {pagamento.currency}, renovação {renovacao_recebida}")
+    conn = None
+    comprovante_ok = False
+    try:
+        conn = obter_conexao_db()
+        # 1) O comprovante, ANTES de qualquer coisa que possa falhar.
+        try:
+            registrar_comprovante(conn, cobranca, user_id, pagamento.total_amount, pagamento.currency,
+                                  pagamento.invoice_payload, renovacao_recebida, agora)
+            comprovante_ok = True
+            print(f"🧾 Comprovante gravado: cobrança {cobranca}")
+        except Exception as e:
+            print(f"❌ Comprovante da cobrança {cobranca} NÃO gravado: {type(e).__name__}")
+        # 2) O Pro (conferência e soma da D17).
+        pago = registrar_pagamento_stars(
+            conn, user_id, pagamento.currency, pagamento.total_amount, pagamento.invoice_payload,
+            cobranca, pagamento.subscription_expiration_date,
+            recorrente=pagamento.is_recurring, primeira_recorrente=pagamento.is_first_recurring, agora=agora)
+        if comprovante_ok:
+            try:
+                marcar_comprovante(conn, cobranca, SITUACAO_PRO_GRAVADO)
+            except Exception as e:
+                print(f"⚠️ Não consegui marcar o comprovante da cobrança {cobranca}: {type(e).__name__}")
+    except Exception as e:
+        codigo = e.codigo if isinstance(e, ErroRegistro) else type(e).__name__
+        print(f"❌ Pagamento em Stars do usuário {user_id} NÃO gravado: {codigo} (cobrança {cobranca})")
+        if comprovante_ok:
+            try:
+                marcar_comprovante(conn, cobranca, SITUACAO_FALHOU, codigo)
+            except Exception as erro_marca:
+                print(f"⚠️ Não consegui marcar o comprovante da cobrança {cobranca}: {type(erro_marca).__name__}")
+        guardado = ("O comprovante está guardado no banco: /reembolsar devolve as Stars."
+                    if comprovante_ok else "O comprovante NÃO foi guardado: use o id da cobrança acima.")
+        await _avisar_admins(context.bot, f"⚠️ Pagamento em Stars de <code>{user_id}</code> não foi gravado "
+                                          f"({escape(codigo)}). Cobrança: <code>{escape(str(cobranca))}</code>. "
+                                          f"{guardado} Ou use /dar_pro {user_id} 30.")
+        try:
+            await context.bot.send_message(chat_id=user_id, text=TEXTO_PAGAMENTO_NAO_GRAVADO,
+                                           reply_markup=TECLADO_VOLTAR_AO_MENU)
+        except Exception as erro_envio:
+            print(f"⚠️ Não consegui avisar o usuário {user_id}: {type(erro_envio).__name__}")
+        return
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    if pago.repetido:
+        print(f"ℹ️ Pagamento em Stars repetido do usuário {user_id} (ignorado)")
+        return
+    print(f"💫 Pagamento em Stars gravado: usuário {user_id}, linha {pago.linha.id}, renovação {pago.renovacao}, "
+          f"Pro até {_data_br(pago.fim_do_pro)}")
+    inicio = "Assinatura renovada." if pago.renovacao else "Pagamento confirmado!"
+    texto = f"{inicio} Seu Plano Pro vale até <b>{_data_br(pago.fim_do_pro)}</b>."
+    try:
+        await context.bot.send_message(chat_id=user_id, text=texto, parse_mode='HTML',
+                                       reply_markup=TECLADO_VOLTAR_AO_MENU)
+    except Exception as e:
+        print(f"⚠️ Não consegui confirmar o pagamento ao usuário {user_id}: {type(e).__name__}")
+
+async def cancelar_renovacao_apos_reembolso(bot_tg, user_id, assinatura_ref):
+    """Depois do refundStarPayment (que não diz que cancela a assinatura),
+    o editUserStarSubscription com is_canceled e as linhas da assinatura sem
+    renovar. True se ficou cancelada (ou já estava); False se o Telegram não
+    respondeu."""
+    conn = obter_conexao_db()
+    try:
+        # Pela tabela assinaturas e, se o Pro nunca foi gravado, pelos comprovantes.
+        pagamento_id = primeiro_pagamento_conhecido(conn, user_id, assinatura_ref)
+        if pagamento_id is None:
+            return True
+        try:
+            await bot_tg.edit_user_star_subscription(user_id=user_id, telegram_payment_charge_id=pagamento_id,
+                                                     is_canceled=True)
+        except ERROS_DE_RECUSA:
+            pass   # já cancelada ou vencida no Telegram: o que importa (não renovar) já vale
+        except Exception as e:
+            print(f"⚠️ Não consegui cancelar a renovação do usuário {user_id}: {type(e).__name__}")
+            return False
+        gravar_renovacao(conn, user_id, assinatura_ref, True)
+        return True
+    finally:
+        conn.close()
+
+def _texto_reembolso(reembolso):
+    texto = f"Reembolso de <b>{reembolso.valor} Stars</b> feito."
+    if reembolso.pro_valendo:
+        return f"{texto} Seu Plano Pro vale até <b>{_data_br(reembolso.vale_ate)}</b>."
+    return f"{texto} O Plano Pro foi encerrado."
+
+async def pagamento_reembolsado(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """refunded_payment (o /reembolsar do admin ou o estorno pela loja): tira
+    só os 30 dias daquele pagamento (D17), cancela a renovação e avisa a
+    pessoa. Id desconhecido (ou de outra pessoa, ou outra moeda): só o log."""
+    reembolsado = update.effective_message.refunded_payment
+    user_id = update.effective_user.id
+    if reembolsado.currency != 'XTR':
+        print(f"⚠️ Reembolso fora de Stars do usuário {user_id} (ignorado)")
+        return
+    cobranca = reembolsado.telegram_payment_charge_id
+    sem_pro = None
+    try:
+        conn = obter_conexao_db()
+        try:
+            reembolso = registrar_reembolso(conn, cobranca, datetime.now(FUSO_BRASILIA), user_id=user_id)
+            if reembolso is None:
+                # Cobrança sem Pro gravado: só o comprovante.
+                sem_pro = registrar_reembolso_sem_pro(conn, cobranca, user_id)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"❌ Reembolso do usuário {user_id} NÃO gravado: {type(e).__name__} (cobrança {cobranca})")
+        await _avisar_admins(context.bot, f"⚠️ Reembolso em Stars de <code>{user_id}</code> não foi gravado "
+                                          f"(cobrança <code>{escape(str(cobranca))}</code>). Confira.")
+        return
+    if sem_pro is not None:
+        print(f"↩️ Reembolso de cobrança sem Pro gravado: usuário {user_id}, cobrança {cobranca}")
+        await cancelar_renovacao_apos_reembolso(context.bot, user_id, sem_pro.assinatura_ref)
+        await avisar_reembolso_sem_pro(context.bot, user_id, sem_pro.valor)
+        return
+    if reembolso is None:
+        print(f"⚠️ Reembolso de pagamento desconhecido do usuário {user_id} (ignorado)")
+        return
+    print(f"↩️ Reembolso gravado: usuário {user_id} (novo: {reembolso.alterou})")
+    if not reembolso.alterou:
+        # Já gravado (pelo /reembolsar do admin, que já avisou a pessoa, ou
+        # entregue de novo): nenhuma mensagem repetida.
+        return
+    await cancelar_renovacao_apos_reembolso(context.bot, user_id, reembolso.assinatura_ref)
+    await avisar_reembolso_ao_usuario(context.bot, user_id, reembolso)
+
+async def avisar_reembolso_ao_usuario(bot_tg, user_id, reembolso):
+    """A mensagem do reembolso para a pessoa. Sai uma vez só: de quem gravou
+    o reembolso primeiro (o botão do /reembolsar ou o refunded_payment, que a
+    documentação não garante para o reembolso feito pelo próprio bot)."""
+    try:
+        await bot_tg.send_message(chat_id=user_id, text=_texto_reembolso(reembolso), parse_mode='HTML',
+                                  reply_markup=TECLADO_VOLTAR_AO_MENU)
+    except Exception as e:
+        print(f"⚠️ Não consegui avisar o reembolso ao usuário {user_id}: {type(e).__name__}")
+
+async def avisar_reembolso_sem_pro(bot_tg, user_id, valor):
+    """A mensagem do reembolso de uma cobrança cujo Pro nunca foi gravado."""
+    try:
+        await bot_tg.send_message(chat_id=user_id, text=f"Reembolso de <b>{valor} Stars</b> feito.",
+                                  parse_mode='HTML', reply_markup=TECLADO_VOLTAR_AO_MENU)
+    except Exception as e:
+        print(f"⚠️ Não consegui avisar o reembolso ao usuário {user_id}: {type(e).__name__}")
+
+def _data_do_texto(texto):
+    """'AAAA-MM-DD ...' -> 'dd/mm/aaaa'."""
+    texto = str(texto or '')
+    return f"{texto[8:10]}/{texto[5:7]}/{texto[0:4]}" if len(texto) >= 10 else '—'
+
+async def comando_reembolsar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/reembolsar <id> (só admin; para os outros o comando não existe):
+    mostra o último pagamento em Stars não reembolsado e pede confirmação num
+    botão. Sem pagamento: avisa que não há o que reembolsar."""
+    args = context.args or []
+    alvo = _ler_id_alvo(args[0]) if len(args) == 1 else None
+    if alvo is None:
+        await _responder_admin(update, context, USO_REEMBOLSAR)
+        return
+    conn = obter_conexao_db()
+    try:
+        linha = ultimo_pagamento_reembolsavel(conn, alvo)
+        comprovante = comprovante_sem_pro(conn, alvo) if linha is None else None
+        nome = _nome_para_admin(conn, alvo)
+    finally:
+        conn.close()
+    if linha is None and comprovante is not None:
+        # O dinheiro chegou, mas o Pro não foi gravado: o reembolso sai pelo comprovante.
+        texto = (f"Pagamento em Stars de {nome} <b>sem Pro gravado</b>: <b>{comprovante.valor} Stars</b> em "
+                 f"{_data_do_texto(comprovante.recebido_em)} (cobrança <code>{escape(comprovante.pagamento_id)}</code>)."
+                 "\n\nReembolsar? A renovação é cancelada.")
+        teclado = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"Reembolsar {comprovante.valor} Stars",
+                                  callback_data=f"reembolsarc_{alvo}_{comprovante.id}")],
+            [InlineKeyboardButton("← Voltar ao Menu", callback_data='voltar_menu', style="danger")],
+        ])
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+        await enviar_fluxo(context, update.effective_chat.id, texto, reply_markup=teclado)
+        return
+    if linha is None:
+        await _responder_admin(update, context, f"Não há pagamento em Stars de {nome} para reembolsar.")
+        return
+    valor = int(round(linha.valor or 0))
+    texto = (f"Último pagamento em Stars de {nome}: <b>{valor} Stars</b> em {_data_do_texto(linha.criado_em)}.\n\n"
+             "Reembolsar? Sai só o período deste pagamento, e a renovação é cancelada.")
+    teclado = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"Reembolsar {valor} Stars", callback_data=f"reembolsar_{alvo}_{linha.id}")],
+        [InlineKeyboardButton("← Voltar ao Menu", callback_data='voltar_menu', style="danger")],
+    ])
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+    await enviar_fluxo(context, update.effective_chat.id, texto, reply_markup=teclado)
+
+async def reembolso_confirmado(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Botão "Reembolsar N Stars" do /reembolsar (só admin: para os outros,
+    nada acontece): refundStarPayment, a gravação (a mesma do
+    refunded_payment) e, depois, o cancelamento da renovação. A resposta vai
+    só para o admin."""
+    query = update.callback_query
+    await responder_callback(query)
+    admin_id = query.from_user.id
+    if not e_admin(admin_id):
+        return
+    achado = re.match(PADRAO_CALLBACK_REEMBOLSO, query.data or '')
+    alvo, linha_id = int(achado.group(1)), int(achado.group(2))
+    conn = obter_conexao_db()
+    try:
+        linha = buscar_linha(conn, alvo, linha_id)
+        nome = _nome_para_admin(conn, alvo)
+    finally:
+        conn.close()
+    if linha is None or linha.origem != 'stars' or not linha.pagamento_id or linha.estado == 'reembolsada':
+        await atualizar_callback(query, context, f"Não há pagamento em Stars de {nome} para reembolsar.",
+                                 reply_markup=TECLADO_VOLTAR_AO_MENU)
+        return
+    try:
+        await context.bot.refund_star_payment(user_id=alvo, telegram_payment_charge_id=linha.pagamento_id)
+    except ERROS_DE_RECUSA as e:
+        print(f"⚠️ Admin {admin_id}: refundStarPayment recusado para {alvo}: {type(e).__name__}")
+        await atualizar_callback(query, context, "O Telegram recusou o reembolso (talvez já tenha sido feito).",
+                                 reply_markup=TECLADO_VOLTAR_AO_MENU)
+        return
+    except Exception as e:
+        print(f"⚠️ Admin {admin_id}: refundStarPayment falhou para {alvo}: {type(e).__name__}")
+        await atualizar_callback(query, context, TEXTO_TELEGRAM_INDISPONIVEL, reply_markup=TECLADO_VOLTAR_AO_MENU)
+        return
+    print(f"🛡️ Admin {admin_id}: /reembolsar {alvo} (linha {linha.id})")
+    try:
+        conn = obter_conexao_db()
+        try:
+            reembolso = registrar_reembolso(conn, linha.pagamento_id, datetime.now(FUSO_BRASILIA), user_id=alvo)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"❌ Reembolso de {alvo} feito no Telegram, mas NÃO gravado: {type(e).__name__}")
+        await atualizar_callback(query, context, "As Stars foram devolvidas, mas não consegui gravar o reembolso. "
+                                                 "Ele é gravado quando o Telegram avisar.",
+                                 reply_markup=TECLADO_VOLTAR_AO_MENU)
+        return
+    cancelou = await cancelar_renovacao_apos_reembolso(context.bot, alvo, linha.assinatura_ref)
+    if reembolso is not None and reembolso.alterou:
+        await avisar_reembolso_ao_usuario(context.bot, alvo, reembolso)
+    texto = f"Reembolso de <b>{reembolso.valor} Stars</b> para {nome} feito."
+    if reembolso.pro_valendo:
+        texto += f" O Pro de {nome} vale até <b>{_data_br(reembolso.vale_ate)}</b>."
+    else:
+        texto += " O Plano Pro foi encerrado."
+    if not cancelou:
+        texto += " Não consegui cancelar a renovação agora: tente de novo com /reembolsar."
+    await atualizar_callback(query, context, texto, reply_markup=TECLADO_VOLTAR_AO_MENU)
+
+async def reembolso_comprovante_confirmado(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Botão "Reembolsar N Stars" do /reembolsar para a cobrança cujo Pro não
+    foi gravado (só admin: para os outros, nada acontece): refundStarPayment
+    pelo id do comprovante, o comprovante fica 'reembolsado', a renovação é
+    cancelada e a pessoa é avisada."""
+    query = update.callback_query
+    await responder_callback(query)
+    admin_id = query.from_user.id
+    if not e_admin(admin_id):
+        return
+    achado = re.match(PADRAO_CALLBACK_REEMBOLSO_COMPROVANTE, query.data or '')
+    alvo, comprovante_id = int(achado.group(1)), int(achado.group(2))
+    conn = obter_conexao_db()
+    try:
+        comprovante = buscar_comprovante(conn, alvo, comprovante_id)
+        nome = _nome_para_admin(conn, alvo)
+    finally:
+        conn.close()
+    if comprovante is None or comprovante.situacao not in ('recebido', SITUACAO_FALHOU):
+        await atualizar_callback(query, context, f"Não há pagamento em Stars de {nome} para reembolsar.",
+                                 reply_markup=TECLADO_VOLTAR_AO_MENU)
+        return
+    try:
+        await context.bot.refund_star_payment(user_id=alvo, telegram_payment_charge_id=comprovante.pagamento_id)
+    except ERROS_DE_RECUSA as e:
+        print(f"⚠️ Admin {admin_id}: refundStarPayment recusado para {alvo}: {type(e).__name__}")
+        await atualizar_callback(query, context, "O Telegram recusou o reembolso (talvez já tenha sido feito).",
+                                 reply_markup=TECLADO_VOLTAR_AO_MENU)
+        return
+    except Exception as e:
+        print(f"⚠️ Admin {admin_id}: refundStarPayment falhou para {alvo}: {type(e).__name__}")
+        await atualizar_callback(query, context, TEXTO_TELEGRAM_INDISPONIVEL, reply_markup=TECLADO_VOLTAR_AO_MENU)
+        return
+    print(f"🛡️ Admin {admin_id}: /reembolsar {alvo} (comprovante {comprovante.id}, cobrança {comprovante.pagamento_id})")
+    texto = f"Reembolso de <b>{comprovante.valor} Stars</b> para {nome} feito (pagamento sem Pro gravado)."
+    try:
+        conn = obter_conexao_db()
+        try:
+            mudou = registrar_reembolso_sem_pro(conn, comprovante.pagamento_id, alvo)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"❌ Reembolso de {alvo} feito no Telegram, mas o comprovante NÃO foi marcado: {type(e).__name__}")
+        mudou = None
+        texto += " Não consegui marcar o comprovante como reembolsado."
+    if not await cancelar_renovacao_apos_reembolso(context.bot, alvo, comprovante.assinatura_ref):
+        texto += " Não consegui cancelar a renovação agora: tente de novo com /reembolsar."
+    if mudou is not None:
+        await avisar_reembolso_sem_pro(context.bot, alvo, comprovante.valor)
+    await atualizar_callback(query, context, texto, reply_markup=TECLADO_VOLTAR_AO_MENU)
+
+def _teclado_aviso_vencimento(link_fatura):
+    linhas = [linha for linha in (linha_assinar(link_fatura), linha_abrir_l1d3r()) if linha is not None]
+    return InlineKeyboardMarkup(linhas) if linhas else None
+
+async def enviar_avisos_vencimento(bot_tg, copia_para=None):
+    """Manda os avisos de vencimento devidos (assinaturas.avisos_devidos):
+    marca o ultimo_aviso ANTES de enviar (nunca repete) e desmarca se o envio
+    falhar (sai na próxima). Cada aviso leva "Assinar com Stars" e "Abrir o
+    L1d3r". 'copia_para' (o /avisos_agora): o admin recebe, de cada aviso
+    enviado, uma cópia com o mesmo texto e os mesmos botões; ninguém mais
+    recebe cópia. Devolve (enviados, falhas)."""
+    agora = datetime.now(FUSO_BRASILIA)
+    enviados = falhas = 0
+    conn = obter_conexao_db()
+    try:
+        avisos = avisos_devidos(conn, agora)
+        for aviso in avisos:
+            if not marcar_aviso(conn, aviso):
+                continue
+            teclado = _teclado_aviso_vencimento(await criar_link_fatura(bot_tg, aviso.user_id))
+            try:
+                await bot_tg.send_message(chat_id=aviso.user_id, text=aviso.texto, reply_markup=teclado)
+            except Exception as e:
+                print(f"⚠️ Aviso de vencimento ({aviso.marco}) do usuário {aviso.user_id} falhou: {type(e).__name__}")
+                desmarcar_aviso(conn, aviso)
+                falhas += 1
+                continue
+            enviados += 1
+            print(f"⏰ Aviso de vencimento ({aviso.marco}) enviado ao usuário {aviso.user_id}")
+            if copia_para is not None:
+                try:
+                    await bot_tg.send_message(chat_id=copia_para,
+                                              text=f"Prévia do aviso enviado a {aviso.user_id}:\n\n{aviso.texto}",
+                                              reply_markup=teclado)
+                except Exception as e:
+                    print(f"⚠️ Não consegui mandar a cópia do aviso ao admin {copia_para}: {type(e).__name__}")
+    finally:
+        conn.close()
+    return enviados, falhas
+
+async def job_avisos_vencimento(context: ContextTypes.DEFAULT_TYPE):
+    """Job das 10:00 de Brasília. Com ASSINATURAS_LIGADAS desligada, não
+    consulta nada e não manda nada."""
+    if not assinaturas_ligadas():
+        return
+    try:
+        enviados, falhas = await enviar_avisos_vencimento(context.bot)
+    except Exception as e:
+        print(f"❌ Job dos avisos de vencimento falhou: {type(e).__name__}")
+        return
+    print(f"⏰ Avisos de vencimento: {enviados} enviado(s), {falhas} falha(s)")
+
+async def comando_avisos_agora(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/avisos_agora (só admin; para os outros o comando não existe): roda o
+    job dos avisos na hora (para o guia de teste não esperar as 10:00) e
+    responde ao admin com o resumo; cada aviso enviado chega também ao admin
+    como "Prévia do aviso enviado a <id>:"."""
+    if not assinaturas_ligadas():
+        await _responder_admin(update, context,
+                               "A chave ASSINATURAS_LIGADAS está desligada: nenhum aviso enviado.")
+        return
+    admin_id = update.effective_user.id
+    enviados, falhas = await enviar_avisos_vencimento(context.bot, copia_para=admin_id)
+    print(f"🛡️ Admin {admin_id}: /avisos_agora ({enviados} enviado(s), {falhas} falha(s))")
+    texto = f"{enviados} aviso(s) enviado(s)."
+    if falhas:
+        texto += f" {falhas} não chegaram (tentam de novo no próximo envio)."
+    if enviados:
+        # O resumo vai para baixo das cópias (mensagem nova), e as mensagens
+        # de fluxo antigas saem do chat.
+        await limpar_historico_mensagens(context, update.effective_chat.id)
+        context.user_data.pop('ultima_msg_bot', None)
+    await _responder_admin(update, context, texto)
+
+COMANDOS_PAGAMENTO_ADMIN = (
+    ('reembolsar', comando_reembolsar),
+    ('avisos_agora', comando_avisos_agora),
+)
+
+def registrar_handlers_pagamento(application):
+    """Handlers do pagamento em Stars (PRO-107), no grupo 0, antes dos
+    outros: pre-checkout, successful_payment, refunded_payment, /assinatura,
+    /terms e /paysupport (todos, livres no porteiro), os botões da renovação
+    e do reembolso, e /reembolsar e /avisos_agora com o filtro de admin."""
+    application.add_handler(PreCheckoutQueryHandler(pre_checkout))
+    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, pagamento_confirmado))
+    application.add_handler(MessageHandler(filters.StatusUpdate.REFUNDED_PAYMENT, pagamento_reembolsado))
+    application.add_handler(CommandHandler('assinatura', comando_assinatura))
+    application.add_handler(CommandHandler('terms', comando_terms))
+    application.add_handler(CommandHandler('paysupport', comando_paysupport))
+    application.add_handler(CallbackQueryHandler(
+        renovacao_botao, pattern=f'^({CALLBACK_CANCELAR_RENOVACAO}|{CALLBACK_REATIVAR_RENOVACAO})$'))
+    application.add_handler(CallbackQueryHandler(reembolso_confirmado, pattern=PADRAO_CALLBACK_REEMBOLSO))
+    application.add_handler(CallbackQueryHandler(reembolso_comprovante_confirmado,
+                                                 pattern=PADRAO_CALLBACK_REEMBOLSO_COMPROVANTE))
+    for nome, funcao in COMANDOS_PAGAMENTO_ADMIN:
+        application.add_handler(CommandHandler(nome, funcao, filters=FILTRO_ADMIN))
+
 FORMATO_LOG = "%(asctime)s %(name)s %(levelname)s %(message)s"
 
 def configurar_logs_do_dominio(nomes=('registro', 'assinaturas')):
@@ -1036,7 +1797,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Menu Principal, sem tocar nos dados já configurados. Com a
         # assinatura ligada (PRO-106), quem está sem acesso recebe o aviso
         # (escolha do plano ou assinatura vencida) no lugar do menu.
-        aviso = aviso_se_sem_acesso(user_id)
+        aviso = await aviso_se_sem_acesso_com_fatura(context, user_id)
         if aviso is not None:
             texto_aviso, teclado_aviso = aviso
             await enviar_fluxo(context, update.effective_chat.id, texto_aviso, reply_markup=teclado_aviso)
@@ -1147,7 +1908,7 @@ async def receber_dia_fechamento(update: Update, context: ContextTypes.DEFAULT_T
     texto_sucesso = f"Configuração Concluída, {nome}! Tudo pronto para começarmos."
     # Assinatura ligada (PRO-106, D9): no fim do cadastro pelo chat, a mesma
     # escolha do plano, com os botões, no lugar do Menu Principal.
-    aviso = aviso_se_sem_acesso(user_id)
+    aviso = await aviso_se_sem_acesso_com_fatura(context, user_id)
     if aviso is not None:
         texto_aviso, teclado_aviso = aviso
         await enviar_fluxo(context, user_id, f"{texto_sucesso}\n\n{texto_aviso}", reply_markup=teclado_aviso)
@@ -3888,6 +4649,13 @@ if __name__ == '__main__':
                 HORARIO_COBRANCA_RECORRENTE,
                 name="verificar_gastos_recorrentes"
             )
+            # Avisos de vencimento do teste e do Pro (PRO-107), às 10:00 de
+            # Brasília; com ASSINATURAS_LIGADAS desligada, o job não manda nada.
+            application.job_queue.run_daily(
+                job_avisos_vencimento,
+                HORARIO_AVISOS_VENCIMENTO,
+                name="avisos_vencimento"
+            )
 
         # Roda uma checagem imediata na subida do bot: se o processo tiver
         # ficado fora do ar bem no horário do reset, isso evita perder o
@@ -4067,6 +4835,9 @@ if __name__ == '__main__':
 
     # Assinatura (PRO-106): porteiro no grupo -1, botão do teste e comandos de admin.
     registrar_handlers_assinatura(app)
+    # Pagamento em Telegram Stars (PRO-107): pre-checkout, pagamento, reembolso,
+    # /assinatura, /terms, /paysupport, /reembolsar e /avisos_agora.
+    registrar_handlers_pagamento(app)
 
     app.add_handler(CallbackQueryHandler(excluir_categoria_botao, pattern='^acao_excluir_'))
     app.add_handler(CallbackQueryHandler(resumo_diario_menu_callback, pattern='^resumo_diario_menu$'))

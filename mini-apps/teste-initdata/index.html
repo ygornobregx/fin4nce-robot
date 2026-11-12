@@ -21,12 +21,27 @@
     #receitas-recorrentes label { display: block; margin: 8px 0 2px; font-size: .9rem; }
     #receitas-recorrentes input { width: 100%; box-sizing: border-box; padding: 6px; font-size: 1rem; }
     #receitas-recorrentes button { margin: 10px 8px 0 0; padding: 8px 14px; font-size: 1rem; }
+    #assinatura { margin-top: 28px; padding-top: 8px; border-top: 1px solid rgba(127,127,127,.4); }
+    #assinatura button { margin: 10px 8px 0 0; padding: 8px 14px; font-size: 1rem; }
+    #ass-selo { display: inline-block; margin-top: 4px; padding: 6px 14px; border-radius: 999px; font-size: 1.4rem; font-weight: bold; background: rgba(127,127,127,.2); }
   </style>
 </head>
 <body>
   <h1>Teste do initData</h1>
   <p id="status">Verificando...</p>
   <div id="respostas"></div>
+  <div id="assinatura">
+    <h1>Assinatura (diagnóstico)</h1>
+    <p>PRO-107. Não é tela de usuário: só mostra o estado do GET /assinatura (com o selo em destaque), começa o teste e pede a fatura. "Pedir fatura" abre a janela de pagamento do Telegram: <b>feche sem pagar</b>. O Pro só nasce quando o bot recebe o pagamento; depois da janela, o estado é lido de novo.</p>
+    <p>Selo: <span id="ass-selo">(carregando)</span></p>
+    <button id="ass-ver" type="button">Ver estado (GET /assinatura)</button>
+    <button id="ass-teste" type="button">Começar teste (POST /assinaturas/teste)</button>
+    <button id="ass-fatura" type="button">Pedir fatura (POST /assinaturas/fatura)</button>
+    <h2 id="ass-titulo">Assinatura: nada pedido ainda</h2>
+    <pre id="ass-respostas"></pre>
+    <h2 id="ass-fatura-titulo">Fatura: ainda não pedida</h2>
+    <pre id="ass-fatura-respostas"></pre>
+  </div>
   <div id="registro">
     <h1>Registro (diagnóstico)</h1>
     <p>PRO-88. "Interpretar" chama a IA e só mostra a prévia (não grava). "Gravar" manda o MESMO pedido duas vezes ao mesmo tempo, com a mesma chave, para provar o toque duplo: uma resposta deve vir 201 e a outra 200 com "repetido": true, com o mesmo id.</p>
@@ -339,6 +354,64 @@
       const rota = "/receitas-recorrentes/" + encodeURIComponent($("rr-id").value);
       executarReceitaRecorrente("DELETE " + rota, async () => mostrar(await chamarRota("DELETE", rota)));
     });
+
+    // --- Assinatura (diagnóstico, PRO-107) ---
+    // O texto da API só entra na página por textContent. O selo vem do
+    // GET /assinatura ("gratis", "pro", "assinar" ou null).
+    async function verAssinatura() {
+      $("ass-titulo").textContent = "GET /assinatura: aguardando...";
+      try {
+        const resposta = await chamarRota("GET", "/assinatura");
+        $("ass-titulo").textContent = "GET /assinatura";
+        $("ass-respostas").textContent = mostrar(resposta);
+        const selo = resposta.json && "selo" in resposta.json ? resposta.json.selo : undefined;
+        $("ass-selo").textContent = selo === undefined ? "(sem resposta)" : (selo === null ? "null (sem selo)" : selo);
+      } catch (e) {
+        $("ass-titulo").textContent = "GET /assinatura: falha ao chamar a API";
+        $("ass-selo").textContent = "(falha)";
+      }
+    }
+
+    $("ass-ver").addEventListener("click", verAssinatura);
+
+    $("ass-teste").addEventListener("click", async () => {
+      $("ass-titulo").textContent = "POST /assinaturas/teste: aguardando...";
+      try {
+        const resposta = await chamarRota("POST", "/assinaturas/teste", {});
+        $("ass-titulo").textContent = "POST /assinaturas/teste";
+        $("ass-respostas").textContent = mostrar(resposta);
+      } catch (e) {
+        $("ass-titulo").textContent = "POST /assinaturas/teste: falha ao chamar a API";
+      }
+      setTimeout(verAssinatura, 800);
+    });
+
+    $("ass-fatura").addEventListener("click", async () => {
+      $("ass-fatura-titulo").textContent = "Fatura: aguardando...";
+      $("ass-fatura-respostas").textContent = "";
+      let resposta;
+      try {
+        resposta = await chamarRota("POST", "/assinaturas/fatura", {});
+      } catch (e) {
+        $("ass-fatura-titulo").textContent = "Fatura: falha ao chamar a API";
+        return;
+      }
+      $("ass-fatura-titulo").textContent = "POST /assinaturas/fatura";
+      $("ass-fatura-respostas").textContent = mostrar(resposta);
+      if (resposta.status !== 200 || !resposta.json || !resposta.json.link) { return; }
+      if (!tg || typeof tg.openInvoice !== "function") {
+        $("ass-fatura-respostas").textContent += "\n\nEste Telegram não tem openInvoice.";
+        return;
+      }
+      $("ass-fatura-respostas").textContent += "\n\nJanela de pagamento aberta (feche sem pagar)...";
+      tg.openInvoice(resposta.json.link, (situacao) => {
+        // paid, cancelled, failed ou pending: só informa; quem decide é o bot (successful_payment).
+        $("ass-fatura-respostas").textContent += "\nStatus do openInvoice: " + situacao;
+        verAssinatura();
+      });
+    });
+
+    if (tg && tg.initData) { verAssinatura(); }
   </script>
 </body>
 </html>

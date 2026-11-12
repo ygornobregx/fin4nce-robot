@@ -39,6 +39,13 @@ nunca checam plano: modo somente leitura) e o limite diário de registros com IA
 /registro/interpretar (429 limite_diario_ia, sempre ligado). As regras ficam
 no assinaturas.py, o mesmo módulo que o bot usa.
 
+Pagamento em Telegram Stars (PRO-107): POST /assinaturas/fatura (link da
+fatura de assinatura pelo createInvoiceLink), POST /assinaturas/renovacao
+(cancela ou reativa a renovação pelo editUserStarSubscription) e GET /termos
+(público). As três ficam fora da checagem de acesso. A Bot API é chamada pelo
+HTTPX (BotApiTelegram, trocada por um dublê nos testes); o Pro só nasce no
+bot, no successful_payment. Nenhuma rota grava pagamento.
+
 Também serve, na mesma origem, a home do Mini App em /app (mini-apps/home, PRO-77)
 e a página de diagnóstico das rotas em /teste (mini-apps/teste-initdata).
 
@@ -55,6 +62,7 @@ from datetime import datetime
 from functools import lru_cache
 from typing import Any, NamedTuple, Optional
 
+import httpx
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.concurrency import run_in_threadpool
@@ -183,7 +191,8 @@ def acesso_liberado(usuario: dict = Depends(usuario_autenticado), conn=Depends(o
     rotas de ESCRITA e de IA (todo POST, PUT e DELETE com dados, e o
     /registro/interpretar). As leituras usam a leitura_liberada (nunca checam
     plano); ficam fora de qualquer checagem /saude, /me, /assinatura,
-    /assinaturas/teste e /cadastro. Com ASSINATURAS_LIGADAS desligada (o
+    /assinaturas/teste, /cadastro e, na PRO-107, /assinaturas/fatura,
+    /assinaturas/renovacao e /termos. Com ASSINATURAS_LIGADAS desligada (o
     padrão), não consulta nada e deixa passar, como antes. Ligada: o admin
     (ADMIN_IDS) sempre passa; quem tem teste ou Pro valendo passa; o resto
     recebe 403 assinatura_vencida (teve teste ou Pro e venceu) ou 403
@@ -269,6 +278,156 @@ def comecar_teste(response: Response, usuario: dict = Depends(usuario_autenticad
         response.status_code = 200
     return {"inicio": assinaturas.data_texto(teste.inicio), "fim": assinaturas.data_texto(teste.fim),
             "repetido": teste.repetido}
+
+
+# --- PAGAMENTO EM TELEGRAM STARS (PRO-107) ---
+# A API só pede ao Telegram o link da fatura e liga ou desliga a renovação; o
+# Pro só nasce no bot, quando chega o successful_payment conferido (nenhuma
+# rota grava pagamento). As três rotas ficam fora da checagem de acesso (quem
+# venceu precisa pagar). O token do bot só entra na URL da Bot API: nunca vai
+# para log nem resposta, e o erro do HTTPX é engolido sem a mensagem (ela pode
+# trazer a URL).
+URL_BOT_API = "https://api.telegram.org"
+TEMPO_BOT_API = 10.0   # segundos
+
+# O httpx loga cada requisição (com a URL, que leva o token) em INFO: aqui
+# fica sempre em WARNING ou acima, mesmo se alguém ligar o INFO no root.
+for _nome_log in ("httpx", "httpcore"):
+    logging.getLogger(_nome_log).setLevel(logging.WARNING)
+
+
+class TelegramRecusou(Exception):
+    """A Bot API respondeu e recusou o pedido (ok: false, erro 4xx)."""
+
+
+class TelegramIndisponivel(Exception):
+    """A Bot API não respondeu (rede, tempo esgotado, fora do ar ou 5xx/429)."""
+
+
+class BotApiTelegram:
+    """As chamadas da API à Bot API do Telegram, pelo HTTPX (já no
+    requirements-api.txt). Os testes trocam por um dublê (obter_bot_api), sem
+    rede. Nada aqui escreve no log: quem chama registra só o código."""
+
+    def __init__(self, token: str):
+        self._token = token
+
+    def __repr__(self) -> str:
+        return "BotApiTelegram(token=***)"
+
+    def _chamar(self, metodo: str, dados: Optional[dict] = None):
+        try:
+            with httpx.Client(timeout=TEMPO_BOT_API) as cliente:
+                resposta = cliente.post(f"{URL_BOT_API}/bot{self._token}/{metodo}", json=dados or {})
+            corpo = resposta.json()
+        except Exception:
+            raise TelegramIndisponivel() from None
+        if isinstance(corpo, dict) and corpo.get("ok") is True:
+            return corpo.get("result")
+        codigo = corpo.get("error_code") if isinstance(corpo, dict) else None
+        if isinstance(codigo, int) and 400 <= codigo < 500 and codigo != 429:
+            raise TelegramRecusou()
+        raise TelegramIndisponivel()
+
+    def obter_bot(self) -> dict:
+        """getMe (usado pela trava do testes_pagamento_stars.py --telegram-real)."""
+        return self._chamar("getMe")
+
+    def criar_link_fatura(self, fatura: dict) -> str:
+        """createInvoiceLink com os campos da assinaturas.montar_fatura_pro."""
+        return self._chamar("createInvoiceLink", fatura)
+
+    def editar_assinatura(self, user_id: int, pagamento_id: str, cancelar: bool) -> None:
+        """editUserStarSubscription (is_canceled = cancelar)."""
+        self._chamar("editUserStarSubscription", {"user_id": user_id, "telegram_payment_charge_id": pagamento_id,
+                                                  "is_canceled": cancelar})
+
+
+def obter_bot_api(config: Config = Depends(obter_config)) -> BotApiTelegram:
+    """A Bot API com o token do .env; os testes trocam por um dublê."""
+    return BotApiTelegram(config.token)
+
+
+def telegram_indisponivel(erro: Exception) -> HTTPException:
+    """502 {"detail": "telegram_indisponivel"}, sem detalhes. O log leva só o
+    nome da classe do erro (nunca o token, o payload nem a resposta)."""
+    logger.warning("Bot API falhou: telegram_indisponivel (%s)", type(erro).__name__)
+    return HTTPException(status_code=502, detail="telegram_indisponivel")
+
+
+@app.post("/assinaturas/fatura")
+def pedir_fatura(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_conexao_db),
+                 agora: datetime = Depends(obter_agora), bot_api=Depends(obter_bot_api)):
+    """O link da fatura de assinatura do Plano Pro (createInvoiceLink, XTR,
+    30 dias), para o Mini App abrir com openInvoice. Sem corpo (o que vier é
+    ignorado). 200 {"link": "https://t.me/$...", "stars": 150}. 409
+    plano_ativo (Pro de Stars renovando, ou admin); 409
+    assinaturas_desligadas (ASSINATURAS_LIGADAS desligada: ninguém assina);
+    502 telegram_indisponivel; 500 erro_interno. Não grava nada."""
+    try:
+        fatura = assinaturas.preparar_fatura(conn, usuario["id"], agora)
+    except registro.ErroRegistro as erro:
+        raise erro_registro(erro) from None
+    except Exception as erro:
+        raise erro_interno(erro, "Assinaturas") from None
+    try:
+        link = bot_api.criar_link_fatura(fatura)
+    except Exception as erro:
+        raise telegram_indisponivel(erro) from None
+    if not isinstance(link, str) or not link.startswith("https://t.me/"):
+        raise telegram_indisponivel(ValueError())
+    return {"link": link, "stars": fatura["prices"][0]["amount"]}
+
+
+class PedidoRenovacao(BaseModel):
+    """{"cancelar": true} ou {"cancelar": false}. Campo solto (Any): quem
+    confere é a rota (booleano de verdade). Campos a mais são ignorados."""
+    cancelar: Any = None
+
+
+@app.post("/assinaturas/renovacao")
+def mudar_renovacao(pedido: PedidoRenovacao, usuario: dict = Depends(usuario_autenticado),
+                    conn=Depends(obter_conexao_db), agora: datetime = Depends(obter_agora),
+                    bot_api=Depends(obter_bot_api)):
+    """Cancela ou reativa a renovação da assinatura em Stars da pessoa
+    (editUserStarSubscription com o id da PRIMEIRA cobrança). Resposta: o
+    mesmo JSON do GET /assinatura (montar_bloco_assinatura). Repetir o mesmo
+    pedido não muda nada e responde 200 (sem chamar o Telegram). 422
+    cancelar_invalido; 409 sem_assinatura_stars (teste, Pro dado, admin ou
+    vencido); 409 reativacao_recusada (o Telegram recusou reativar: nada muda
+    no banco); 502 telegram_indisponivel (sem gravar)."""
+    cancelar = pedido.cancelar
+    if not isinstance(cancelar, bool):
+        raise HTTPException(status_code=422, detail="cancelar_invalido")
+    user_id = usuario["id"]
+    try:
+        alvo = assinaturas.preparar_renovacao(conn, user_id, cancelar, agora)
+    except registro.ErroRegistro as erro:
+        raise erro_registro(erro) from None
+    except Exception as erro:
+        raise erro_interno(erro, "Assinaturas") from None
+    recusou = False
+    if not alvo.ja_no_estado:
+        try:
+            bot_api.editar_assinatura(user_id, alvo.pagamento_id, cancelar)
+        except TelegramRecusou:
+            recusou = True
+        except Exception as erro:
+            raise telegram_indisponivel(erro) from None
+    try:
+        assinaturas.concluir_renovacao(conn, alvo, cancelar, telegram_recusou=recusou)
+        return assinaturas.montar_bloco_assinatura(conn, user_id, agora)
+    except registro.ErroRegistro as erro:
+        raise erro_registro(erro) from None
+    except Exception as erro:
+        raise erro_interno(erro, "Assinaturas") from None
+
+
+@app.get("/termos")
+def termos():
+    """Pública (sem initData): {"texto": "..."}, o mesmo texto do /terms do
+    bot (assinaturas.texto_termos, constante única), em texto puro."""
+    return {"texto": assinaturas.texto_termos()}
 
 
 def em_reais(valor: float) -> float:
@@ -454,7 +613,9 @@ STATUS_ERRO_REGISTRO = {"resposta_ia_invalida": 502, "ia_indisponivel": 503, "ba
                         "recorrente_nao_encontrado": 404,            # PRO-87
                         "receita_recorrente_nao_encontrada": 404,    # PRO-102
                         "categoria_inexistente": 404,                # PRO-104
-                        "teste_ja_usado": 409, "plano_ativo": 409}   # PRO-106
+                        "teste_ja_usado": 409, "plano_ativo": 409,   # PRO-106
+                        "assinaturas_desligadas": 409, "sem_assinatura_stars": 409,   # PRO-107
+                        "reativacao_recusada": 409}
 
 
 def erro_registro(erro: registro.ErroRegistro) -> HTTPException:

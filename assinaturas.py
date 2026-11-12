@@ -25,7 +25,16 @@ sobrepor. O teste não entra na soma. Só adicionar_pro cria linha Pro.
 
 Os erros são registro.ErroRegistro com um código (a API traduz em status; o
 bot, em mensagem): 'teste_ja_usado', 'plano_ativo', 'usuario_nao_encontrado',
-'dias_invalidos', 'sem_teste', 'banco_ocupado'.
+'dias_invalidos', 'sem_teste', 'banco_ocupado' e, na PRO-107,
+'assinaturas_desligadas', 'sem_assinatura_stars', 'reativacao_recusada' e
+'pagamento_nao_conferido'.
+
+Pagamento em Telegram Stars (PRO-107, no fim do arquivo): a fatura de
+assinatura (montar_fatura_pro, usada pela API com o HTTPX e pelo bot com o
+PTB), a leitura do payload, a conferência do pre-checkout, a gravação do
+pagamento e do reembolso (pela adicionar_pro e pela retirar_pro, D17), a
+renovação (cancelar e reativar), os avisos de vencimento e o texto único dos
+termos. A chamada à Bot API fica fora daqui (o módulo não conhece o Telegram).
 
 A palavra "admin" nunca vai para o JSON (D7.4): o admin aparece como Pro, sem
 datas, com selo "pro" e selo_tocavel false (D18).
@@ -34,7 +43,7 @@ import logging
 import math
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, NamedTuple, Optional
 
 import recorrentes
@@ -95,6 +104,19 @@ CREATE TABLE IF NOT EXISTS uso_ia (
     chamadas INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (user_id, dia)
 );
+CREATE TABLE IF NOT EXISTS pagamentos_recebidos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pagamento_id TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    valor INTEGER NOT NULL,
+    moeda TEXT NOT NULL,
+    assinatura_ref TEXT,
+    recorrente INTEGER NOT NULL DEFAULT 0,
+    recebido_em TEXT NOT NULL,
+    situacao TEXT NOT NULL DEFAULT 'recebido',
+    erro TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_pagamentos_recebidos_pagamento ON pagamentos_recebidos (pagamento_id);
 '''
 
 
@@ -160,7 +182,9 @@ def limite_ia_dia():
 
 def preco_pro_stars():
     """PRECO_PRO_STARS (D2): de 1 a 10.000 Stars; ausente ou inválido vale 150.
-    Até a PRO-107, só informativo (preco.stars do GET /assinatura)."""
+    É o preço das faturas novas (PRO-107: montar_fatura_pro e o
+    pre-checkout), do preco.stars do GET /assinatura e do item 1 dos termos.
+    Quem já assina continua pagando o valor do link original."""
     return _ler_inteiro('PRECO_PRO_STARS', 1, PRECO_PRO_STARS_MAXIMO, PRECO_PRO_STARS_PADRAO)
 
 
@@ -297,6 +321,19 @@ def _renova(linha, agora):
             and linha.renova_em is not None and agora < linha.renova_em + TOLERANCIA_RENOVACAO)
 
 
+def _stars_em_vigor(validas, agora):
+    """A linha de Stars em vigor (contrato do GET /assinatura): a de Stars
+    mais recente entre as válidas (não reembolsada), cujo próprio fim (mais a
+    tolerância de 24 horas, se ela renova) ainda não passou. None sem ela.
+    Usada pelo selo e pela folha e, na PRO-107, pela renovação."""
+    stars = [l for l in validas if l.origem == 'stars']
+    if not stars:
+        return None
+    recente = stars[-1]
+    fim_efetivo = recente.fim + (TOLERANCIA_RENOVACAO if _renova(recente, agora) else timedelta(0))
+    return recente if agora < fim_efetivo else None
+
+
 def _blocos(linhas):
     """Períodos contínuos [início, fim) das linhas (as que se tocam ou se
     cruzam viram um só), em ordem."""
@@ -378,11 +415,7 @@ def calcular_situacao(linhas, agora=None, admin=False):
 
     if pro_ativo:
         bloco = next((b for b in _blocos(validas) if b[1] == fim_unico), [validas[0].inicio, fim_unico])
-        em_vigor = None
-        if stars_recente is not None:
-            fim_efetivo = stars_recente.fim + (TOLERANCIA_RENOVACAO if _renova(stars_recente, agora) else timedelta(0))
-            if agora < fim_efetivo:
-                em_vigor = stars_recente
+        em_vigor = _stars_em_vigor(validas, agora)
         proxima = em_vigor.renova_em if em_vigor is not None and _renova(em_vigor, agora) else None
         valor_stars = None
         if em_vigor is not None and em_vigor.valor is not None:
@@ -906,3 +939,595 @@ def devolver_uso_ia(conn, user_id, dia):
         conn.commit()
 
     recorrentes._com_novas_tentativas(conn, operacao)
+
+
+# =============================================================================
+# PAGAMENTO EM TELEGRAM STARS (PRO-107)
+# =============================================================================
+# O Mini App (ou o bot) pede a fatura; o Telegram cobra; o bot só grava o Pro
+# quando chega o successful_payment conferido (D1). Nenhuma rota grava
+# pagamento. As chamadas à Bot API (createInvoiceLink, editUserStarSubscription
+# e refundStarPayment) ficam na API (HTTPX) e no bot (PTB); aqui ficam só as
+# regras, com a conexão e o "agora" por parâmetro.
+DIAS_PAGAMENTO_STARS = 30                   # cada cobrança soma 30 dias (D17)
+PERIODO_ASSINATURA_SEGUNDOS = 2592000       # subscription_period: a Bot API só aceita 30 dias
+MOEDA_STARS = 'XTR'
+PREFIXO_PAYLOAD = 'pro1'
+TAMANHO_MAXIMO_PAYLOAD = 128                # bytes (Bot API)
+TITULO_FATURA = 'L1d3r Pro'
+DESCRICAO_FATURA = 'Plano Pro do L1d3r por 30 dias. Renova sozinho; cancele quando quiser.'
+ROTULO_ITEM_FATURA = 'Plano Pro (30 dias)'
+
+# payload: pro1:<user_id>:<stars>:<8 caracteres aleatórios>. O sufixo vem do
+# os.urandom (4 bytes em hexadecimal): cada fatura é uma assinatura diferente,
+# e as renovações trazem o mesmo payload (vira o assinatura_ref).
+_PAYLOAD = re.compile(r'pro1:([1-9][0-9]{0,18}):([1-9][0-9]{0,4}):([0-9a-f]{8})')
+
+
+def _inteiro_de_verdade(valor):
+    return isinstance(valor, int) and not isinstance(valor, bool)
+
+
+def montar_fatura_pro(user_id, preco=None, sufixo=None):
+    """Os campos da fatura de assinatura do Plano Pro, com os nomes da Bot API
+    (createInvoiceLink): título, descrição, payload, moeda XTR, um item só com
+    o preço e o subscription_period de 30 dias. A API manda este dicionário
+    como JSON pelo HTTPX; o bot passa para o create_invoice_link do PTB. Um
+    lugar só para os dois (sem copiar). 'preco' None: PRECO_PRO_STARS de agora;
+    'sufixo' None: 8 caracteres aleatórios."""
+    if not _inteiro_de_verdade(user_id) or user_id <= 0:
+        raise ValueError('user_id inválido')
+    if preco is None:
+        preco = preco_pro_stars()
+    if not _inteiro_de_verdade(preco) or not 1 <= preco <= PRECO_PRO_STARS_MAXIMO:
+        raise ValueError('preço inválido')
+    if sufixo is None:
+        sufixo = os.urandom(4).hex()
+    payload = f'{PREFIXO_PAYLOAD}:{user_id}:{preco}:{sufixo}'
+    if ler_payload(payload) is None:
+        raise ValueError('payload inválido')
+    return {
+        'title': TITULO_FATURA,
+        'description': DESCRICAO_FATURA,
+        'payload': payload,
+        'currency': MOEDA_STARS,
+        'prices': [{'label': ROTULO_ITEM_FATURA, 'amount': preco}],
+        'subscription_period': PERIODO_ASSINATURA_SEGUNDOS,
+    }
+
+
+class Payload(NamedTuple):
+    user_id: int
+    stars: int
+    sufixo: str
+
+
+def ler_payload(payload):
+    """Payload(user_id, stars, sufixo) de 'pro1:<user_id>:<stars>:<sufixo>', ou
+    None se não está nesse formato (ou passa de 128 bytes). Nunca levanta erro
+    e nunca registra o payload no log."""
+    if not isinstance(payload, str) or len(payload.encode('utf-8')) > TAMANHO_MAXIMO_PAYLOAD:
+        return None
+    achado = _PAYLOAD.fullmatch(payload)
+    if achado is None:
+        return None
+    return Payload(int(achado.group(1)), int(achado.group(2)), achado.group(3))
+
+
+def _conferir_cobranca(dados, pagador_id, moeda, total):
+    """As conferências que não dependem do banco nem do relógio: a fatura é
+    de quem paga, em XTR, e o valor é o do payload. Código da recusa ou None."""
+    if dados is None:
+        return 'payload_invalido'
+    if not _inteiro_de_verdade(pagador_id) or pagador_id != dados.user_id:
+        return 'outra_pessoa'
+    if moeda != MOEDA_STARS:
+        return 'moeda'
+    if not _inteiro_de_verdade(total) or total != dados.stars:
+        return 'valor'
+    return None
+
+
+def conferir_pre_checkout(conn, pagador_id, moeda, total, payload, agora=None, admin=None, ligada=None):
+    """O "posso cobrar?" do Telegram (pre_checkout_query), respondido em menos
+    de 10 s: sem IA e sem rede, só o payload e UMA consulta ao banco (as linhas
+    da pessoa). Devolve None (aceita) ou o código da recusa (só para o log; o
+    bot mostra sempre o mesmo texto):
+
+    - 'payload_invalido', 'outra_pessoa' (o user_id do payload não é quem
+      paga), 'moeda' (não é XTR), 'valor' (o total não é o do payload);
+    - 'admin': o admin não paga (D7);
+    - renovação (já existe linha de Stars dessa pessoa com o mesmo payload):
+      aceita pelo valor do link original, mesmo que o PRECO_PRO_STARS tenha
+      mudado (D2) e mesmo com a chave desligada (quem já assina não perde a
+      renovação). Não está documentado se a renovação passa por aqui;
+    - 'assinaturas_desligadas': com ASSINATURAS_LIGADAS desligada ninguém
+      começa assinatura nova;
+    - 'preco_mudou': o valor do payload não é o PRECO_PRO_STARS de agora;
+    - 'plano_ativo': a pessoa já tem Pro de Stars renovando (evita duas
+      assinaturas cobrando ao mesmo tempo)."""
+    dados = ler_payload(payload)
+    codigo = _conferir_cobranca(dados, pagador_id, moeda, total)
+    if codigo is not None:
+        return codigo
+    if admin is None:
+        admin = e_admin(pagador_id)
+    if admin:
+        return 'admin'
+    linhas = ler_linhas(conn, pagador_id)
+    if any(l.origem == 'stars' and l.assinatura_ref == payload for l in linhas):
+        return None
+    if ligada is None:
+        ligada = assinaturas_ligadas()
+    if not ligada:
+        return 'assinaturas_desligadas'
+    if dados.stars != preco_pro_stars():
+        return 'preco_mudou'
+    if calcular_situacao(linhas, agora).proxima_renovacao is not None:
+        return 'plano_ativo'
+    return None
+
+
+def momento_da_expiracao(expiracao):
+    """subscription_expiration_date do Telegram em Brasília (sem
+    microssegundos). Aceita o número Unix da Bot API ou o datetime do PTB (com
+    fuso; sem fuso, é o Unix em UTC que o Telegram manda). None sem data."""
+    if expiracao is None:
+        return None
+    if isinstance(expiracao, datetime):
+        if expiracao.tzinfo is None:
+            expiracao = expiracao.replace(tzinfo=timezone.utc)
+        return agora_brasilia(expiracao)
+    if isinstance(expiracao, (int, float)) and not isinstance(expiracao, bool):
+        return datetime.fromtimestamp(expiracao, FUSO_BRASILIA).replace(microsecond=0)
+    raise ValueError('data de expiração inválida')
+
+
+class PagamentoRegistrado(NamedTuple):
+    linha: Linha                 # a linha do pagamento (a já gravada, se repetido)
+    fim_do_pro: datetime         # o fim único depois do pagamento
+    repetido: bool               # o mesmo pagamento já tinha sido gravado (nada mudou)
+    renovacao: bool              # cobrança de renovação (is_recurring sem is_first_recurring)
+
+
+def registrar_pagamento_stars(conn, pagador_id, moeda, total, payload, pagamento_id, expiracao,
+                              recorrente=False, primeira_recorrente=False, agora=None):
+    """O successful_payment: o ÚNICO lugar onde nasce Pro pago. Confere de
+    novo o payload, a pessoa, a moeda e o valor (o dinheiro já saiu: o preço de
+    agora e o admin não são conferidos aqui, o pre-checkout já conferiu) e
+    grava pela adicionar_pro (D17): 30 dias somados ao fim único (ou a partir
+    de agora), renova_em = subscription_expiration_date em Brasília,
+    pagamento_id, assinatura_ref = payload, valor e moeda. O mesmo pagamento
+    entregue duas vezes grava uma linha só (índice único do pagamento_id):
+    a segunda devolve repetido=True. Conferência que falha:
+    ErroRegistro('pagamento_nao_conferido'), sem gravar nada.
+
+    'renovacao': o Telegram marca is_recurring em toda cobrança de assinatura
+    e is_first_recurring só na primeira; renovação = recorrente e não é a
+    primeira."""
+    dados = ler_payload(payload)
+    if _conferir_cobranca(dados, pagador_id, moeda, total) is not None:
+        raise ErroRegistro('pagamento_nao_conferido')
+    if not isinstance(pagamento_id, str) or not pagamento_id.strip():
+        raise ErroRegistro('pagamento_nao_conferido')
+    renova_em = momento_da_expiracao(expiracao)
+    renovacao = bool(recorrente) and not bool(primeira_recorrente)
+    if renovacao and not any(l.origem == 'stars' and l.assinatura_ref == payload
+                             for l in ler_linhas(conn, pagador_id)):
+        _log.warning('Renovação sem a primeira cobrança gravada: user_id=%s', pagador_id)
+    lancado = adicionar_pro(conn, pagador_id, DIAS_PAGAMENTO_STARS, 'stars', agora,
+                            renovacao=renova_em is not None, renova_em=renova_em, pagamento_id=pagamento_id,
+                            assinatura_ref=payload, valor=total, moeda=MOEDA_STARS)
+    if not lancado.repetido:
+        _log.info('Pagamento em Stars gravado: user_id=%s linha=%s renovacao=%s', pagador_id, lancado.linha.id,
+                  renovacao)
+    return PagamentoRegistrado(lancado.linha, lancado.fim_do_pro, lancado.repetido, renovacao)
+
+
+def buscar_pagamento(conn, pagamento_id):
+    """A linha do pagamento (pelo telegram_payment_charge_id), ou None."""
+    if not isinstance(pagamento_id, str) or not pagamento_id:
+        return None
+    bruta = conn.execute(f'SELECT {_COLUNAS} FROM assinaturas WHERE pagamento_id = ?', (pagamento_id,)).fetchone()
+    return None if bruta is None else _linha(bruta)
+
+
+def ultimo_pagamento_reembolsavel(conn, user_id):
+    """/reembolsar: o último pagamento em Stars da pessoa que ainda não foi
+    reembolsado (ou None)."""
+    bruta = conn.execute(
+        f"SELECT {_COLUNAS} FROM assinaturas WHERE user_id = ? AND origem = 'stars' AND pagamento_id IS NOT NULL "
+        "AND estado <> 'reembolsada' ORDER BY id DESC LIMIT 1", (user_id,)
+    ).fetchone()
+    return None if bruta is None else _linha(bruta)
+
+
+class ReembolsoRegistrado(NamedTuple):
+    user_id: int
+    valor: int                   # Stars daquele pagamento (o valor do link, não o preço de hoje)
+    assinatura_ref: Optional[str]
+    alterou: bool                # False: o pagamento já estava reembolsado
+    pro_valendo: bool            # sobrou Pro (dado ou pago) valendo agora
+    vale_ate: Optional[datetime]  # o fim único que sobrou (None sem Pro)
+
+
+def registrar_reembolso(conn, pagamento_id, agora=None, user_id=None):
+    """O reembolso de um pagamento (o /reembolsar do admin e o
+    refunded_payment, inclusive o estorno pela loja): retirar_pro no modo
+    reembolso (D17): a linha fica 'reembolsada', as seguintes recuam os 30
+    dias dela, o fim único cai 30 dias (se cair antes de agora, acaba agora).
+    Pro dado e outros pagamentos continuam. Idempotente: de novo, nada muda
+    (alterou=False). None se o id não é de um pagamento em Stars conhecido (ou
+    é de outra pessoa, quando 'user_id' vem)."""
+    agora = agora_brasilia(agora)
+    linha = buscar_pagamento(conn, pagamento_id)
+    if linha is None or linha.origem != 'stars' or (user_id is not None and linha.user_id != user_id):
+        return None
+    retirado = retirar_pro(conn, linha.user_id, MODO_REEMBOLSO, agora, pagamento_id=pagamento_id)
+    marcar_comprovante(conn, pagamento_id, SITUACAO_REEMBOLSADO)
+    situacao = situacao_acesso(conn, linha.user_id, agora, admin=False)
+    pro_valendo = situacao.estado == 'pro'
+    return ReembolsoRegistrado(linha.user_id, int(round(linha.valor or 0)), linha.assinatura_ref,
+                               retirado.alterou, pro_valendo, situacao.vale_ate if pro_valendo else None)
+
+
+# --- COMPROVANTE DE CADA PAGAMENTO RECEBIDO (PEDIDO DO YGOR, 2026-11-12) ---
+# Gravado ANTES de qualquer conferência ou gravação do Pro: se o resto quebrar,
+# o id da cobrança (o que o refundStarPayment pede) fica no banco, e não só no
+# log da Discloud (que guarda poucas linhas). Uma linha por cobrança.
+# situacao: 'recebido' (comprovante gravado, Pro ainda não), 'pro_gravado',
+# 'falhou' (com o código em 'erro') e 'reembolsado'.
+SITUACAO_RECEBIDO = 'recebido'
+SITUACAO_PRO_GRAVADO = 'pro_gravado'
+SITUACAO_FALHOU = 'falhou'
+SITUACAO_REEMBOLSADO = 'reembolsado'
+
+
+class Comprovante(NamedTuple):
+    id: int
+    pagamento_id: str
+    user_id: int
+    valor: int
+    moeda: str
+    assinatura_ref: Optional[str]
+    recorrente: bool
+    recebido_em: str
+    situacao: str
+    erro: Optional[str]
+
+
+_COLUNAS_COMPROVANTE = ('id, pagamento_id, user_id, valor, moeda, assinatura_ref, recorrente, recebido_em, '
+                        'situacao, erro')
+
+
+def _comprovante(bruta):
+    return Comprovante(bruta[0], bruta[1], bruta[2], bruta[3], bruta[4], bruta[5], bool(bruta[6]), bruta[7],
+                       bruta[8], bruta[9])
+
+
+def registrar_comprovante(conn, pagamento_id, user_id, valor, moeda, assinatura_ref, recorrente=False,
+                          agora=None):
+    """Grava o comprovante do successful_payment exatamente como chegou, sem
+    conferir nada (a conferência vem depois e pode falhar). O mesmo pagamento
+    de novo não grava outra linha. True se gravou agora; False se já existia.
+    Sem id da cobrança: ErroRegistro('pagamento_nao_conferido') (sem ele, nem
+    o reembolso é possível)."""
+    if not isinstance(pagamento_id, str) or not pagamento_id.strip():
+        raise ErroRegistro('pagamento_nao_conferido')
+    agora = agora_brasilia(agora)
+    valor_inteiro = valor if _inteiro_de_verdade(valor) else 0
+    ref = assinatura_ref if isinstance(assinatura_ref, str) else None
+
+    def operacao():
+        cursor = conn.execute(
+            'INSERT INTO pagamentos_recebidos (pagamento_id, user_id, valor, moeda, assinatura_ref, recorrente, '
+            'recebido_em, situacao) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(pagamento_id) DO NOTHING',
+            (pagamento_id, user_id, valor_inteiro, str(moeda or ''), ref, 1 if recorrente else 0, _texto(agora),
+             SITUACAO_RECEBIDO))
+        gravou = cursor.rowcount
+        conn.commit()
+        return bool(gravou and gravou > 0)
+
+    return recorrentes._com_novas_tentativas(conn, operacao)
+
+
+def marcar_comprovante(conn, pagamento_id, situacao, erro=None):
+    """Atualiza a situação do comprovante. Um comprovante 'reembolsado' nunca
+    volta atrás. True se mudou alguma linha."""
+    def operacao():
+        cursor = conn.execute(
+            'UPDATE pagamentos_recebidos SET situacao = ?, erro = ? WHERE pagamento_id = ? AND situacao <> ?',
+            (situacao, erro, pagamento_id, SITUACAO_REEMBOLSADO))
+        mudou = cursor.rowcount
+        conn.commit()
+        return bool(mudou and mudou > 0)
+
+    return recorrentes._com_novas_tentativas(conn, operacao)
+
+
+def buscar_comprovante(conn, user_id, comprovante_id):
+    bruta = conn.execute(f'SELECT {_COLUNAS_COMPROVANTE} FROM pagamentos_recebidos WHERE id = ? AND user_id = ?',
+                         (comprovante_id, user_id)).fetchone()
+    return None if bruta is None else _comprovante(bruta)
+
+
+def comprovante_sem_pro(conn, user_id):
+    """/reembolsar quando o Pro não foi gravado: o último comprovante da
+    pessoa que ficou 'recebido' ou 'falhou' (dinheiro recebido, sem linha de
+    Pro e sem reembolso), ou None."""
+    bruta = conn.execute(
+        f'SELECT {_COLUNAS_COMPROVANTE} FROM pagamentos_recebidos WHERE user_id = ? AND situacao IN (?, ?) '
+        'ORDER BY id DESC LIMIT 1', (user_id, SITUACAO_RECEBIDO, SITUACAO_FALHOU)).fetchone()
+    return None if bruta is None else _comprovante(bruta)
+
+
+def registrar_reembolso_sem_pro(conn, pagamento_id, user_id):
+    """O reembolso de uma cobrança cujo Pro nunca foi gravado (o comprovante
+    está 'recebido' ou 'falhou'): marca 'reembolsado'. Devolve o comprovante
+    se mudou agora; None se não existe, é de outra pessoa, tem Pro gravado ou
+    já estava reembolsado (nada muda)."""
+    def operacao():
+        cursor = conn.execute(
+            'UPDATE pagamentos_recebidos SET situacao = ? WHERE pagamento_id = ? AND user_id = ? AND situacao IN (?, ?)',
+            (SITUACAO_REEMBOLSADO, pagamento_id, user_id, SITUACAO_RECEBIDO, SITUACAO_FALHOU))
+        mudou = cursor.rowcount
+        conn.commit()
+        return bool(mudou and mudou > 0)
+
+    if not recorrentes._com_novas_tentativas(conn, operacao):
+        return None
+    bruta = conn.execute(f'SELECT {_COLUNAS_COMPROVANTE} FROM pagamentos_recebidos WHERE pagamento_id = ?',
+                         (pagamento_id,)).fetchone()
+    return None if bruta is None else _comprovante(bruta)
+
+
+def primeiro_pagamento_conhecido(conn, user_id, assinatura_ref):
+    """O id da PRIMEIRA cobrança da assinatura (o editUserStarSubscription
+    pede esse id): pela tabela assinaturas e, se o Pro nunca foi gravado,
+    pelos comprovantes. None sem nenhum."""
+    primeiro = primeiro_pagamento_da_assinatura(conn, user_id, assinatura_ref)
+    if primeiro is not None or not assinatura_ref:
+        return primeiro
+    linha = conn.execute('SELECT pagamento_id FROM pagamentos_recebidos WHERE user_id = ? AND assinatura_ref = ? '
+                         'ORDER BY id LIMIT 1', (user_id, assinatura_ref)).fetchone()
+    return None if linha is None else linha[0]
+
+
+def primeiro_pagamento_da_assinatura(conn, user_id, assinatura_ref):
+    """O telegram_payment_charge_id da PRIMEIRA cobrança daquela assinatura
+    (o editUserStarSubscription pede esse id), ou None."""
+    if not assinatura_ref:
+        return None
+    linha = conn.execute(
+        "SELECT pagamento_id FROM assinaturas WHERE user_id = ? AND origem = 'stars' AND assinatura_ref = ? "
+        "AND pagamento_id IS NOT NULL ORDER BY id LIMIT 1", (user_id, assinatura_ref)
+    ).fetchone()
+    return None if linha is None else linha[0]
+
+
+# --- FATURA ---
+def preparar_fatura(conn, user_id, agora=None, admin=None, ligada=None, preco=None):
+    """A fatura (montar_fatura_pro) para quem pode assinar agora:
+    'assinaturas_desligadas' com a chave desligada; 'plano_ativo' para o admin
+    e para quem tem Pro de Stars renovando (pela mesma regra do selo:
+    proxima_renovacao). Teste, Pro dado, Pro de Stars com a renovação
+    cancelada e vencidos recebem a fatura: o pagamento soma 30 dias ao fim
+    atual (D17)."""
+    if ligada is None:
+        ligada = assinaturas_ligadas()
+    if not ligada:
+        raise ErroRegistro('assinaturas_desligadas')
+    if admin is None:
+        admin = e_admin(user_id)
+    if admin:
+        raise ErroRegistro('plano_ativo')
+    if situacao_acesso(conn, user_id, agora, admin=False).proxima_renovacao is not None:
+        raise ErroRegistro('plano_ativo')
+    return montar_fatura_pro(user_id, preco)
+
+
+# --- RENOVAÇÃO (CANCELAR E REATIVAR) ---
+class AlvoRenovacao(NamedTuple):
+    user_id: int
+    assinatura_ref: str
+    pagamento_id: str            # o da PRIMEIRA cobrança (editUserStarSubscription)
+    ja_no_estado: bool           # o pedido não muda nada: sem chamar o Telegram
+
+
+def preparar_renovacao(conn, user_id, cancelar, agora=None, admin=None):
+    """O que o "Cancelar Renovação" / "Reativar Renovação" vai mexer: a linha
+    de Stars em vigor da pessoa (a mesma do selo). 'sem_assinatura_stars' para
+    o admin e para quem não tem Pro de Stars em vigor (teste, Pro dado ou
+    vencido). 'ja_no_estado' (idempotência): cancelar o que já está cancelado
+    (pela linha) ou reativar o que já renova (pelo selo) não chama o Telegram
+    nem grava."""
+    agora = agora_brasilia(agora)
+    if admin is None:
+        admin = e_admin(user_id)
+    if admin:
+        raise ErroRegistro('sem_assinatura_stars')
+    linhas = ler_linhas(conn, user_id)
+    situacao = calcular_situacao(linhas, agora)
+    em_vigor = _stars_em_vigor(_pros_validas(linhas), agora) if situacao.estado == 'pro' else None
+    if em_vigor is None or not em_vigor.assinatura_ref:
+        raise ErroRegistro('sem_assinatura_stars')
+    pagamento_id = primeiro_pagamento_da_assinatura(conn, user_id, em_vigor.assinatura_ref)
+    if pagamento_id is None:
+        raise ErroRegistro('sem_assinatura_stars')
+    if cancelar:
+        ja = not em_vigor.renovacao or em_vigor.estado == 'cancelada'
+    else:
+        ja = situacao.proxima_renovacao is not None
+    return AlvoRenovacao(user_id, em_vigor.assinatura_ref, pagamento_id, ja)
+
+
+def gravar_renovacao(conn, user_id, assinatura_ref, cancelar):
+    """Marca as linhas válidas daquela assinatura: cancelar = renovacao 0 e
+    estado 'cancelada' (vale até o fim); reativar = renovacao 1 e 'ativa'.
+    As reembolsadas e encerradas não mudam."""
+    def operacao():
+        conn.execute(
+            "UPDATE assinaturas SET renovacao = ?, estado = ? WHERE user_id = ? AND origem = 'stars' "
+            "AND assinatura_ref = ? AND estado IN ('ativa', 'cancelada')",
+            (0 if cancelar else 1, 'cancelada' if cancelar else 'ativa', user_id, assinatura_ref))
+        conn.commit()
+
+    recorrentes._com_novas_tentativas(conn, operacao)
+    _log.info('Renovação %s: user_id=%s', 'cancelada' if cancelar else 'reativada', user_id)
+
+
+def concluir_renovacao(conn, alvo, cancelar, telegram_recusou=False):
+    """Depois da chamada ao editUserStarSubscription (feita pelo bot ou pela
+    API): o Telegram aceitou, grava; recusou a REATIVAÇÃO (a pessoa cancelou
+    nas configurações do Telegram, D15), ErroRegistro('reativacao_recusada')
+    sem mexer no banco; recusou o CANCELAMENTO (por exemplo, já cancelada pela
+    pessoa), grava o cancelamento mesmo assim: o que a pessoa pediu (não
+    renovar) já vale. Falha de rede não chega aqui (quem chama responde que o
+    Telegram está indisponível, sem gravar)."""
+    if alvo.ja_no_estado:
+        return
+    if telegram_recusou and not cancelar:
+        raise ErroRegistro('reativacao_recusada')
+    if telegram_recusou:
+        _log.warning('Cancelamento recusado pelo Telegram (gravado mesmo assim): user_id=%s', alvo.user_id)
+    gravar_renovacao(conn, alvo.user_id, alvo.assinatura_ref, cancelar)
+
+
+# --- AVISOS DE VENCIMENTO (JOB DAS 10:00) ---
+MARCO_DOIS_DIAS = '2_dias'
+MARCO_ULTIMO_DIA = 'ultimo_dia'
+MARCO_VENCEU = 'venceu'
+TEXTO_AVISO_VENCEU = ('Sua assinatura venceu. Seus dados continuam guardados, e você ainda pode vê-los no L1d3r '
+                      '(só para ver, sem registrar).')
+
+
+class AvisoDevido(NamedTuple):
+    user_id: int
+    linha_id: int                # a linha que guarda o ultimo_aviso
+    chave: str                   # '<marco>:<fim>' (o mesmo aviso nunca sai duas vezes)
+    anterior: Optional[str]      # o ultimo_aviso antes (para desfazer se o envio falhar)
+    marco: str
+    texto: str
+
+
+def _aviso_da_situacao(situacao, linhas):
+    """(marco, linha, fim, texto) do aviso que vale hoje, ou None. "2 dias" e
+    "último dia" usam a dias_restantes (a mesma conta da folha)."""
+    if situacao.estado == 'teste':
+        linha = _linha_teste(linhas)
+        dias = situacao.dias_restantes
+        if dias == 2:
+            return MARCO_DOIS_DIAS, linha, situacao.fim, f'Seu teste termina em 2 dias ({situacao.fim:%d/%m}).'
+        if dias == 0:
+            return MARCO_ULTIMO_DIA, linha, situacao.fim, 'Seu teste termina hoje.'
+        return None
+    if situacao.estado == 'pro':
+        if situacao.proxima_renovacao is not None or situacao.vale_ate is None:
+            return None   # renova sozinho: sem aviso
+        linha = max(_pros_validas(linhas), key=lambda l: (l.fim, l.id))
+        dias = situacao.dias_restantes
+        if dias == 2:
+            return MARCO_DOIS_DIAS, linha, situacao.vale_ate, 'Seu Plano Pro termina em 2 dias e não vai renovar.'
+        if dias == 0:
+            return MARCO_ULTIMO_DIA, linha, situacao.vale_ate, 'Seu Plano Pro termina hoje.'
+        return None
+    if situacao.estado == 'teste_vencido':
+        return MARCO_VENCEU, _linha_teste(linhas), situacao.fim, TEXTO_AVISO_VENCEU
+    if situacao.estado == 'pro_vencido':
+        linha = max((l for l in linhas if l.plano == 'pro'), key=lambda l: (l.fim, l.id))
+        return MARCO_VENCEU, linha, situacao.fim, TEXTO_AVISO_VENCEU
+    return None
+
+
+def avisos_devidos(conn, agora=None, admin_ids=None, ligada=None):
+    """Os avisos de vencimento que ainda não saíram (o job das 10:00 e o
+    /avisos_agora). Um por marco, controlado pela coluna ultimo_aviso da linha
+    que define o fim ('<marco>:<fim>': se o fim muda, por exemplo com o
+    /estender_teste, os avisos valem de novo):
+
+    - 2 dias antes e último dia: teste ativo e Pro que não renova (cancelado
+      ou dado), pela dias_restantes (2 e 0);
+    - venceu: todo vencido (teste ou Pro), uma vez.
+    O admin nunca recebe. Com ASSINATURAS_LIGADAS desligada: nenhum."""
+    if ligada is None:
+        ligada = assinaturas_ligadas()
+    if not ligada:
+        return []
+    agora = agora_brasilia(agora)
+    if admin_ids is None:
+        admin_ids = ler_admin_ids()
+    por_usuario = {}
+    for bruta in conn.execute(f'SELECT {_COLUNAS} FROM assinaturas ORDER BY inicio, id').fetchall():
+        linha = _linha(bruta)
+        por_usuario.setdefault(linha.user_id, []).append(linha)
+    avisados = dict(conn.execute('SELECT id, ultimo_aviso FROM assinaturas').fetchall())
+    avisos = []
+    for user_id in sorted(por_usuario):
+        if e_admin(user_id, admin_ids):
+            continue
+        linhas = por_usuario[user_id]
+        achado = _aviso_da_situacao(calcular_situacao(linhas, agora), linhas)
+        if achado is None:
+            continue
+        marco, linha, fim, texto = achado
+        chave = f'{marco}:{_texto(fim)}'
+        anterior = avisados.get(linha.id)
+        if anterior == chave:
+            continue
+        avisos.append(AvisoDevido(user_id, linha.id, chave, anterior, marco, texto))
+    return avisos
+
+
+def marcar_aviso(conn, aviso):
+    """Reserva o aviso ANTES de enviar (um comando só): True se esta chamada
+    marcou (o aviso pode sair); False se outra execução já marcou (não envia
+    de novo)."""
+    def operacao():
+        cursor = conn.execute(
+            'UPDATE assinaturas SET ultimo_aviso = ? WHERE id = ? AND (ultimo_aviso IS NULL OR ultimo_aviso <> ?)',
+            (aviso.chave, aviso.linha_id, aviso.chave))
+        mudou = cursor.rowcount
+        conn.commit()
+        return bool(mudou and mudou > 0)
+
+    return recorrentes._com_novas_tentativas(conn, operacao)
+
+
+def desmarcar_aviso(conn, aviso):
+    """O envio falhou: volta o ultimo_aviso de antes (o aviso sai na próxima)."""
+    def operacao():
+        conn.execute('UPDATE assinaturas SET ultimo_aviso = ? WHERE id = ? AND ultimo_aviso = ?',
+                     (aviso.anterior, aviso.linha_id, aviso.chave))
+        conn.commit()
+
+    recorrentes._com_novas_tentativas(conn, operacao)
+
+
+# --- TERMOS (/terms E GET /termos) ---
+# Texto aprovado pelo Ygor em 2026-11-12 (7 itens), sem mudança. Só o preço do
+# item 1 vem do PRECO_PRO_STARS, para o texto nunca dizer um preço diferente
+# da fatura.
+TERMOS_TITULO = 'Termos do L1d3r Pro'
+TERMOS_ITENS = (
+    'O Plano Pro custa {preco} Stars a cada 30 dias e renova sozinho, usando as Stars da sua conta.',
+    'Você pode cancelar a renovação quando quiser, em /assinatura, na folha Minha Assinatura do L1d3r ou nas '
+    'configurações do Telegram. O Pro vale até o fim do período pago.',
+    'Há um teste grátis de 10 dias, uma vez por pessoa. No teste e no Pro, o limite é de 17 registros com IA por '
+    'dia (horário de Brasília).',
+    'Os textos que você manda para registrar gastos são enviados a um serviço de IA de terceiros para identificar '
+    'categoria e valor.',
+    'Reembolso integral se pedido em até 7 dias da primeira cobrança, por /paysupport.',
+    'Quando a assinatura vence, seus dados ficam guardados por 12 meses. Você pode vê-los no L1d3r, mas não '
+    'registrar até assinar de novo.',
+    'O suporte do Telegram não atende compras feitas neste bot. Fale com a gente por /paysupport.',
+)
+
+
+def texto_termos(html=False):
+    """O texto único dos termos: o GET /termos devolve em texto puro; o
+    /terms do bot, com html=True, só põe o título em negrito (o resto é o
+    mesmo texto, sem nenhum caractere especial de HTML)."""
+    itens = '\n'.join(f'{numero}. {item.format(preco=preco_pro_stars())}'
+                      for numero, item in enumerate(TERMOS_ITENS, start=1))
+    titulo = f'<b>{TERMOS_TITULO}</b>' if html else TERMOS_TITULO
+    return f'{titulo}\n\n{itens}'

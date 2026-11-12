@@ -182,7 +182,8 @@ class TestModuloETabelas(AmbienteLimpo):
             conn = sqlite3.connect(caminho)
             do_bot = dict(conn.execute("SELECT name, sql FROM sqlite_master WHERE name IN "
                                        "('assinaturas', 'uso_ia', 'ux_assinaturas_pagamento', 'ux_assinaturas_teste', "
-                                       "'ix_assinaturas_usuario')").fetchall())
+                                       "'ix_assinaturas_usuario', 'pagamentos_recebidos', "
+                                       "'ux_pagamentos_recebidos_pagamento')").fetchall())
             colunas = [(c[1], c[2], c[3], c[4]) for c in conn.execute('PRAGMA table_info(assinaturas)')]
             colunas_uso = [(c[1], c[2], c[3], c[4], c[5]) for c in conn.execute('PRAGMA table_info(uso_ia)')]
             conn.close()
@@ -191,7 +192,7 @@ class TestModuloETabelas(AmbienteLimpo):
         esperado = dict(referencia.execute("SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"))
         referencia.close()
         self.assertEqual(do_bot, esperado)
-        self.assertEqual(len(do_bot), 5)
+        self.assertEqual(len(do_bot), 7)   # PRO-107: + pagamentos_recebidos e o índice único dela
         self.assertEqual(colunas, [
             ('id', 'INTEGER', 0, None), ('user_id', 'INTEGER', 1, None), ('plano', 'TEXT', 1, None),
             ('origem', 'TEXT', 1, None), ('inicio', 'TEXT', 1, None), ('fim', 'TEXT', 1, None),
@@ -229,7 +230,8 @@ class TestModuloETabelas(AmbienteLimpo):
             usuarios = conn.execute("SELECT * FROM usuarios").fetchall()
             conn.close()
         novos = {'assinaturas', 'uso_ia', 'sqlite_autoindex_uso_ia_1', 'ux_assinaturas_pagamento',
-                 'ux_assinaturas_teste', 'ix_assinaturas_usuario', 'receitas_recorrentes', 'sqlite_sequence'}
+                 'ux_assinaturas_teste', 'ix_assinaturas_usuario', 'receitas_recorrentes', 'sqlite_sequence',
+                 'pagamentos_recebidos', 'ux_pagamentos_recebidos_pagamento'}   # as duas últimas: PRO-107
         self.assertEqual([l for l in depois_1 if l[0] not in novos], [l for l in antes if l[0] not in novos])
         self.assertEqual(depois_2, depois_1)
         self.assertEqual(linhas, 1)
@@ -1094,7 +1096,9 @@ class TestRotasAcesso(TesteApiBase):
         # Percorre TODAS as rotas: uma rota nova não escapa da regra (PRO-106,
         # modo somente leitura). Fora as livres: método diferente de GET usa a
         # acesso_liberado; GET com dados usa a leitura_liberada (nunca as duas).
-        livres = {'/saude', '/me', '/assinatura', '/assinaturas/teste', '/cadastro'}
+        livres = {'/saude', '/me', '/assinatura', '/assinaturas/teste', '/cadastro',
+                  # PRO-107: a fatura, a renovação e os termos (quem venceu precisa pagar)
+                  '/assinaturas/fatura', '/assinaturas/renovacao', '/termos'}
 
         def chamadas(dependente):
             for dep in dependente.dependencies:
