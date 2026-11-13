@@ -1853,7 +1853,7 @@
         </span>
         <svg class="opcao-seta" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5L13 10l-5.5 5.5"/></svg>
       </button>
-      <!-- Cadastros fechados (PRO-108; o servidor só manda cadastro_aberto = false a partir da PRO-109) -->
+      <!-- Cadastros fechados (PRO-108; o servidor manda cadastro_aberto = false desde a PRO-109) -->
       <div class="ass-aviso-caixa" id="escolha-fechado" hidden>
         <p class="ass-aviso-titulo">Novos Cadastros Estão Fechados no Momento.</p>
         <p class="ass-aviso-texto">Volte em breve. Quem já tem conta entra normalmente.</p>
@@ -3250,11 +3250,13 @@
 
     // O que fazer com a resposta do POST /cadastro (já depois das novas tentativas do gravarComTentativas):
     // 201, ou 409 usuario_ja_cadastrado (o cadastro existe; no toque duplo, é o do próprio usuário): segue
-    // para o tour. 422: confira os dados. 401: a mensagem de sessão vencida. 500, 503 e falha de rede que
-    // sobraram das tentativas, e o resto: não foi possível. Nunca mostra o texto cru do servidor.
+    // para o tour. 403 cadastro_fechado (PRO-109): não segue e volta à escolha inicial com o quadro Cadastros
+    // Fechados (fechado: true, sem mensagem). 422: confira os dados. 401: a mensagem de sessão vencida. 500, 503
+    // e falha de rede que sobraram das tentativas, e o resto: não foi possível. Nunca mostra o texto cru do servidor.
     function decisaoDoCadastro(resultado) {
       if (resultado.erro === undefined) return { seguir: true, mensagem: null };
       if (resultado.erro === 409 && resultado.detalhe === "usuario_ja_cadastrado") return { seguir: true, mensagem: null };
+      if (resultado.erro === 403 && resultado.detalhe === "cadastro_fechado") return { seguir: false, fechado: true, mensagem: null };
       if (resultado.erro === 422) return { seguir: false, mensagem: MSG_CADASTRO_DADOS };
       if (resultado.erro === 401) return { seguir: false, mensagem: MSG_SESSAO };
       return { seguir: false, mensagem: MSG_CADASTRO_FALHOU };
@@ -3980,6 +3982,13 @@
       return "pro-dado";
     }
 
+    // No cadastro (PRO-109): quem já tem acesso (teste em andamento, Pro ativo, renovação cancelada ou Pro dado, que é como
+    // o admin aparece) não vê a tela Assinaturas e segue direto para o passo 3 (categorias). "principal" mostra a tela;
+    // "vencido" vai para a Expirada; null já segue sem Assinaturas.
+    function cadastroPulaAsAssinaturas(modo) {
+      return modo === "teste" || modo === "pro-ativo" || modo === "renovacao-cancelada" || modo === "pro-dado";
+    }
+
     const APOIO_CARTAO_PRECO = "Com Telegram Stars Você Paga com Segurança Pela App Store ou Play Store.";
     const APOIO_CARTAO_PRO = "A Renovação Usa as Stars Que Estão na Sua Conta. Você Pode Cancelar Quando Quiser.";
 
@@ -4160,10 +4169,10 @@
     }
 
     // ---------- Cadastro ----------
-    // Cadastros fechados (PRO-109): só com cadastro_aberto === false no bloco. Ausente = aberto.
+    // Cadastros fechados (PRO-109): só com cadastro_aberto === false no JSON do GET /assinatura. Ausente = aberto.
+    // Vale também com a chave desligada (o CADASTRO_ABERTO não depende da ASSINATURAS_LIGADAS).
     function cadastroFechado(bloco) {
-      const b = blocoDeAssinatura(bloco);
-      return !!b && b.cadastro_aberto === false;
+      return !!bloco && typeof bloco === "object" && bloco.cadastro_aberto === false;
     }
 
     // Depois do dia do ciclo o cadastro passa pela tela Assinaturas, a não ser que o servidor tenha dito que a chave está
@@ -5274,6 +5283,13 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
         esconderTelaLogo(); // na mesma tarefa do abrirTour: sem um desenho no meio
         return;
       }
+      if (decisao.fechado) {
+        // 403 cadastro_fechado (PRO-109): os cadastros fecharam no meio do caminho. Volta à escolha inicial, no quadro
+        // Cadastros Fechados (o mesmo do GET /assinatura com cadastro_aberto false).
+        fecharCadastroNaEscolha();
+        esconderTelaLogo();
+        return;
+      }
       esconderTelaLogo();
       e.erro = decisao.mensagem;
       atualizarCadastro();
@@ -6377,7 +6393,7 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
       versaoBusca: 0,            // descarta a resposta atrasada do GET /assinatura de uma tela já fechada
       atualizando: false,        // GET /assinatura em segundo plano depois de um 403
       renovacaoLocal: "minha",   // onde cancelar/reativar foi tocado: "minha" (folha) ou "assinaturas" (tela)
-      previo: { estado: "nao-iniciado", bloco: null }, // GET /assinatura antes do cadastro: "pendente", "ligada", "desligada", "falhou"
+      previo: { estado: "nao-iniciado", bloco: null }, // GET /assinatura antes do cadastro: "pendente", "ligada", "desligada", "falhou" (e "fechado", PRO-109)
       pagamento: { local: "assinaturas", antes: null, tipo: "nova", aguardando: false, versao: 0 },
     };
 
@@ -6628,8 +6644,8 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
         abrirExpirada();
         return;
       }
-      if (modo === null) {
-        seguirSemAssinaturas();
+      if (modo === null || (assEstado.origem === "cadastro" && cadastroPulaAsAssinaturas(modo))) {
+        seguirSemAssinaturas(); // no cadastro, quem já tem acesso vai às categorias (PRO-109); fora dele, nada muda
         return;
       }
       mostrarEstadoAssinaturas("ok");
@@ -7038,6 +7054,7 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
       $("amigo-novo").disabled = fechado;
     }
 
+    // O JSON fica guardado também com a chave desligada (PRO-109): o cadastro_aberto vale nos dois casos.
     async function buscarAssinaturaPrevia() {
       const previo = assEstado.previo;
       if (previo.estado !== "nao-iniciado" && previo.estado !== "falhou") return;
@@ -7050,7 +7067,19 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
         previo.bloco = r.dados;
       } else {
         previo.estado = "desligada";
+        previo.bloco = r.dados && typeof r.dados === "object" ? r.dados : null;
       }
+      desenharCadastroFechado();
+    }
+
+    // 403 cadastro_fechado no POST /cadastro (PRO-109): marca o estado prévio como fechado e volta à escolha inicial,
+    // com o quadro Cadastros Fechados. Sem tela da logo com tempo mínimo (o comTempoMinimo só espera quando segue).
+    function fecharCadastroNaEscolha() {
+      const previo = assEstado.previo;
+      const bloco = previo.bloco && typeof previo.bloco === "object" ? previo.bloco : {};
+      previo.bloco = Object.assign({}, bloco, { cadastro_aberto: false });
+      if (previo.estado === "nao-iniciado" || previo.estado === "falhou") previo.estado = "fechado"; // sem buscar de novo
+      mostrarTelaBoasVindas("boas-vindas");
       desenharCadastroFechado();
     }
 

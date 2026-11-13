@@ -50,7 +50,8 @@ dotenv.load_dotenv = lambda *args, **kwargs: False
 os.environ['TOKEN'] = ''
 os.environ['TURSO_DATABASE_URL'] = ''
 os.environ['TURSO_AUTH_TOKEN'] = ''
-VARIAVEIS = ('ADMIN_IDS', 'ASSINATURAS_LIGADAS', 'LIMITE_IA_DIA', 'PRECO_PRO_STARS', 'URL_MINI_APP')
+VARIAVEIS = ('ADMIN_IDS', 'ASSINATURAS_LIGADAS', 'LIMITE_IA_DIA', 'PRECO_PRO_STARS', 'URL_MINI_APP',
+             'CADASTRO_ABERTO', 'LIMITE_TESTES_DIA')   # as duas últimas: PRO-109
 for _nome in VARIAVEIS:
     os.environ.pop(_nome, None)
 
@@ -721,7 +722,8 @@ class TestSomaOutrosCasos(TesteSomaBase):
 # =============================================================================
 CAMPOS = ('ligada', 'estado', 'inicio', 'fim', 'renovacao', 'teste_disponivel', 'teste_previsto', 'preco',
           'limite_ia_dia', 'uso_ia_hoje', 'selo', 'selo_tocavel', 'dias_restantes', 'valor_stars',
-          'proxima_renovacao', 'renovacao_cancelada', 'vale_ate', 'modo_leitura')
+          'proxima_renovacao', 'renovacao_cancelada', 'vale_ate', 'modo_leitura',
+          'cadastro_aberto')   # PRO-109: o campo novo, no fim
 
 
 class TestSeloEFolha(TesteSomaBase):
@@ -1239,6 +1241,7 @@ class TestRotasAssinatura(TesteApiBase):
             'preco': {'stars': 150, 'reais_aproximado': 19}, 'limite_ia_dia': 17, 'uso_ia_hoje': 0,
             'selo': None, 'selo_tocavel': False, 'dias_restantes': None, 'valor_stars': None,
             'proxima_renovacao': None, 'renovacao_cancelada': False, 'vale_ate': None, 'modo_leitura': False,
+            'cadastro_aberto': True,   # PRO-109: sem CADASTRO_ABERTO, aberto
         })
 
     def test_get_assinatura_teste_ligada(self):
@@ -1251,7 +1254,7 @@ class TestRotasAssinatura(TesteApiBase):
             'teste_disponivel': False, 'teste_previsto': None, 'preco': {'stars': 149, 'reais_aproximado': 19},
             'limite_ia_dia': 20, 'uso_ia_hoje': 4, 'selo': 'gratis', 'selo_tocavel': True, 'dias_restantes': 7,
             'valor_stars': None, 'proxima_renovacao': None, 'renovacao_cancelada': False, 'vale_ate': None,
-            'modo_leitura': False,
+            'modo_leitura': False, 'cadastro_aberto': True,   # PRO-109
         })
 
     def test_nenhuma_resposta_tem_a_palavra_admin(self):

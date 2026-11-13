@@ -46,6 +46,13 @@ fatura de assinatura pelo createInvoiceLink), POST /assinaturas/renovacao
 HTTPX (BotApiTelegram, trocada por um dublê nos testes); o Pro só nasce no
 bot, no successful_payment. Nenhuma rota grava pagamento.
 
+Trava de cadastro (PRO-109): com CADASTRO_ABERTO fechada, o POST /cadastro de
+quem ainda não tem cadastro responde 403 cadastro_fechado (o admin passa;
+quem já tem conta continua com o 409 de sempre); o POST /assinaturas/teste
+responde 409 vagas_teste_esgotadas quando o dia já tem LIMITE_TESTES_DIA
+testes novos; o GET /assinatura e o bloco "assinatura" do /me trazem o campo
+"cadastro_aberto". As regras ficam no assinaturas.py.
+
 Também serve, na mesma origem, a home do Mini App em /app (mini-apps/home, PRO-77)
 e a página de diagnóstico das rotas em /teste (mini-apps/teste-initdata).
 
@@ -253,7 +260,9 @@ def assinatura(usuario: dict = Depends(usuario_autenticado), conn=Depends(obter_
                agora: datetime = Depends(obter_agora)):
     """Situação da assinatura da pessoa (estado, datas, teste, preço, uso de IA
     do dia e os campos do selo e da folha Minha Assinatura), calculada no
-    servidor, em Brasília."""
+    servidor, em Brasília. Desde a PRO-109, também "cadastro_aberto" (true
+    para o admin; senão, o CADASTRO_ABERTO), lido pela escolha inicial do
+    Mini App mesmo com a chave desligada."""
     try:
         return assinaturas.montar_bloco_assinatura(conn, usuario["id"], agora)
     except Exception as erro:
@@ -266,8 +275,10 @@ def comecar_teste(response: Response, usuario: dict = Depends(usuario_autenticad
     """Começa o teste grátis de 10 dias agora (o início é o toque). Sem corpo:
     o que vier é ignorado (nenhum campo dá plano). 201 com {"inicio", "fim",
     "repetido": false}; 200 com "repetido": true se já existe um teste ativo
-    (toque duplo); 409 teste_ja_usado (venceu) ou plano_ativo (Pro ativo ou
-    admin); 503 banco_ocupado; 500 erro_interno."""
+    (toque duplo, mesmo com as vagas do dia esgotadas); 409 teste_ja_usado
+    (venceu) ou plano_ativo (Pro ativo ou admin); 409 vagas_teste_esgotadas
+    (PRO-109: o dia já tem LIMITE_TESTES_DIA testes novos; a regra é do
+    iniciar_teste); 503 banco_ocupado; 500 erro_interno."""
     try:
         teste = assinaturas.iniciar_teste(conn, usuario["id"], agora)
     except registro.ErroRegistro as erro:
@@ -615,7 +626,8 @@ STATUS_ERRO_REGISTRO = {"resposta_ia_invalida": 502, "ia_indisponivel": 503, "ba
                         "categoria_inexistente": 404,                # PRO-104
                         "teste_ja_usado": 409, "plano_ativo": 409,   # PRO-106
                         "assinaturas_desligadas": 409, "sem_assinatura_stars": 409,   # PRO-107
-                        "reativacao_recusada": 409}
+                        "reativacao_recusada": 409,
+                        "vagas_teste_esgotadas": 409}               # PRO-109
 
 
 def erro_registro(erro: registro.ErroRegistro) -> HTTPException:
@@ -823,8 +835,21 @@ def cadastrar(pedido: PedidoCadastro, usuario: dict = Depends(usuario_autenticad
     (antes ou durante a gravação, como no toque duplo): 409
     usuario_ja_cadastrado, sem alterar nada. Banco ocupado depois das novas
     tentativas: 503 banco_ocupado. Erro inesperado: 500 erro_interno, sem
-    detalhes."""
+    detalhes.
+
+    Cadastros fechados (PRO-109): com CADASTRO_ABERTO fechada, quem não é
+    admin e ainda não tem cadastro recebe 403 cadastro_fechado ANTES de
+    qualquer validação e gravação (o log leva só o código). Quem já tem
+    cadastro segue para o 409 de sempre. O cadastro.py não muda."""
     user_id = usuario["id"]
+    if not assinaturas.cadastro_esta_aberto() and not assinaturas.e_admin(user_id):
+        try:
+            ja_tem = assinaturas.tem_cadastro(conn, user_id)
+        except Exception as erro:
+            raise erro_interno(erro, "Cadastro") from None
+        if not ja_tem:
+            logger.warning("Cadastro recusado: cadastro_fechado")
+            raise HTTPException(status_code=403, detail="cadastro_fechado")
     try:
         criado = cadastro.cadastrar_pela_api(
             conn, user_id, pedido.nome, pedido.dia_fechamento, pedido.categorias,

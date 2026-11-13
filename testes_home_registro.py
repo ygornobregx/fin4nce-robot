@@ -1511,8 +1511,10 @@ class TestEstruturaDaTelaDaLogo(unittest.TestCase):
         self.assertLess(enviar.index('mostrarTelaLogo('), enviar.index('gravarComTentativas('))
         # 'enviando' só volta a falso depois da espera.
         self.assertLess(enviar.index('comTempoMinimo('), enviar.index('e.enviando = false;'))
-        self.assertEqual(enviar.count('esconderTelaLogo();'), 2)
+        # PRO-109: o 403 cadastro_fechado também tira a logo na hora (volta à escolha inicial): 3 saídas.
+        self.assertEqual(enviar.count('esconderTelaLogo();'), 3)
         self.assertLess(enviar.index('abrirTour(e.nome);'), enviar.index('esconderTelaLogo();'))
+        self.assertLess(enviar.index('if (decisao.fechado) {'), enviar.index('fecharCadastroNaEscolha();'))
 
     def test_seta_e_backbutton_nao_fazem_nada_com_a_logo_na_tela(self):
         voltar = corpo_da_funcao(codigo_principal(HOME), 'function voltarUmNivel')
@@ -4641,21 +4643,27 @@ class TestEstruturaDasAssinaturas(unittest.TestCase):
                 self.assertIn('"%s"' % codigo, corpo_da_funcao(puro, 'function acaoDoAcessoRecusado'))
         self.assertIn('"assinatura_ausente" if situacao.estado == "sem_plano" else "assinatura_vencida"', api)
         self.assertIn('detail="cancelar_invalido"', api)
-        # vagas_teste_esgotadas é da PRO-109 (o servidor ainda não manda); a tela já trata.
-        self.assertNotIn('vagas_teste_esgotadas', fonte)
+        # vagas_teste_esgotadas (PRO-109): o servidor manda (409) e a tela trata.
+        self.assertIn("ErroRegistro('vagas_teste_esgotadas')", fonte)
+        self.assertIn('"vagas_teste_esgotadas": 409', api)
         self.assertIn('vagas_teste_esgotadas', corpo_da_funcao(puro, 'function decisaoDoTeste'))
+        # cadastro_fechado (PRO-109): o POST /cadastro manda 403 e a tela trata.
+        self.assertIn('raise HTTPException(status_code=403, detail="cadastro_fechado")', api)
+        self.assertIn('resultado.erro === 403 && resultado.detalhe === "cadastro_fechado"', corpo_da_funcao(puro, 'function decisaoDoCadastro'))
         # O corpo do cancelar é {"cancelar": bool}; o teste e a fatura não levam corpo.
         self.assertIn('cancelar: Any = None', api)
-        # Os campos do bloco que a tela lê existem no montar_bloco_assinatura (cadastro_aberto vem na PRO-109).
+        # Os campos do bloco que a tela lê existem no montar_bloco_assinatura (cadastro_aberto desde a PRO-109).
         bloco = corpo_da_funcao(fonte, 'def montar_bloco_assinatura')
         lidos = ('ligada', 'estado', 'inicio', 'fim', 'teste_previsto', 'preco', 'limite_ia_dia', 'selo', 'selo_tocavel', 'dias_restantes',
-                 'valor_stars', 'proxima_renovacao', 'renovacao_cancelada', 'vale_ate', 'modo_leitura')
+                 'valor_stars', 'proxima_renovacao', 'renovacao_cancelada', 'vale_ate', 'modo_leitura', 'cadastro_aberto')
         for campo in lidos:
             with self.subTest(campo=campo):
                 self.assertIn('"%s"' % campo, bloco)
                 self.assertTrue(campo in puro, campo)
         self.assertIn('"stars": preco_pro_stars(), "reais_aproximado": PRECO_REAIS_APROXIMADO', bloco)
-        self.assertNotIn('cadastro_aberto', fonte)
+        # PRO-109: o campo existe no servidor (admin true; senão, o CADASTRO_ABERTO) e a tela o lê em cadastroFechado.
+        self.assertIn('"cadastro_aberto": True if admin else cadastro_esta_aberto()', bloco)
+        self.assertIn('bloco.cadastro_aberto === false', corpo_da_funcao(puro, 'function cadastroFechado'))
         # O texto do 409 assinaturas_desligadas foi decidido pelo Ygor.
         self.assertIn('const MSG_ASSINATURAS_DESLIGADAS = "As assinaturas ainda não estão abertas. Volte em breve.";', puro)
 
@@ -5032,7 +5040,8 @@ class TestAssinaturasFuncoesPuras(unittest.TestCase):
         self.assertEqual(obtido['canc'], 'Não Haverá Nova Cobrança. Reative Para Continuar Depois de 12/12/2026.')
         self.assertEqual(obtido['semPreco'], 'Nossa Aplicação Conta Com Uma Assinatura Simbólica Por Mês. Mas Não Se Preocupe: Liberamos 10 Dias Gratuitos Para Novos Usuários Testarem.')
         self.assertEqual(obtido['arrasto'], [False, False, False, True, True, False, False])
-        self.assertEqual(obtido['cadastro'], [True, False, False, False, False])
+        # PRO-109: com a chave desligada, cadastro_aberto false também fecha (antes da PRO-109, false).
+        self.assertEqual(obtido['cadastro'], [True, False, False, True, False])
         self.assertEqual(obtido['passa'], [True, True, True, True, False])
 
     def test_limite_do_429_vem_do_bloco(self):
@@ -5047,6 +5056,133 @@ class TestAssinaturasFuncoesPuras(unittest.TestCase):
         self.assertIn('17', obtido[1])
         self.assertEqual(assinaturas.LIMITE_IA_DIA_PADRAO, 17)
 
+
+
+# =============================================================================
+# TRAVA DE CADASTRO (PRO-109): cadastro_aberto com a chave desligada e o 403
+# cadastro_fechado do POST /cadastro
+# =============================================================================
+class TestTravaDeCadastroNaTela(unittest.TestCase):
+    def rotas_do_cadastro(self, assinatura, extras=None):
+        return TestAssinaturasNaPagina.rotas_do_cadastro(self, assinatura, extras)
+
+    def test_funcoes_puras_cadastro_fechado_e_decisao_do_403(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            console.log(JSON.stringify({
+              fechado: [cadastroFechado({ ligada: false, cadastro_aberto: false }), cadastroFechado({ ligada: true, cadastro_aberto: false }),
+                        cadastroFechado({ ligada: false, cadastro_aberto: true }), cadastroFechado({ ligada: false }),
+                        cadastroFechado({ cadastro_aberto: 'false' }), cadastroFechado({ cadastro_aberto: 0 }), cadastroFechado(null),
+                        cadastroFechado(undefined), cadastroFechado('x')],
+              decisoes: [decisaoDoCadastro({ erro: 403, detalhe: 'cadastro_fechado' }), decisaoDoCadastro({ erro: 403, detalhe: 'outro' }),
+                         decisaoDoCadastro({ erro: 409, detalhe: 'cadastro_fechado' })],
+            }));
+        """))
+        self.assertEqual(obtido['fechado'], [True, True, False, False, False, False, False, False, False])
+        falhou = {'seguir': False, 'mensagem': 'Não foi possível criar o seu cadastro. Tente de novo.'}
+        self.assertEqual(obtido['decisoes'], [{'seguir': False, 'fechado': True, 'mensagem': None}, falhou, falhou])
+
+    def test_chave_desligada_com_cadastro_fechado_apaga_o_sou_novo_por_aqui(self):
+        bloco = bloco_assinatura(ligada=False, selo=None, cadastro_aberto=False)
+        obtido = rodar_pagina({'rotas': self.rotas_do_cadastro(bloco)}, """
+            await __ocioso();
+            $('escolha-novo').click();                            // o toque não faz nada
+            console.log(JSON.stringify({ desabilitado: $('escolha-novo').disabled, sub: $('escolha-novo-sub').textContent,
+              caixa: __visivel('escolha-fechado'), amigo: $('escolha-amigo').disabled, amigoNovo: $('amigo-novo').disabled,
+              boasVindas: __visivel('boas-vindas'), cadastro: __visivel('cadastro'), estado: assEstado.previo.estado }));
+        """)
+        self.assertTrue(obtido['desabilitado'])
+        self.assertEqual(obtido['sub'], 'Cadastros fechados')
+        self.assertTrue(obtido['caixa'])
+        self.assertFalse(obtido['amigo'])                         # "Já Sou Amigo do Adm" continua normal
+        self.assertTrue(obtido['amigoNovo'])                      # o "Sou Novo Por Aqui" do "Não Encontramos" também
+        self.assertTrue(obtido['boasVindas'])
+        self.assertFalse(obtido['cadastro'])
+        self.assertEqual(obtido['estado'], 'desligada')           # o resto do "desligada" não muda
+
+    def test_403_cadastro_fechado_volta_a_escolha_no_quadro_fechado(self):
+        rotas = self.rotas_do_cadastro(bloco_assinatura(ligada=False, selo=None, cadastro_aberto=True), {
+            'POST /cadastro': {'status': 403, 'body': {'detail': 'cadastro_fechado'}}})
+        obtido = rodar_pagina({'rotas': rotas}, """
+            await __ocioso();
+            const antes = { desabilitado: $('escolha-novo').disabled, caixa: __visivel('escolha-fechado') };
+            $('escolha-novo').click();
+            cadastroEstado.nome = 'Ygor'; cadastroEstado.dia = 5; cadastroEstado.passo = 2; atualizarCadastro();
+            continuarCadastro(); await __ocioso();                // desligada: direto para as categorias (passo 3)
+            const passo = cadastroEstado.passo;
+            continuarCadastro(); await __ocioso();                // POST /cadastro -> 403 cadastro_fechado
+            console.log(JSON.stringify({ antes, passo, boasVindas: __visivel('boas-vindas'), cadastro: __visivel('cadastro'),
+              tour: __visivel('tour'), logo: __visivel('tela-logo'), caixa: __visivel('escolha-fechado'),
+              desabilitado: $('escolha-novo').disabled, sub: $('escolha-novo-sub').textContent, erro: cadastroEstado.erro,
+              enviando: cadastroEstado.enviando, posts: __log.fetch.filter((c) => c.metodo === 'POST').map((c) => c.rota) }));
+        """)
+        self.assertEqual(obtido['antes'], {'desabilitado': False, 'caixa': False})
+        self.assertEqual(obtido['passo'], 3)
+        self.assertEqual(obtido['posts'], ['/cadastro'])          # uma vez só: o 403 não repete
+        self.assertTrue(obtido['boasVindas'])
+        self.assertFalse(obtido['cadastro'])
+        self.assertFalse(obtido['tour'])
+        self.assertFalse(obtido['logo'])
+        self.assertTrue(obtido['caixa'])
+        self.assertTrue(obtido['desabilitado'])
+        self.assertEqual(obtido['sub'], 'Cadastros fechados')
+        self.assertIsNone(obtido['erro'])                          # sem a mensagem genérica
+        self.assertFalse(obtido['enviando'])
+
+    def test_estrutura_do_403_e_textos_dos_quadros(self):
+        principal = codigo_principal(HOME)
+        enviar = corpo_da_funcao(principal, 'async function enviarCadastro')
+        fechar = corpo_da_funcao(principal, 'function fecharCadastroNaEscolha')
+        self.assertIn('mostrarTelaBoasVindas("boas-vindas");', fechar)
+        self.assertIn('desenharCadastroFechado();', fechar)
+        self.assertIn('{ cadastro_aberto: false }', fechar)
+        # O fechado não espera o tempo mínimo da logo (o comTempoMinimo só espera quando segue).
+        self.assertIn('(r) => decisaoDoCadastro(r).seguir', enviar)
+        previa = corpo_da_funcao(principal, 'async function buscarAssinaturaPrevia')
+        self.assertIn('previo.estado = "desligada";', previa)
+        self.assertIn('previo.bloco = r.dados && typeof r.dados === "object" ? r.dados : null;', previa)
+        self.assertNotIn('blocoDeAssinatura', corpo_da_funcao(codigo_puro(HOME), 'function cadastroFechado'))
+        for texto in ('As Vagas de Teste de Hoje Acabaram.', 'Novos Cadastros Estão Fechados no Momento.'):
+            with self.subTest(texto=texto):
+                self.assertIn(texto, HOME)
+
+    # Quem já tem acesso (admin = Pro dado, teste em andamento, Pro ativo, renovação cancelada) não fica preso na
+    # tela Assinaturas do cadastro: vai direto ao passo 3. Sem plano continua vendo a tela.
+    def test_funcao_pura_cadastro_pula_as_assinaturas(self):
+        obtido = rodar_node(com_funcoes_puras("""
+            console.log(JSON.stringify(['teste', 'pro-ativo', 'renovacao-cancelada', 'pro-dado', 'principal', 'vencido', null]
+              .map(cadastroPulaAsAssinaturas)));
+        """))
+        self.assertEqual(obtido, [True, True, True, True, False, False, False])
+
+    def depois_do_passo_2(self, bloco):
+        return rodar_pagina({'rotas': self.rotas_do_cadastro(bloco)}, """
+            await __ocioso();
+            $('escolha-novo').click();
+            cadastroEstado.nome = 'Ygor'; cadastroEstado.dia = 5; cadastroEstado.passo = 2; atualizarCadastro();
+            continuarCadastro();
+            await __ocioso();
+            console.log(JSON.stringify({ passo: cadastroEstado.passo, cadastro: __visivel('cadastro'), assinaturas: __visivel('assinaturas'),
+              expirada: __visivel('expirada'), origem: assEstado.origem }));
+        """)
+
+    def test_cadastro_de_quem_ja_tem_acesso_vai_direto_as_categorias(self):
+        for nome, bloco in (('admin', BLOCO_ADMIN), ('teste', BLOCO_TESTE), ('pro', BLOCO_PRO), ('cancelado', BLOCO_CANCELADO)):
+            with self.subTest(bloco=nome):
+                obtido = self.depois_do_passo_2(bloco)
+                self.assertEqual(obtido['passo'], 3)
+                self.assertTrue(obtido['cadastro'])
+                self.assertFalse(obtido['assinaturas'])
+
+    def test_cadastro_sem_plano_continua_mostrando_a_tela_assinaturas(self):
+        obtido = self.depois_do_passo_2(BLOCO_SEM_PLANO)
+        self.assertEqual(obtido['passo'], 2)
+        self.assertFalse(obtido['cadastro'])
+        self.assertTrue(obtido['assinaturas'])
+
+    def test_rotear_so_pula_no_cadastro(self):
+        rotear = corpo_da_funcao(codigo_principal(HOME), 'function rotearAssinaturas')
+        self.assertIn('if (modo === null || (assEstado.origem === "cadastro" && cadastroPulaAsAssinaturas(modo))) {', rotear)
+        self.assertLess(rotear.index('abrirExpirada();'), rotear.index('cadastroPulaAsAssinaturas(modo)'))
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

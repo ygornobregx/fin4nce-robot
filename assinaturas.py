@@ -9,8 +9,8 @@ Mesmo padrão do categorias.py e do recorrentes.py.
 Só depende da biblioteca padrão e dos módulos de regra (calculos.py,
 registro.py e recorrentes.py): não importa telegram, bot, dotenv nem libsql,
 não lê o ambiente ao ser importado (as variáveis ADMIN_IDS,
-ASSINATURAS_LIGADAS, LIMITE_IA_DIA e PRECO_PRO_STARS são lidas na hora, em
-cada chamada) e recebe a conexão por parâmetro ('conn'). O "agora" entra por
+ASSINATURAS_LIGADAS, LIMITE_IA_DIA, PRECO_PRO_STARS e, na PRO-109,
+CADASTRO_ABERTO e LIMITE_TESTES_DIA são lidas na hora, em cada chamada) e recebe a conexão por parâmetro ('conn'). O "agora" entra por
 parâmetro em todas as funções (os testes fixam o relógio); sem ele, vale o
 relógio de Brasília (FUSO_BRASILIA). Nunca UTC puro.
 
@@ -27,7 +27,14 @@ Os erros são registro.ErroRegistro com um código (a API traduz em status; o
 bot, em mensagem): 'teste_ja_usado', 'plano_ativo', 'usuario_nao_encontrado',
 'dias_invalidos', 'sem_teste', 'banco_ocupado' e, na PRO-107,
 'assinaturas_desligadas', 'sem_assinatura_stars', 'reativacao_recusada' e
-'pagamento_nao_conferido'.
+'pagamento_nao_conferido' e, na PRO-109, 'vagas_teste_esgotadas'.
+
+Trava de cadastro (PRO-109): CADASTRO_ABERTO (cadastro_esta_aberto) fecha os
+cadastros novos no bot e no POST /cadastro, independente da
+ASSINATURAS_LIGADAS; LIMITE_TESTES_DIA (limite_testes_dia) limita quantos
+testes grátis novos começam por dia de Brasília, contados na própria tabela
+'assinaturas' (pode_comecar_teste e o INSERT ... SELECT do iniciar_teste).
+O admin passa pelas duas, e o pagamento nunca olha nenhuma delas.
 
 Pagamento em Telegram Stars (PRO-107, no fim do arquivo): a fatura de
 assinatura (montar_fatura_pro, usada pela API com o HTTPX e pelo bot com o
@@ -57,6 +64,7 @@ _log = logging.getLogger(__name__)
 DIAS_TESTE = 10                     # D4: o teste vale 10 dias exatos (240 horas)
 PRECO_REAIS_APROXIMADO = 19         # D2/D12: "≈ R$ 19 (varia conforme a loja)"
 LIMITE_IA_DIA_PADRAO = 17           # D5: registros com IA por dia, por pessoa
+LIMITE_TESTES_DIA_PADRAO = 20       # PRO-109: testes grátis novos por dia (todas as pessoas juntas)
 PRECO_PRO_STARS_PADRAO = 150        # D2
 PRECO_PRO_STARS_MAXIMO = 10000      # máximo da Bot API para assinatura
 DIAS_PRO_PADRAO = 30                # D16: /dar_pro sem número
@@ -188,6 +196,42 @@ def preco_pro_stars():
     return _ler_inteiro('PRECO_PRO_STARS', 1, PRECO_PRO_STARS_MAXIMO, PRECO_PRO_STARS_PADRAO)
 
 
+def limite_testes_dia():
+    """LIMITE_TESTES_DIA (PRO-109): quantos testes grátis novos podem começar
+    por dia de Brasília, somando todas as pessoas. Inteiro de 0 para cima (0 =
+    nenhum teste novo hoje). Ausente ou vazia vale 20, sem log; inválida
+    (texto, negativo, decimal) vale 20, com um aviso no log que cita só o
+    NOME da variável, nunca o valor."""
+    bruto = (os.getenv('LIMITE_TESTES_DIA') or '').strip()
+    if not bruto:
+        return LIMITE_TESTES_DIA_PADRAO
+    if _NUMERO.fullmatch(bruto):
+        return int(bruto)
+    _log.warning('LIMITE_TESTES_DIA inválida (não é inteiro de 0 para cima): valendo o padrão')
+    return LIMITE_TESTES_DIA_PADRAO
+
+
+_CADASTRO_ABERTO_SIM = ('1', 'true', 'sim')
+_CADASTRO_ABERTO_NAO = ('0', 'false', 'nao', 'não')
+
+
+def cadastro_esta_aberto():
+    """CADASTRO_ABERTO (PRO-109): False fecha os cadastros NOVOS (bot e POST
+    /cadastro; quem já tem conta segue igual). Independente da
+    ASSINATURAS_LIGADAS: sem a variável, nada muda. Ausente ou vazia: aberto.
+    '1', 'true' ou 'sim': aberto; '0', 'false', 'nao' ou 'não': fechado (sem
+    diferenciar maiúsculas, sem os espaços das pontas). Outro valor: aberto (o
+    padrão), com um aviso no log que cita só o NOME da variável. O admin passa
+    sempre (quem chama confere o e_admin)."""
+    bruto = (os.getenv('CADASTRO_ABERTO') or '').strip().lower()
+    if not bruto or bruto in _CADASTRO_ABERTO_SIM:
+        return True
+    if bruto in _CADASTRO_ABERTO_NAO:
+        return False
+    _log.warning('CADASTRO_ABERTO inválida (use 1 ou 0): valendo o padrão (aberto)')
+    return True
+
+
 # --- RELÓGIO ---
 def agora_brasilia(agora=None):
     """'agora' em Brasília, sem os microssegundos (as datas gravadas têm
@@ -218,6 +262,16 @@ def data_texto(momento):
 def dia_de_hoje(agora=None):
     """O dia de Brasília ('AAAA-MM-DD') usado pelo limite diário."""
     return agora_brasilia(agora).strftime(FORMATO_DATA)
+
+
+def intervalo_do_dia(agora=None):
+    """[início, fim) do dia de Brasília de 'agora', como texto do banco
+    ('AAAA-MM-DD 00:00:00' e o 00:00:00 do dia seguinte): 23:59:59 ainda é o
+    dia; 00:00:00 já é o dia novo. Usado pela contagem dos testes do dia
+    (PRO-109)."""
+    hoje = agora_brasilia(agora).date()
+    amanha = hoje + timedelta(days=1)
+    return f'{hoje.strftime(FORMATO_DATA)} 00:00:00', f'{amanha.strftime(FORMATO_DATA)} 00:00:00'
 
 
 def dias_restantes(fim, agora=None):
@@ -481,7 +535,10 @@ def montar_bloco_assinatura(conn, user_id, agora=None, admin=None, ligada=None):
     Datas em 'AAAA-MM-DD' (Brasília). Nunca leva a palavra "admin".
     'modo_leitura' (PRO-106, modo somente leitura): true só com a chave
     ligada, para quem não é admin e está vencido (teste ou Pro): a tela mostra
-    os dados, sem registrar."""
+    os dados, sem registrar.
+    'cadastro_aberto' (PRO-109): true para o admin; senão, o
+    CADASTRO_ABERTO (cadastro_esta_aberto), independente da chave 'ligada'
+    (a escolha inicial do Mini App apaga o "Sou Novo Por Aqui" com false)."""
     agora = agora_brasilia(agora)
     if admin is None:
         admin = e_admin(user_id)
@@ -510,6 +567,7 @@ def montar_bloco_assinatura(conn, user_id, agora=None, admin=None, ligada=None):
         "renovacao_cancelada": situacao.renovacao_cancelada,
         "vale_ate": data_texto(situacao.vale_ate),
         "modo_leitura": bool(ligada and not admin and situacao.estado in ('teste_vencido', 'pro_vencido')),
+        "cadastro_aberto": True if admin else cadastro_esta_aberto(),    # PRO-109
     }
 
 
@@ -556,21 +614,51 @@ class TesteIniciado(NamedTuple):
     repetido: bool
 
 
-def iniciar_teste(conn, user_id, agora=None, admin=None, criado_por=None):
+# Quantos testes começaram no dia (PRO-109): as linhas 'teste' com início no
+# dia de Brasília. Contagem derivada da própria tabela (sem tabela nova).
+_SQL_TESTES_DO_DIA = "SELECT COUNT(*) FROM assinaturas WHERE origem = 'teste' AND inicio >= ? AND inicio < ?"
+
+
+def testes_do_dia(conn, agora=None):
+    """Quantos testes grátis começaram no dia de Brasília de 'agora'."""
+    return int(conn.execute(_SQL_TESTES_DO_DIA, intervalo_do_dia(agora)).fetchone()[0])
+
+
+def pode_comecar_teste(conn, agora=None, limite=None):
+    """True se ainda há vaga de teste novo no dia de Brasília de 'agora': os
+    testes que começaram no dia são menos que o 'limite' (None:
+    LIMITE_TESTES_DIA). Só uma consulta, para quem quer saber antes; quem
+    decide de verdade é o INSERT ... SELECT do iniciar_teste (dois pedidos
+    juntos no último lugar: só um passa)."""
+    if limite is None:
+        limite = limite_testes_dia()
+    return testes_do_dia(conn, agora) < limite
+
+
+def iniciar_teste(conn, user_id, agora=None, admin=None, criado_por=None, limite=None):
     """POST /assinaturas/teste e o botão "Testar Grátis por 10 Dias" do bot:
     início = agora, fim = agora + 10 dias exatos, uma vez na vida (o índice
     único ux_assinaturas_teste recusa o segundo, mesmo com dois toques
     juntos). Não exige cadastro em 'usuarios' (D9).
 
     - admin, ou Pro ativo: ErroRegistro('plano_ativo');
-    - já existe teste ativo (toque duplo): devolve o dele, repetido=True;
+    - já existe teste ativo (toque duplo): devolve o dele, repetido=True
+      (sem olhar o limite do dia);
     - o teste já foi usado e venceu: ErroRegistro('teste_ja_usado');
+    - PRO-109: o dia já tem 'limite' testes novos (None: LIMITE_TESTES_DIA):
+      ErroRegistro('vagas_teste_esgotadas'). A conta e a gravação são UM
+      comando só (INSERT ... SELECT ... WHERE (contagem do dia) < limite, o
+      padrão do adicionar_pro): dois pedidos juntos no último lugar nunca
+      passam os dois;
     - banco ocupado em todas as tentativas: ErroRegistro('banco_ocupado')."""
     agora = agora_brasilia(agora)
     if admin is None:
         admin = e_admin(user_id)
     if admin:
         raise ErroRegistro('plano_ativo')
+    if limite is None:
+        limite = limite_testes_dia()
+    inicio_dia, fim_dia = intervalo_do_dia(agora)
 
     def resultado_existente(linhas):
         teste = _linha_teste(linhas)
@@ -588,13 +676,24 @@ def iniciar_teste(conn, user_id, agora=None, admin=None, criado_por=None):
         if existente is not None:
             return existente
         fim = agora + timedelta(days=DIAS_TESTE)
-        conn.execute(
+        cursor = conn.cursor()
+        cursor.execute(
             'INSERT INTO assinaturas (user_id, plano, origem, inicio, fim, estado, dias, renovacao, criado_em, '
-            "criado_por) VALUES (?, 'teste', 'teste', ?, ?, 'ativa', ?, 0, ?, ?)",
-            (user_id, _texto(agora), _texto(fim), DIAS_TESTE, _texto(agora), criado_por)
+            "criado_por) SELECT ?, 'teste', 'teste', ?, ?, 'ativa', ?, 0, ?, ? "
+            f'WHERE ({_SQL_TESTES_DO_DIA}) < ?',
+            (user_id, _texto(agora), _texto(fim), DIAS_TESTE, _texto(agora), criado_por, inicio_dia, fim_dia, limite)
         )
+        inseridas = cursor.rowcount
         conn.commit()
-        return TesteIniciado(agora, fim, False)
+        if inseridas is not None and inseridas > 0:
+            return TesteIniciado(agora, fim, False)
+        # Nada gravado: o dia já tem o limite. Antes de recusar, confere o
+        # toque duplo que ganhou a corrida (o outro pedido gravou o teste
+        # desta pessoa no último lugar): aí devolve o dele, repetido=True.
+        existente = resultado_existente(ler_linhas(conn, user_id))
+        if existente is not None:
+            return existente
+        raise ErroRegistro('vagas_teste_esgotadas')
 
     return _gravar_uma_vez(conn, operacao, lambda: resultado_existente(ler_linhas(conn, user_id)))
 

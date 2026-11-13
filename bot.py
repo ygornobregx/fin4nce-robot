@@ -82,6 +82,7 @@ from assinaturas import (
     SITUACAO_REEMBOLSADO,
     assinaturas_ligadas,
     avisos_devidos,
+    cadastro_esta_aberto,
     buscar_comprovante,
     buscar_linha,
     comprovante_sem_pro,
@@ -658,6 +659,11 @@ TEXTO_ASSINATURA_VENCIDA = (
 )
 TEXTO_ESCOLHA_PLANO = "<b>Escolha como continuar:</b> teste grátis por 10 dias ou o Plano Pro."
 TEXTO_ERRO_TESTE = "Não consegui começar o teste agora. Tente de novo em instantes."
+# Trava de cadastro (PRO-109): CADASTRO_ABERTO fechada (cadastros novos) e
+# LIMITE_TESTES_DIA esgotado (testes novos do dia). As regras ficam no
+# assinaturas.py; o admin passa nas duas, e o pagamento não olha nenhuma.
+TEXTO_CADASTRO_FECHADO = "Novos cadastros estão fechados no momento."
+TEXTO_VAGAS_TESTE_ESGOTADAS = "As vagas de teste de hoje acabaram. Volte amanhã ou assine o Pro."
 CALLBACK_TESTAR_GRATIS = 'assinatura_testar'
 
 def url_tela_assinatura(url_mini_app):
@@ -820,7 +826,8 @@ async def porteiro(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def testar_gratis_botao(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Botão "Testar Grátis por 10 Dias": começa o teste agora, pelo
-    assinaturas.py (a mesma regra do POST /assinaturas/teste)."""
+    assinaturas.py (a mesma regra do POST /assinaturas/teste, com o limite de
+    testes novos do dia da PRO-109)."""
     query = update.callback_query
     await responder_callback(query)
     user_id = query.from_user.id
@@ -838,6 +845,12 @@ async def testar_gratis_botao(update: Update, context: ContextTypes.DEFAULT_TYPE
             texto, teclado = montar_aviso_assinatura(SimpleNamespace(estado='teste_vencido'),
                                                      await criar_link_fatura(context.bot, user_id))
             await atualizar_callback(query, context, texto, reply_markup=teclado)
+        elif erro.codigo == 'vagas_teste_esgotadas':
+            # PRO-109: o teclado do aviso de vencido ("Assinar com Stars" e
+            # "Abrir o L1d3r"), sem oferecer o teste de novo.
+            _, teclado = montar_aviso_assinatura(SimpleNamespace(estado='teste_vencido'),
+                                                 await criar_link_fatura(context.bot, user_id))
+            await atualizar_callback(query, context, TEXTO_VAGAS_TESTE_ESGOTADAS, reply_markup=teclado)
         else:
             _, teclado = montar_aviso_assinatura(SimpleNamespace(estado='sem_plano'))
             await atualizar_callback(query, context, TEXTO_ERRO_TESTE, reply_markup=teclado)
@@ -1779,6 +1792,12 @@ def registrar_handlers_assinatura(application):
     for nome, funcao in COMANDOS_ADMIN:
         application.add_handler(CommandHandler(nome, funcao, filters=FILTRO_ADMIN))
 
+def cadastro_fechado_para(user_id):
+    """True se os cadastros novos estão fechados (CADASTRO_ABERTO, PRO-109)
+    para esta pessoa: o admin sempre passa. Lido na hora, sem banco; quem
+    chama já sabe que a conta é nova."""
+    return not cadastro_esta_aberto() and not e_admin(user_id)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     iniciar_banco()
     try:
@@ -1804,6 +1823,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return ConversationHandler.END
         texto_menu = await montar_texto_menu_principal(user_id)
         await enviar_fluxo(context, update.effective_chat.id, texto_menu, reply_markup=obter_teclado_menu())
+        return ConversationHandler.END
+
+    if cadastro_fechado_para(user_id):
+        # Cadastros fechados (PRO-109): conta nova recebe só o aviso, nos dois
+        # caminhos (porta de entrada do Mini App e cadastro antigo pelo chat).
+        await enviar_fluxo(context, update.effective_chat.id, TEXTO_CADASTRO_FECHADO)
         return ConversationHandler.END
 
     url_mini_app = obter_url_mini_app()
@@ -1892,6 +1917,20 @@ async def receber_dia_fechamento(update: Update, context: ContextTypes.DEFAULT_T
         return DIA_FECHAMENTO
 
     user_id = update.effective_user.id
+    if cadastro_fechado_para(user_id):
+        # PRO-109: os cadastros fecharam no meio da conversa. Confere de novo
+        # (quem já tem cadastro refaz pelo chat como sempre); conta nova não
+        # grava nada nem agenda alerta.
+        conn = obter_conexao_db()
+        try:
+            ja_cadastrado = tem_cadastro(conn, user_id)
+        finally:
+            conn.close()
+        if not ja_cadastrado:
+            for chave in ('nome_temp', 'renda_temp', 'categorias_temp'):
+                context.user_data.pop(chave, None)
+            await enviar_fluxo(context, update.effective_chat.id, TEXTO_CADASTRO_FECHADO)
+            return ConversationHandler.END
     nome = context.user_data['nome_temp']
     renda = context.user_data['renda_temp']
 

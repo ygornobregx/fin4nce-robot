@@ -21,3 +21,4 @@ testes_receitas_recorrentes.py
 testes_categorias.py
 testes_assinaturas.py
 testes_pagamento_stars.py
+testes_trava_cadastro.py
