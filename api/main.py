@@ -54,7 +54,8 @@ testes novos; o GET /assinatura e o bloco "assinatura" do /me trazem o campo
 "cadastro_aberto". As regras ficam no assinaturas.py.
 
 Também serve, na mesma origem, a home do Mini App em /app (mini-apps/home, PRO-77)
-e a página de diagnóstico das rotas em /teste (mini-apps/teste-initdata).
+e, só com PAGINA_DIAGNOSTICO ligada (PRO-94; ausente na produção), a página de
+diagnóstico das rotas em /teste (mini-apps/teste-initdata).
 
 Não importa o bot.py. Configuração e conexão com o banco são resolvidas
 sob demanda (dependências), então o módulo importa sem .env e sem rede.
@@ -1244,6 +1245,29 @@ class ArquivosSemCache(StaticFiles):
         return resposta
 
 
-# Mesma origem da API (sem CORS). Montado depois das rotas.
-app.mount("/teste", ArquivosSemCache(directory=os.path.join(RAIZ, "mini-apps", "teste-initdata"), html=True), name="teste")
+VALORES_PAGINA_DIAGNOSTICO_LIGADA = ("1", "true", "sim")
+
+
+def pagina_diagnostico_ligada(ambiente=None) -> bool:
+    """PRO-94: a página de diagnóstico (/teste) só existe com
+    PAGINA_DIAGNOSTICO igual a 1, true ou sim (sem diferenciar maiúsculas,
+    sem os espaços das pontas). Lê só o ambiente do processo, sem carregar o
+    .env: pelo iniciar.py, o .env já foi carregado antes de a API subir; com
+    o uvicorn direto, a variável tem de estar no ambiente do terminal. Na
+    produção ela fica ausente."""
+    ambiente = os.environ if ambiente is None else ambiente
+    return (ambiente.get("PAGINA_DIAGNOSTICO") or "").strip().lower() in VALORES_PAGINA_DIAGNOSTICO_LIGADA
+
+
+def montar_pagina_diagnostico(aplicacao) -> None:
+    """Monta /teste (mini-apps/teste-initdata). Só é chamada com a página
+    ligada: desligada, a pasta nem é olhada, e a API sobe sem ela."""
+    aplicacao.mount("/teste", ArquivosSemCache(directory=os.path.join(RAIZ, "mini-apps", "teste-initdata"), html=True),
+                    name="teste")
+
+
+# Mesma origem da API (sem CORS). Montado depois das rotas, na subida do
+# processo (o uvicorn importa este módulo uma vez).
+if pagina_diagnostico_ligada():
+    montar_pagina_diagnostico(app)
 app.mount("/app", ArquivosSemCache(directory=os.path.join(RAIZ, "mini-apps", "home"), html=True), name="app")

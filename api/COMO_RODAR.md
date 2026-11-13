@@ -20,13 +20,78 @@ No venv do projeto:
 pip install -r requirements-api.txt
 ```
 
-## 2. Subir a API
+## 2. Subir o bot e a API juntos (`iniciar.py`, PRO-94)
 
-Da raiz do repositório:
+O jeito recomendado, igual ao da produção, é o iniciador. Da raiz do repositório:
+
+```
+python iniciar.py --porta 8000
+```
+
+Ele carrega o `.env` da raiz (sem sobrescrever o que já está no ambiente do terminal) e:
+
+1. roda a migração (`bot.iniciar_banco()`) num processo próprio e espera terminar. Se ela falhar, nada sobe;
+2. sobe o bot (`python bot.py`) e a API (`python -m uvicorn api.main:app --host 0.0.0.0 --port <porta> --workers 1`).
+   A API roda num processo só, porque o limite de 10 interpretações por minuto fica na memória;
+3. vigia os dois: se um terminar, encerra o outro e sai com código 1;
+4. com `Ctrl + C` (ou o "Parar" do painel do Discloud), encerra os dois e sai.
+
+A porta padrão é `8080` (a do Discloud); localmente, use `--porta 8000` por causa do ngrok. O log mostra, nesta
+ordem, as linhas do iniciador (`[iniciar] Migração concluída`, `[iniciar] Bot iniciado` e
+`[iniciar] API iniciada na porta 8000`) e depois as do bot e da API, misturadas (cada um escreve quando fica pronto):
+`Bot rodando com sucesso!`, a linha de conferência (abaixo), a linha do Menu Button e
+`Uvicorn running on http://0.0.0.0:8000`. Se um processo cair: `[iniciar] Processo bot terminou (código X): encerrando
+o outro` (ou `api`). No `Ctrl + C`: `[iniciar] Encerrando o bot e a API`.
+
+Para subir só a API, como antes (sem o bot nem a migração):
 
 ```
 python -m uvicorn api.main:app --port 8000
 ```
+
+### Página de diagnóstico (`PAGINA_DIAGNOSTICO`)
+
+A `/teste/` só existe com `PAGINA_DIAGNOSTICO` igual a `1`, `true` ou `sim` (sem diferenciar maiúsculas). Sem ela,
+`/teste/` responde `404 {"detail":"Not Found"}`, a pasta `mini-apps/teste-initdata/` nem é olhada (a API sobe sem
+ela) e a `/app/` continua igual. A variável é lida uma vez, na subida da API, e **só do ambiente do processo**:
+
+- pelo `iniciar.py`, basta a linha `PAGINA_DIAGNOSTICO=1` no `.env` de teste (o iniciador carrega o `.env` antes de
+  subir a API);
+- com o `uvicorn` direto, o `.env` não é lido na subida: ponha a variável no terminal antes
+  (Git Bash: `PAGINA_DIAGNOSTICO=1 python -m uvicorn api.main:app --port 8000`).
+
+Na produção ela fica **ausente**.
+
+### Menu Button e linha de conferência (bot)
+
+Ao ligar, o bot escreve no log `Bot: @<username> | Banco: TESTE` (o host da `TURSO_DATABASE_URL` tem `fin4ncetest`)
+ou `Bot: @<username> | Banco: PRODUÇÃO`, sem URL, host nem token. Em seguida, se a `URL_MINI_APP` começar com
+`https://`, ele mesmo configura o Menu Button "Abrir o L1d3r" com essa URL (`Menu Button configurado: Abrir o L1d3r`);
+sem a variável, não mexe no botão (`Menu Button: sem URL_MINI_APP, não alterado`). Se o Telegram recusar, o log mostra
+`Aviso: não consegui configurar o Menu Button (<tipo do erro>). O bot continua normalmente.`, sem a URL. Assim a URL
+fica num lugar só, o `.env`: no BotFather, só conferir.
+
+### Produção (Discloud)
+
+O `discloud.config` aponta para o `iniciar.py` (`TYPE=site`, `RAM=512`, `ID=l1d3r`, `AUTORESTART=true`), na porta
+`8080`. O Discloud instala só o `requirements.txt`, que desde a PRO-94 também tem `fastapi`, `uvicorn` e `httpx`; o
+`requirements-api.txt` continua para o uso local. O `.env` vai no deploy, e o painel de variáveis fica vazio (uma
+variável do painel venceria a do `.env` sem aviso). O `.discloudignore` deixa de fora os testes, as ferramentas, o
+`.env.teste` (e `.env.*`) e a página `mini-apps/teste-initdata/`.
+
+### Backup e restauração do banco (`ferramentas/backup_banco.py`)
+
+```
+python ferramentas/backup_banco.py dump <arquivo.sql>
+python ferramentas/backup_banco.py restaurar <arquivo.sql>
+```
+
+Usa o banco do `.env` da raiz. Imprime `Banco: TESTE` ou `Banco: PRODUÇÃO` (a mesma regra da linha de conferência) e
+as linhas de cada tabela. O `dump` só lê e recusa um arquivo que já existe. O `restaurar` só grava num banco
+**vazio** (recusa qualquer banco com tabela), pede para digitar `sim` e grava tudo numa transação só; no fim, confere
+as contagens com as do dump. Guarde o arquivo fora do repositório e do Obsidian: ele tem os dados reais.
+
+## 3. Rotas da API
 
 Rotas:
 
@@ -71,7 +136,7 @@ Rotas:
   (as categorias como foram gravadas). O `user_id` vem só do initData: `user_id`, `renda_mensal`,
   `horario_alerta` ou qualquer outro campo a mais no corpo são ignorados. As regras ficam no `cadastro.py`, o
   mesmo módulo que o cadastro antigo do bot usa.
-- Página de diagnóstico em `/teste/`, que chama `/me`, `/resumo`, `/historico`, `/gastos/recentes` e
+- Página de diagnóstico em `/teste/` (só com `PAGINA_DIAGNOSTICO`, PRO-94), que chama `/me`, `/resumo`, `/historico`, `/gastos/recentes` e
   `/movimentacoes/recentes` (PRO-92) e mostra as cinco respostas.
   Desde a PRO-88, tem também o bloco "Registro (diagnóstico)": "Interpretar" mostra a prévia em JSON e "Gravar"
   manda o mesmo pedido duas vezes ao mesmo tempo, com a mesma chave (prova do toque duplo: um `201` e um `200`
@@ -103,7 +168,7 @@ Erros de `POST /cadastro` (PRO-96), sempre `{"detail": "<código>"}`: `401 nao_a
 0,5 s e 1 s); `500 erro_interno` (sem detalhes; no log, só "Cadastro falhou: erro_interno" e o nome da classe).
 - Um corpo que nem é JSON (ou campo de texto com número) dá o `422` padrão do FastAPI (`detail` em lista).
 
-## 3. Abrir o túnel
+## 4. Abrir o túnel
 
 ```
 ngrok http 8000
@@ -111,12 +176,13 @@ ngrok http 8000
 
 Com domínio estático: `ngrok http --url=<domínio estático> 8000`.
 
-## 4. Configurar o BotFather
+## 5. Configurar o BotFather
 
-No **bot de teste**, defina o Menu Button (ou a Main Mini App) com a URL
-`https://<host-do-ngrok>/app/` (a home). A página de diagnóstico das rotas fica em `/teste/`.
+Desde a PRO-94, o próprio bot configura o Menu Button com a `URL_MINI_APP` ao ligar (seção 2): no BotFather do
+**bot de teste**, só confira (`/mybots` → o bot → Bot Settings → Menu Button) se a URL é
+`https://<host-do-ngrok>/app/` (a home). A página de diagnóstico das rotas fica em `/teste/` (com `PAGINA_DIAGNOSTICO`).
 
-## 5. Porta de entrada no bot de teste (`URL_MINI_APP`, PRO-96)
+## 6. Porta de entrada no bot de teste (`URL_MINI_APP`, PRO-96)
 
 Com a variável `URL_MINI_APP` no `.env` do **bot de teste** (a URL da home pelo ngrok, `https://<host-do-ngrok>/app/`),
 o `/start` de quem **não tem cadastro** mostra só "Bem-vindo ao L1d3r!" e o botão "Abrir o L1d3r", que abre o Mini
@@ -125,15 +191,16 @@ App; nada é gravado e o chat não pergunta nada. Quem já tem cadastro continua
 - A variável é lida a cada `/start` e só vale se começar com `https://` (o Telegram exige HTTPS); sem ela, ou com
   outro começo, o cadastro antigo no chat continua igual.
 - Não é segredo, mas fica só no ambiente: nunca no código, nas notas nem nos testes.
-- Na produção, a variável **não** existe até a PRO-94 (hospedagem): lá o `/start` segue com o cadastro antigo.
+- Na produção (PRO-94), ela entra só no 2º deploy, com o endereço do Discloud (`https://l1d3r.<final>/app/`); até lá,
+  o `/start` segue com o cadastro antigo.
 
-## 6. Tela de aviso do ngrok
+## 7. Tela de aviso do ngrok
 
 No primeiro acesso, o ngrok (plano gratuito) pode mostrar uma tela de aviso antes da
 página HTML; basta confirmar uma vez. O `fetch` da página envia o cabeçalho
 `ngrok-skip-browser-warning`, então as chamadas a `/me`, `/resumo`, `/historico` e `/movimentacoes/recentes` não são interceptadas.
 
-## 7. Testes
+## 8. Testes
 
 Todos rodam sem `.env` e sem internet:
 
@@ -144,4 +211,9 @@ python testes_rotas_registro.py
 python testes_cadastro.py
 python testes_estabelecimento.py
 python testes_calculos.py
+python testes_iniciar.py
+python testes_backup_banco.py
 ```
+
+O `testes_iniciar.py` usa processos filhos falsos (nunca sobe o bot nem a API de verdade) e o
+`testes_backup_banco.py` usa só bancos SQLite e libsql locais, em arquivos temporários.

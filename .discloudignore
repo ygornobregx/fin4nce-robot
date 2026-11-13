@@ -2,9 +2,6 @@ venv/
 .git/
 __pycache__/
 .cache/
-api/
-mini-apps/
-requirements-api.txt
 testes_initdata.py
 .githooks/
 atualizar_fluxo.py
@@ -22,3 +19,13 @@ testes_categorias.py
 testes_assinaturas.py
 testes_pagamento_stars.py
 testes_trava_cadastro.py
+.env.*
+financeiro.db
+mini-apps/teste-initdata/
+testes_*.py
+testes_iniciar.py
+testes_backup_banco.py
+CLAUDE.md
+TASK.md
+.claude/
+.gitattributes

@@ -1191,6 +1191,17 @@ class TestDetalheGasto(TesteRotasBase):
 
 
 class TestPaginasEstaticas(TesteRotasBase):
+    """Desde a PRO-94, a /teste só é montada com PAGINA_DIAGNOSTICO ligada (na
+    subida da API). Aqui ela é montada à mão, só durante o teste, para não
+    depender do ambiente nem do .env; o liga e desliga é coberto pelo
+    testes_iniciar.py."""
+
+    def montar_pagina_diagnostico(self):
+        import api.main as api_main
+        antes = list(app.router.routes)
+        api_main.montar_pagina_diagnostico(app)
+        self.addCleanup(lambda: app.router.routes.__setitem__(slice(None), antes))
+
     def test_app_serve_a_home(self):
         self.iniciar(banco_completo())
         resposta = self.client.get("/app/")
@@ -1199,12 +1210,14 @@ class TestPaginasEstaticas(TesteRotasBase):
         self.assertIn("Últimas Movimentações", resposta.text)
 
     def test_teste_serve_a_pagina_de_diagnostico(self):
+        self.montar_pagina_diagnostico()
         self.iniciar(banco_completo())
         resposta = self.client.get("/teste/")
         self.assertEqual(resposta.status_code, 200)
         self.assertIn("Teste do initData", resposta.text)
 
     def test_paginas_pedem_revalidacao_ao_navegador(self):
+        self.montar_pagina_diagnostico()
         self.iniciar(banco_completo())
         for caminho in ("/app/", "/teste/"):
             resposta = self.client.get(caminho)

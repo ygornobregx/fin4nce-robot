@@ -118,7 +118,8 @@ from assinaturas import (
     tirar_pro_manual,
     ultimo_pagamento_reembolsavel,
 )
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, WebAppInfo
+from urllib.parse import urlparse
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, MenuButtonWebApp, WebAppInfo
 from telegram.error import BadRequest, Forbidden, NetworkError
 from telegram.ext import (
     ApplicationBuilder,
@@ -649,6 +650,53 @@ def obter_url_mini_app():
 
 def montar_teclado_porta_de_entrada(url_mini_app):
     return InlineKeyboardMarkup([[InlineKeyboardButton("Abrir o L1d3r", web_app=WebAppInfo(url=url_mini_app))]])
+
+# --- SUBIDA DO BOT (PRO-94) ---
+# D6: o Menu Button é configurado pelo próprio bot, com a URL_MINI_APP (a mesma
+# do botão do /start), para a URL sair de um lugar só, o .env. D7: uma linha de
+# conferência no log, com o @ do bot e o tipo do banco, sem URL, host nem token.
+TEXTO_MENU_BUTTON = "Abrir o L1d3r"
+NOME_BANCO_TESTE = "fin4ncetest"
+
+def rotulo_banco(url_banco):
+    """'TESTE' quando o host da TURSO_DATABASE_URL contém o fin4ncetest; senão,
+    'PRODUÇÃO' (inclusive sem URL: na dúvida, o rótulo que pede atenção). Só o
+    host conta: o nome num caminho ou parâmetro da URL não vale. A mesma regra
+    serve à ferramentas/backup_banco.py."""
+    texto = (url_banco or '').strip()
+    try:
+        host = urlparse(texto).hostname if '://' in texto else texto.split('/')[0]
+    except ValueError:   # URL malformada (ex.: colchete sem fechar)
+        host = ''
+    return 'TESTE' if NOME_BANCO_TESTE in (host or '').lower() else 'PRODUÇÃO'
+
+def linha_conferencia(username, url_banco):
+    """A linha da D7: 'Bot: @<username> | Banco: TESTE' (ou PRODUÇÃO)."""
+    return f"Bot: @{username or '?'} | Banco: {rotulo_banco(url_banco)}"
+
+async def configurar_menu_button(bot_tg):
+    """D6: com URL_MINI_APP (só https://, pela obter_url_mini_app), põe o Menu
+    Button "Abrir o L1d3r" do chat privado apontando para ela. Sem a URL, não
+    mexe no Menu Button. Uma falha do Telegram vira um aviso no log, só com o
+    nome da classe do erro (nunca a URL), e o bot continua. Devolve True se
+    configurou."""
+    url = obter_url_mini_app()
+    if not url:
+        print("Menu Button: sem URL_MINI_APP, não alterado")
+        return False
+    try:
+        await bot_tg.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(text=TEXTO_MENU_BUTTON, web_app=WebAppInfo(url=url)))
+    except Exception as erro:
+        print(f"⚠️ Aviso: não consegui configurar o Menu Button ({type(erro).__name__}). O bot continua normalmente.")
+        return False
+    print(f"Menu Button configurado: {TEXTO_MENU_BUTTON}")
+    return True
+
+async def anunciar_subida(application):
+    """Início do post_init (PRO-94): a linha da D7 e o Menu Button da D6."""
+    print(linha_conferencia(application.bot.username, TURSO_DATABASE_URL))
+    await configurar_menu_button(application.bot)
 
 # --- ASSINATURA (PRO-106) ---
 # Com ASSINATURAS_LIGADAS desligada (o padrão), nada disto consulta o banco nem
@@ -4664,6 +4712,8 @@ if __name__ == '__main__':
     )
 
     async def post_init(application):
+        # PRO-94: a linha de conferência (D7) e o Menu Button (D6) primeiro.
+        await anunciar_subida(application)
         iniciar_banco()
         conn = obter_conexao_db()
         usuarios_alertas = conn.execute('SELECT user_id, horario_alerta FROM usuarios WHERE horario_alerta IS NOT NULL').fetchall()
