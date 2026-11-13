@@ -45,6 +45,18 @@ move com prefers-reduced-motion), as folhas Nova (sem descrição, sem "Em breve
 nativo), Editar e Excluir (bloqueado: só o Cancelar), a chave só ao abrir a folha Nova, a tela da logo com o tempo mínimo
 no criar e no renomear e fora do excluir, o corpo do POST só com nome e chave, os códigos 422 e os limites comparados com o
 categorias.py e a api/main.py, e a decisão por status de cada gravação no node.
+
+Desde a PRO-108, as telas das assinaturas no Mini App. Três partes novas:
+  - O <script> principal RODANDO de verdade num navegador de mentira (HARNESS_PAGINA: elementos por id, fetch, Telegram.WebApp,
+    CloudStorage e localStorage falsos, relógio de mentira): abertura sem a chave (as mesmas 4 chamadas, nada muda), selo só do campo
+    "selo", toque no selo só com selo_tocavel, folha Minha Assinatura nos 4 estados, cancelar e reativar só depois do showConfirm,
+    409 reativacao_recusada levando à folha Plano Pro, tela Expirada uma vez por dia (já vista, não vista, armazenamento quebrado ou
+    ausente, ?tela=assinatura e start_param sempre mostram), Mais Tarde e BackButton levando à home em modo leitura, bloqueios do modo
+    leitura sem chamar a API, tratamento central do 403, cadastro pelas Assinaturas (teste, vagas esgotadas, erro, cadastros
+    fechados, chave desligada), pagamento (paid/pending, cancelled, failed, 409 assinaturas_desligadas, 30 s sem chegar).
+  - Estrutura e medidas dos quadros, a ordem de decisão da abertura, nenhum cálculo de data de plano no cliente, nenhum "Free",
+    "Teste" ou "Admin" como selo, rotas e códigos comparados com a api/main.py e o assinaturas.py.
+  - As funções puras novas no node (selo, destino da abertura, datas, dias, textos, decisão por status, espera do pagamento).
 """
 import json
 import os
@@ -60,6 +72,7 @@ RAIZ = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, RAIZ)
 import cadastro  # noqa: E402  (só a biblioteca padrão e o registro.py: sem .env, rede nem banco)
 import categorias  # noqa: E402  (PRO-105: idem; os limites, os códigos e o título são comparados com o servidor)
+import assinaturas  # noqa: E402  (PRO-108: idem, só a biblioteca padrão; as constantes dos textos são comparadas com o servidor)
 import recorrentes  # noqa: E402  (idem: só o cadastro.py e o registro.py)
 import registro  # noqa: E402
 CAMINHO_HOME = os.path.join(RAIZ, 'mini-apps', 'home', 'index.html')
@@ -888,7 +901,8 @@ class TestEstruturaDasBoasVindas(unittest.TestCase):
             self.assertIn(token, raiz)
         # 9 = os 3 traços do "Buscando o Seu Cadastro..." + os 3 da tela da logo (PRO-100) + os 3 do "Carregando..." das
         # Categorias (PRO-105, a logo pequena do quadro CARREGANDO; eram 6).
-        self.assertEqual(HOME.count('pathLength="1"'), 9)
+        # PRO-108: +6 = o "Carregando..." da tela Assinaturas e a tela Confirmando o Pagamento (15 no total).
+        self.assertEqual(HOME.count('pathLength="1"'), 15)
         for quadro in ('@keyframes tracar-1', '@keyframes tracar-2', '@keyframes tracar-3', 'prefers-reduced-motion'):
             self.assertIn(quadro, HOME)
 
@@ -1458,8 +1472,9 @@ class TestEstruturaDaTelaDaLogo(unittest.TestCase):
                 self.assertNotIn('mostrarTelaLogo', corpo)
         # Fora dessas quatro funções (abertura, cadastro, salvar recorrente e, desde a PRO-105, salvar categoria; eram
         # três), ninguém chama o tempo mínimo.
+        # PRO-108: o quinto é o "Testar Gratuitamente" (testarGratuitamente), com a tela da logo.
         chamadas = principal.count('comTempoMinimo(')
-        self.assertEqual(chamadas, 4)
+        self.assertEqual(chamadas, 5)
 
     def test_abertura_so_na_primeira_carga(self):
         principal = codigo_principal(HOME)
@@ -1719,7 +1734,7 @@ class TestEstruturaDosRecorrentes(unittest.TestCase):
         sem_comentarios = re.sub(r'//[^\n]*', '', principal)
         chamadas = [m for m in re.finditer(r'\bmostrarTelaLogo\(', sem_comentarios)
                     if not sem_comentarios[:m.start()].endswith('function ')]
-        self.assertEqual(len(chamadas), 3)
+        self.assertEqual(len(chamadas), 4)   # PRO-108: mais o "Testar Gratuitamente"
 
     def test_voltar_sobe_um_nivel_e_a_logo_bloqueia(self):
         principal = codigo_principal(HOME)
@@ -1747,12 +1762,14 @@ class TestEstruturaDosRecorrentes(unittest.TestCase):
                 self.assertIn(marca, corpo)
                 self.assertIn('try {', corpo)
                 self.assertIn('catch (e)', corpo)
-        # localStorage e CloudStorage só aparecem dentro dessas três funções (nenhum acesso solto).
+        # localStorage e CloudStorage só aparecem dentro dessas funções (nenhum acesso solto): as três do guia e, desde a
+        # PRO-108, as três do "dia em que a tela Expirada foi vista" (mesmo molde, chave própria).
         def sem_comentarios(texto):
             return re.sub(r'//[^\n]*', '', texto)
         for marca in ('localStorage', 'CloudStorage'):
             dentro = sum(sem_comentarios(corpo_da_funcao(principal, f)).count(marca)
-                         for f in ('function lerGuiaLocal', 'function lerGuiaNuvem', 'function marcarGuiaVisto'))
+                         for f in ('function lerGuiaLocal', 'function lerGuiaNuvem', 'function marcarGuiaVisto',
+                                   'function lerExpiradaLocal', 'function lerExpiradaNuvem', 'function marcarExpiradaVista'))
             self.assertEqual(sem_comentarios(principal).count(marca), dentro, marca)
         self.assertNotIn('setInterval', HOME)
 
@@ -1903,7 +1920,7 @@ class TestEstruturaDosRecorrentes(unittest.TestCase):
         self.assertIn('listaRecorrentes.aba = abaDepoisDeSalvar(tipo);', apagar)
         self.assertIn('chamar(rotaRecorrentes(tipo))', apagar)
         # A tela da logo e o tempo mínimo seguem só no criar/editar (um lugar), nunca no apagar nem na lista.
-        self.assertEqual(principal.count('comTempoMinimo('), 4)   # eram 3; o quarto é o salvarCategoria (PRO-105)
+        self.assertEqual(principal.count('comTempoMinimo('), 5)   # eram 3; o quarto é o salvarCategoria (PRO-105), o quinto o teste grátis (PRO-108)
         self.assertEqual(salvar.count('comTempoMinimo('), 1)
         # O texto do apagar da receita vem da função pura, por textContent (criar).
         self.assertIn('textoConfirmarApagar(r, formRec.tipo)', corpo_da_funcao(principal, 'function abrirFolhaApagar'))
@@ -3159,6 +3176,1876 @@ class TestCategoriasFuncoesPuras(unittest.TestCase):
         """))
         self.assertEqual(obtido, {'iguais': True, 'n': 3, 'status': 201, 'corpo': {'nome': 'Pets', 'chave': 'chave-da-folha'},
                                   'tentativas422': 1})
+
+# ----------------------------------------------------------------------------
+# PRO-108: telas das assinaturas, selo da home, folha Minha Assinatura e modo somente leitura
+# ----------------------------------------------------------------------------
+
+# O "navegador de mentira": uma página mínima (elementos por id, fetch, Telegram.WebApp, armazenamento) para rodar o
+# <script> principal de verdade no node, sem rede e sem .env. O relógio é de mentira: setTimeout dispara na hora e soma a
+# espera pedida ao performance.now(), então "30 segundos" de espera passam em milissegundos.
+HARNESS_PAGINA = r"""
+const __log = { fetch: [], alertas: [], confirms: [], faturas: [], ligacoes: [] };
+let __virtual = 0;
+const __stReal = setTimeout;
+// Esperas curtas disparam na hora (e somam ao relógio); as de 10 s ou mais (o aviso do topo, o tempo limite do fetch) nunca disparam.
+globalThis.setTimeout = (f, ms) => { if (ms < 10000) setImmediate(() => { __virtual += (ms || 0); f(); }); return { falso: true }; };
+globalThis.clearTimeout = () => {};
+Object.defineProperty(globalThis, 'performance', { value: { now: () => __virtual }, configurable: true });
+// Espera a página ficar parada: nenhuma chamada nova ao fetch por 40 voltas seguidas do laço de eventos.
+const __ocioso = async () => {
+  let estavel = 0; let ultimo = -1;
+  for (let i = 0; i < 6000 && estavel < 40; i++) {
+    await new Promise((r) => setImmediate(r));
+    if (__log.fetch.length === ultimo) estavel++; else { estavel = 0; ultimo = __log.fetch.length; }
+  }
+};
+
+function __texto(t) { const n = __criarEl('#texto', {}); n.textContent = t; return n; }
+function __criarEl(tag, info) {
+  info = info || {};
+  const el = { tagName: String(tag).toUpperCase(), id: info.id || '', _classe: info.classe || '', _hidden: !!info.hidden, _texto: '',
+               children: [], dataset: {}, style: { setProperty() {} }, listeners: {}, disabled: false, value: '', attrs: {},
+               scrollTop: 0, scrollLeft: 0, offsetWidth: 0, scrollHeight: 0, tabIndex: 0, type: '', placeholder: '' };
+  Object.defineProperty(el, 'hidden', { get() { return this._hidden; }, set(v) { this._hidden = !!v; } });
+  Object.defineProperty(el, 'className', { get() { return this._classe; }, set(v) { this._classe = String(v); } });
+  Object.defineProperty(el, 'textContent', {
+    get() { return this.children.length ? this.children.map((c) => c.textContent).join('') : this._texto; },
+    set(v) { this._texto = String(v); this.children = []; },
+  });
+  el.classList = {
+    contains: (c) => el._classe.split(/\s+/).includes(c),
+    add: (...cs) => cs.forEach((c) => { if (!el.classList.contains(c)) el._classe = (el._classe + ' ' + c).trim(); }),
+    remove: (...cs) => { el._classe = el._classe.split(/\s+/).filter((x) => x && !cs.includes(x)).join(' '); },
+    toggle: (c, forca) => { const quer = forca === undefined ? !el.classList.contains(c) : !!forca;
+                            if (quer) el.classList.add(c); else el.classList.remove(c); return quer; },
+  };
+  el.addEventListener = (tipo, f) => { (el.listeners[tipo] = el.listeners[tipo] || []).push(f); };
+  el.click = () => { (el.listeners.click || []).forEach((f) => f({ target: el, preventDefault() {}, key: '' })); };
+  el.setAttribute = (n, v) => { el.attrs[n] = String(v); };
+  el.getAttribute = (n) => el.attrs[n];
+  el.append = (...ns) => { ns.forEach((n) => el.children.push(typeof n === 'string' ? __texto(n) : n)); };
+  el.replaceChildren = (...ns) => { el.children = []; el._texto = ''; el.append(...ns); };
+  el.querySelector = () => { el._q = el._q || __criarEl('span', {}); return el._q; };
+  el.querySelectorAll = () => [];
+  el.closest = () => el;
+  el.focus = () => {}; el.blur = () => {};
+  el.getBoundingClientRect = () => ({ top: 0 });
+  el.cloneNode = () => __criarEl(tag, {});
+  if (tag === 'template') el.content = { firstElementChild: __criarEl('button', {}) };
+  return el;
+}
+
+const __elementos = {};
+for (const [id, info] of Object.entries(ENTRADA.ids)) __elementos[id] = __criarEl(info.tag, Object.assign({ id }, info));
+const __mains = Object.values(__elementos).filter((e) => e.tagName === 'MAIN');
+const __corpo = __criarEl('body', {});
+globalThis.document = {
+  getElementById: (id) => { if (!__elementos[id]) throw new Error('id inexistente: ' + id); return __elementos[id]; },
+  querySelectorAll: (seletor) => (seletor === 'main' ? __mains : []),
+  createElement: (tag) => __criarEl(tag, {}), createElementNS: (ns, tag) => __criarEl(tag, {}),
+  createTextNode: (t) => __texto(t),
+  body: __corpo, documentElement: __criarEl('html', {}), activeElement: null,
+};
+
+// Armazenamento: 'ok' (guarda de verdade), 'quebrado' (toda leitura e escrita lança) ou 'sem' (não existe).
+const __hoje = diaDeBrasilia(Date.now(), 'America/Sao_Paulo');
+function __armazenamento(config, comCallback) {
+  const modo = (config && config.modo) || 'ok';
+  if (modo === 'sem') return undefined;
+  if (modo === 'quebrado') return { getItem() { throw new Error('sem acesso'); }, setItem() { throw new Error('sem acesso'); } };
+  const dados = Object.assign({}, config && config.hoje ? { expirada_vista_em: __hoje } : {}, (config && config.dados) || {});
+  if (comCallback) return { dados, getItem: (k, cb) => cb(null, k in dados ? dados[k] : null), setItem: (k, v, cb) => { dados[k] = String(v); cb(null, true); } };
+  return { dados, getItem: (k) => (k in dados ? dados[k] : null), setItem: (k, v) => { dados[k] = String(v); } };
+}
+const __local = __armazenamento(ENTRADA.local, false);
+const __nuvem = __armazenamento(ENTRADA.nuvem, true);
+
+// Rotas de mentira: {"GET /me": {status, body, headers} | [respostas em sequência (a última se repete)]}
+const __rotas = ENTRADA.rotas || {};
+globalThis.fetch = async (rota, opcoes) => {
+  const metodo = (opcoes && opcoes.method) || 'GET';
+  __log.fetch.push({ metodo, rota, corpo: opcoes && opcoes.body ? JSON.parse(opcoes.body) : null });
+  let r = __rotas[metodo + ' ' + rota];
+  if (Array.isArray(r)) r = r.length > 1 ? r.shift() : r[0];
+  if (typeof r === 'function') r = r(opcoes);
+  if (!r) r = { status: 599, body: { detail: 'rota_de_mentira_nao_definida' } };
+  return { ok: r.status < 400, status: r.status, headers: { get: (n) => (r.headers && r.headers[n]) || null }, json: async () => r.body };
+};
+const __chamadas = () => __log.fetch.map((c) => c.metodo + ' ' + c.rota);
+
+let __voltar = null;
+let __ultimoConfirm = null;
+let __ultimoAlerta = null;
+let __ultimaFatura = null;
+const __webapp = {
+  initData: 'dados-de-mentira', initDataUnsafe: { start_param: ENTRADA.startParam || undefined },
+  ready() {}, expand() {}, setHeaderColor() {}, setBackgroundColor() {}, onEvent() {},
+  viewportHeight: 800, viewportStableHeight: 800,
+  BackButton: { show() { __log.ligacoes.push('show'); }, hide() { __log.ligacoes.push('hide'); }, onClick(f) { __voltar = f; } },
+  showAlert(msg, cb) { __log.alertas.push(msg); __ultimoAlerta = { msg, cb }; },
+  showConfirm(msg, cb) { __log.confirms.push(msg); __ultimoConfirm = { msg, cb }; },
+  openInvoice(link, cb) { __log.faturas.push(link); __ultimaFatura = { link, cb }; },
+};
+if (__nuvem) __webapp.CloudStorage = __nuvem;
+globalThis.window = { Telegram: { WebApp: __webapp }, location: { search: ENTRADA.busca || '' }, scrollY: 0, innerHeight: 800,
+                      scrollTo() {}, addEventListener() {}, matchMedia: () => ({ matches: false }),
+                      alert() {}, confirm: () => true };
+if (__local) globalThis.window.localStorage = __local;
+else Object.defineProperty(globalThis.window, 'localStorage', { get() { throw new Error('sem localStorage'); } });
+const __visivel = (id) => !document.getElementById(id).hidden;
+"""
+
+
+def ids_da_home():
+    """{id: {tag, classe, hidden}} de todos os elementos com id do HTML (antes do bloco de funções puras)."""
+    html = HOME[:HOME.index('INICIO FUNCOES PURAS')]
+    ids = {}
+    for m in re.finditer(r'<(\w+)\b([^>]*?)>', html):
+        atributos = m.group(2)
+        achou = re.search(r'\bid="([^"]+)"', atributos)
+        if not achou:
+            continue
+        sem_aspas = re.sub(r'"[^"]*"', '""', atributos)
+        classe = re.search(r'\bclass="([^"]*)"', atributos)
+        ids[achou.group(1)] = {'tag': m.group(1), 'classe': classe.group(1) if classe else '',
+                               'hidden': bool(re.search(r'(?<![\w-])hidden(?![\w-])', sem_aspas))}
+    return ids
+
+
+def rodar_pagina(entrada, cenario):
+    """Roda o <script> principal da home num navegador de mentira e depois o 'cenario' (JS, async, com console.log do JSON)."""
+    entrada = dict(entrada)
+    entrada['ids'] = ids_da_home()
+    programa = (
+        "const fs = require('fs');\n"
+        "const ENTRADA = JSON.parse(fs.readFileSync(process.argv[2], 'utf-8'));\n"
+        + codigo_puro(HOME) + "\n" + HARNESS_PAGINA + "\n" + codigo_principal(HOME) + "\n"
+        + "(async () => {\n" + cenario + "\n})().catch((e) => { console.error(e && e.stack || e); process.exit(1); });\n"
+    )
+    return rodar_node(programa, entrada)
+
+
+# --- Corpos de mentira do servidor (o formato do montar_bloco_assinatura do assinaturas.py) ---
+def bloco_assinatura(**campos):
+    base = {
+        'ligada': True, 'estado': 'teste', 'inicio': '2026-11-10', 'fim': '2026-11-20', 'renovacao': False,
+        'teste_disponivel': False, 'teste_previsto': None, 'preco': {'stars': 150, 'reais_aproximado': 19},
+        'limite_ia_dia': 17, 'uso_ia_hoje': 0, 'selo': 'gratis', 'selo_tocavel': True, 'dias_restantes': 7,
+        'valor_stars': None, 'proxima_renovacao': None, 'renovacao_cancelada': False, 'vale_ate': None, 'modo_leitura': False,
+    }
+    base.update(campos)
+    return base
+
+
+BLOCO_TESTE = bloco_assinatura()
+BLOCO_PRO = bloco_assinatura(estado='pro', inicio='2026-11-12', fim='2026-12-12', renovacao=True, selo='pro', dias_restantes=30,
+                             valor_stars=150, proxima_renovacao='2026-12-12', vale_ate='2026-12-12')
+BLOCO_CANCELADO = dict(BLOCO_PRO, proxima_renovacao=None, renovacao_cancelada=True)
+BLOCO_DADO = dict(BLOCO_PRO, valor_stars=None, proxima_renovacao=None, renovacao=False, vale_ate='2026-12-12')
+BLOCO_ADMIN = bloco_assinatura(estado='pro', inicio=None, fim=None, selo='pro', selo_tocavel=False, dias_restantes=None,
+                               limite_ia_dia=None, vale_ate=None)
+BLOCO_TESTE_VENCIDO = bloco_assinatura(estado='teste_vencido', inicio='2026-11-01', fim='2026-11-11', selo='assinar', dias_restantes=None,
+                                       modo_leitura=True, teste_disponivel=False)
+BLOCO_PRO_VENCIDO = bloco_assinatura(estado='pro_vencido', inicio='2026-10-01', fim='2026-11-01', selo='assinar', dias_restantes=None,
+                                     modo_leitura=True)
+BLOCO_SEM_PLANO = bloco_assinatura(estado='sem_plano', inicio=None, fim=None, selo=None, selo_tocavel=False, dias_restantes=None,
+                                   teste_disponivel=True, teste_previsto={'inicio': '2026-11-12', 'fim': '2026-11-22'})
+
+
+def rotas_da_home(assinatura='ausente', extras=None):
+    """As 4 rotas da abertura. assinatura='ausente' = o /me sem a chave (a chave desligada); None = "assinatura": null."""
+    me = {'user_id': 1, 'nome': 'Ygor Lima'}
+    if assinatura != 'ausente':
+        me['assinatura'] = assinatura
+    rotas = {
+        'GET /me': {'status': 200, 'body': me},
+        'GET /resumo': {'status': 200, 'body': {'ano_mes': '2026-11', 'total_gasto': 100.0, 'sobra_mes': 900.0, 'renda': 1000.0,
+                                                 'total_receitas': 0}},
+        'GET /historico': {'status': 200, 'body': {'meses': []}},
+        'GET /movimentacoes/recentes': {'status': 200, 'body': {'movimentacoes': []}},
+    }
+    rotas.update(extras or {})
+    return rotas
+
+
+ABERTURA = ['GET /me', 'GET /resumo', 'GET /historico', 'GET /movimentacoes/recentes']
+
+
+@unittest.skipUnless(NODE, 'node não encontrado')
+class TestAssinaturasNaPagina(unittest.TestCase):
+    """O <script> principal rodando de verdade (navegador de mentira): abertura, selo, folhas, modo leitura e fluxos."""
+
+    # ---------------------------- abertura ----------------------------
+    def test_sem_a_chave_ou_desligada_o_app_fica_como_hoje(self):
+        desligada = bloco_assinatura(ligada=False, selo='pro', modo_leitura=True, estado='teste_vencido')
+        for nome, bloco in (('ausente', 'ausente'), ('nulo', None), ('ligada false', desligada)):
+            with self.subTest(bloco=nome):
+                obtido = rodar_pagina({'rotas': rotas_da_home(bloco), 'busca': '?tela=assinatura'}, """
+                    await __ocioso();
+                    console.log(JSON.stringify({ chamadas: __chamadas(), selo: __visivel('selo-linha'), tela: __visivel('tela'),
+                      logo: __visivel('tela-logo'), aviso: __visivel('aviso'), expirada: __visivel('expirada'),
+                      assinaturas: __visivel('assinaturas'), pausadoHome: __visivel('pausado-home'), pausadoRec: __visivel('rec-pausado'),
+                      dica: $('cat-dica').textContent, leitura: assEstado.leitura }));
+                """)
+                self.assertEqual(obtido['chamadas'], ABERTURA)   # as mesmas 4 chamadas, nenhuma nova
+                self.assertTrue(obtido['tela'])
+                self.assertFalse(obtido['logo'])
+                self.assertFalse(obtido['aviso'])
+                for chave in ('selo', 'expirada', 'assinaturas', 'pausadoHome', 'pausadoRec', 'leitura'):
+                    self.assertFalse(obtido[chave], chave)
+                self.assertEqual(obtido['dica'], 'Clique Nas Barras Para Visualizar e Editar as Categorias')
+
+    def test_selo_sai_so_do_campo_selo(self):
+        casos = [
+            ('gratis', bloco_assinatura(), 'Grátis', True, 'gratis'),
+            ('pro', BLOCO_PRO, 'Pro', True, 'pro'),
+            ('assinar', BLOCO_PRO_VENCIDO, 'Assinar', True, 'assinar'),
+            ('admin', BLOCO_ADMIN, 'Pro', False, 'pro'),
+        ]
+        for nome, bloco, texto, tocavel, variante in casos:
+            with self.subTest(selo=nome):
+                obtido = rodar_pagina({'rotas': rotas_da_home(bloco), 'local': {'hoje': True}}, """
+                    await __ocioso();
+                    console.log(JSON.stringify({ linha: __visivel('selo-linha'), texto: $('selo-texto').textContent,
+                      classe: $('selo').className, seta: __visivel('selo-seta') }));
+                """)
+                self.assertTrue(obtido['linha'])
+                self.assertEqual(obtido['texto'], texto)
+                self.assertEqual(obtido['classe'].split(), ['selo', variante] + (['tocavel'] if tocavel else []))
+                self.assertEqual(obtido['seta'], nome == 'assinar')
+        # Nulo, ausente ou qualquer outro valor: sem selo (a linha some), mesmo com o estado dizendo outra coisa.
+        for nome, bloco in (('nulo', bloco_assinatura(selo=None)), ('free', bloco_assinatura(selo='free')),
+                            ('admin', bloco_assinatura(selo='admin')), ('teste', bloco_assinatura(selo='teste')),
+                            ('maiúsculo', bloco_assinatura(selo='PRO'))):
+            with self.subTest(sem_selo=nome):
+                obtido = rodar_pagina({'rotas': rotas_da_home(bloco)}, """
+                    await __ocioso();
+                    console.log(JSON.stringify({ linha: __visivel('selo-linha'), tela: __visivel('tela') }));
+                """)
+                self.assertFalse(obtido['linha'])
+                self.assertTrue(obtido['tela'])   # nunca vira aviso de erro
+        sem_chave = bloco_assinatura()
+        del sem_chave['selo']
+        obtido = rodar_pagina({'rotas': rotas_da_home(sem_chave)}, "await __ocioso(); console.log(JSON.stringify({ linha: __visivel('selo-linha') }));")
+        self.assertFalse(obtido['linha'])
+
+    def test_toque_no_selo_abre_a_folha_sem_chamada_nova_e_so_se_for_tocavel(self):
+        obtido = rodar_pagina({'rotas': rotas_da_home(BLOCO_TESTE)}, """
+            await __ocioso();
+            const antes = __chamadas().length;
+            $('selo').click();
+            await __ocioso();
+            console.log(JSON.stringify({ antes, depois: __chamadas().length, minha: __visivel('folha-minha'), plano: __visivel('folha-plano'),
+              logo: __visivel('tela-logo'), situacao: $('min-situacao').textContent, tela: __visivel('tela') }));
+        """)
+        self.assertEqual(obtido['antes'], 4)
+        self.assertEqual(obtido['depois'], 4)   # a folha abre com o que a home já tem
+        self.assertTrue(obtido['minha'])
+        self.assertFalse(obtido['plano'])
+        self.assertFalse(obtido['logo'])
+        self.assertTrue(obtido['tela'])         # por cima da home
+        self.assertEqual(obtido['situacao'], 'Seu Teste Gratuito Está Ativo. Faltam 7 Dias.')
+        # Admin: selo "Pro", e o toque não faz nada (sem estado pressionado, sem folha, sem aviso).
+        for nome, bloco in (('admin', BLOCO_ADMIN), ('sem selo_tocavel', {k: v for k, v in BLOCO_PRO.items() if k != 'selo_tocavel'}),
+                            ('selo_tocavel nulo', dict(BLOCO_PRO, selo_tocavel=None)), ('selo_tocavel "true"', dict(BLOCO_PRO, selo_tocavel='true'))):
+            with self.subTest(sem_toque=nome):
+                obtido = rodar_pagina({'rotas': rotas_da_home(bloco)}, """
+                    await __ocioso();
+                    $('selo').click();
+                    await __ocioso();
+                    console.log(JSON.stringify({ minha: __visivel('folha-minha'), plano: __visivel('folha-plano'), aviso: __visivel('aviso-topo'),
+                      classe: $('selo').className, chamadas: __chamadas().length }));
+                """)
+                self.assertFalse(obtido['minha'])
+                self.assertFalse(obtido['plano'])
+                self.assertFalse(obtido['aviso'])
+                self.assertNotIn('tocavel', obtido['classe'].split())
+                self.assertNotIn('tocado', obtido['classe'].split())
+                self.assertEqual(obtido['chamadas'], 4)
+
+    def test_folha_minha_assinatura_nos_quatro_estados(self):
+        casos = [
+            ('gratis', BLOCO_TESTE, 'Seu Teste Gratuito Está Ativo. Faltam 7 Dias.',
+             [['Plano:', 'Grátis'], ['Início do Teste:', '10/11/2026'], ['Fim do Teste:', '20/11/2026']],
+             'Assinar o Plano Pro', False, True, False),
+            ('pro-ativo', BLOCO_PRO, 'Obrigado Por Assinar o L1d3r! Seu Plano Pro Está Ativo.',
+             [['Plano:', 'Pro'], ['Valor:', '150 Stars por mês'], ['Próxima Renovação:', '12/12/2026']],
+             'Cancelar Renovação', True, True, True),
+            ('renovacao-cancelada', BLOCO_CANCELADO, 'Seu Plano Pro Continua Ativo Até o Fim do Período Pago. A Renovação Foi Cancelada.',
+             [['Plano:', 'Pro'], ['Vale Até:', '12/12/2026']], 'Reativar Renovação', False, True, False),
+            ('pro-dado', BLOCO_DADO, 'Seu Plano Pro Está Ativo Até a Data Abaixo.',
+             [['Plano:', 'Pro'], ['Vale Até:', '12/12/2026']], 'Fechar', False, False, False),
+        ]
+        for nome, bloco, situacao, linhas, botao, claro, fechar, termos in casos:
+            with self.subTest(estado=nome):
+                obtido = rodar_pagina({'rotas': rotas_da_home(bloco)}, """
+                    await __ocioso();
+                    $('selo').click();
+                    const linhas = []; const caixa = $('min-linhas').children.filter((c) => c.className === 'ass-linha');
+                    caixa.forEach((l) => linhas.push(l.children.map((x) => x.textContent)));
+                    console.log(JSON.stringify({ situacao: $('min-situacao').textContent, linhas, botao: $('min-principal').textContent,
+                      claro: $('min-principal').classList.contains('claro'), fechar: __visivel('min-fechar'), termos: __visivel('min-termos-bloco'),
+                      apoio: __visivel('min-apoio') ? $('min-apoio').textContent : '' }));
+                """)
+                self.assertEqual(obtido['situacao'], situacao)
+                self.assertEqual(obtido['linhas'], linhas)
+                self.assertEqual(obtido['botao'], botao)
+                self.assertEqual(obtido['claro'], claro)
+                self.assertEqual(obtido['fechar'], fechar)
+                self.assertEqual(obtido['termos'], termos)
+                if nome == 'pro-ativo':
+                    self.assertEqual(obtido['apoio'], 'A Renovação Usa as Stars Que Estão na Sua Conta. Você Pode Cancelar Quando Quiser.')
+
+    def test_textos_dos_dias_na_folha(self):
+        for dias, esperado in ((7, 'Faltam 7 Dias.'), (2, 'Faltam 2 Dias.'), (1, 'Falta 1 Dia.'), (0, 'Termina Hoje.')):
+            with self.subTest(dias=dias):
+                obtido = rodar_pagina({'rotas': rotas_da_home(bloco_assinatura(dias_restantes=dias))}, """
+                    await __ocioso(); $('selo').click();
+                    console.log(JSON.stringify({ s: $('min-situacao').textContent }));
+                """)
+                self.assertEqual(obtido['s'], 'Seu Teste Gratuito Está Ativo. ' + esperado)
+
+    def test_o_valor_da_folha_e_o_valor_stars_nunca_o_preco(self):
+        bloco = dict(BLOCO_PRO, valor_stars=100, preco={'stars': 150, 'reais_aproximado': 19})
+        obtido = rodar_pagina({'rotas': rotas_da_home(bloco)}, """
+            await __ocioso(); $('selo').click();
+            console.log(JSON.stringify({ v: $('min-linhas').children.filter((c) => c.className === 'ass-linha').map((l) => l.children[1].textContent) }));
+        """)
+        self.assertIn('100 Stars por mês', obtido['v'])
+        self.assertNotIn('150 Stars por mês', obtido['v'])
+
+    # ---------------------------- cancelar e reativar ----------------------------
+    def test_cancelar_so_depois_do_showconfirm(self):
+        rotas = rotas_da_home(BLOCO_PRO, {'POST /assinaturas/renovacao': {'status': 200, 'body': BLOCO_CANCELADO}})
+        obtido = rodar_pagina({'rotas': rotas}, """
+            await __ocioso(); $('selo').click();
+            $('min-principal').click();
+            const pedido = { confirms: __log.confirms.slice(), posts: __chamadas().filter((c) => c.startsWith('POST')).length };
+            __ultimoConfirm.cb(false);                      // cancelou no alerta: nada acontece
+            await __ocioso();
+            const aposNao = { posts: __chamadas().filter((c) => c.startsWith('POST')).length, botao: $('min-principal').textContent };
+            $('min-principal').click();
+            __ultimoConfirm.cb(true);
+            await __ocioso();
+            const posts = __log.fetch.filter((c) => c.metodo === 'POST');
+            console.log(JSON.stringify({ pedido, aposNao, posts, botao: $('min-principal').textContent, situacao: $('min-situacao').textContent,
+              selo: $('selo-texto').textContent, logo: __visivel('tela-logo'), minha: __visivel('folha-minha') }));
+        """)
+        self.assertEqual(obtido['pedido']['confirms'], ['Cancelar a renovação? Seu Plano Pro continua ativo até 12/12/2026.'])
+        self.assertEqual(obtido['pedido']['posts'], 0)        # nada foi enviado antes da confirmação
+        self.assertEqual(obtido['aposNao']['posts'], 0)
+        self.assertEqual(obtido['aposNao']['botao'], 'Cancelar Renovação')
+        self.assertEqual(obtido['posts'], [{'metodo': 'POST', 'rota': '/assinaturas/renovacao', 'corpo': {'cancelar': True}}])
+        self.assertEqual(obtido['botao'], 'Reativar Renovação')   # a folha passa para a Renovação Cancelada com a resposta
+        self.assertTrue(obtido['situacao'].endswith('A Renovação Foi Cancelada.'))
+        self.assertEqual(obtido['selo'], 'Pro')
+        self.assertFalse(obtido['logo'])                      # sem a tela da logo
+        self.assertTrue(obtido['minha'])
+
+    def test_erro_ao_cancelar_mostra_o_alerta_e_a_folha_fica(self):
+        for status, corpo in ((502, {'detail': 'telegram_indisponivel'}), (0, None)):
+            with self.subTest(status=status):
+                rota = {'status': status, 'body': corpo} if status else {'status': 599, 'body': {}}
+                obtido = rodar_pagina({'rotas': rotas_da_home(BLOCO_PRO, {'POST /assinaturas/renovacao': rota})}, """
+                    await __ocioso(); $('selo').click(); $('min-principal').click(); __ultimoConfirm.cb(true);
+                    await __ocioso();
+                    console.log(JSON.stringify({ alertas: __log.alertas, botao: $('min-principal').textContent, minha: __visivel('folha-minha') }));
+                """)
+                self.assertEqual(obtido['alertas'], ['Não foi possível cancelar agora. Tente de novo.'])
+                self.assertEqual(obtido['botao'], 'Cancelar Renovação')
+                self.assertTrue(obtido['minha'])
+
+    def test_reativar_confirma_e_volta_ao_pro_ativo(self):
+        rotas = rotas_da_home(BLOCO_CANCELADO, {'POST /assinaturas/renovacao': {'status': 200, 'body': BLOCO_PRO}})
+        obtido = rodar_pagina({'rotas': rotas}, """
+            await __ocioso(); $('selo').click();
+            $('min-principal').click();
+            const confirms = __log.confirms.slice();
+            const antes = __log.fetch.filter((c) => c.metodo === 'POST').length;
+            __ultimoConfirm.cb(true);
+            await __ocioso();
+            console.log(JSON.stringify({ confirms, antes, posts: __log.fetch.filter((c) => c.metodo === 'POST'),
+              botao: $('min-principal').textContent, linhas: $('min-linhas').children.filter((c) => c.className === 'ass-linha').map((l) => l.children[0].textContent) }));
+        """)
+        self.assertEqual(obtido['confirms'], ['Reativar a renovação? Nada é cobrado agora; a próxima cobrança segue a data de sempre.'])
+        self.assertEqual(obtido['antes'], 0)
+        self.assertEqual(obtido['posts'], [{'metodo': 'POST', 'rota': '/assinaturas/renovacao', 'corpo': {'cancelar': False}}])
+        self.assertEqual(obtido['botao'], 'Cancelar Renovação')
+        self.assertIn('Próxima Renovação:', obtido['linhas'])
+
+    def test_reativacao_recusada_leva_a_folha_plano_depois_do_alerta(self):
+        rotas = rotas_da_home(BLOCO_CANCELADO, {'POST /assinaturas/renovacao': {'status': 409, 'body': {'detail': 'reativacao_recusada'}}})
+        obtido = rodar_pagina({'rotas': rotas}, """
+            await __ocioso(); $('selo').click(); $('min-principal').click(); __ultimoConfirm.cb(true);
+            await __ocioso();
+            const antes = { alertas: __log.alertas.slice(), plano: __visivel('folha-plano'), minha: __visivel('folha-minha') };
+            __ultimoAlerta.cb();                             // tocou em OK no alerta
+            console.log(JSON.stringify({ antes, plano: __visivel('folha-plano'), minha: __visivel('folha-minha'),
+              preco: $('plano-preco-stars').textContent }));
+        """)
+        self.assertEqual(obtido['antes']['alertas'], ['Não foi possível reativar por aqui. Você pode assinar de novo sem perder nenhum dia.'])
+        self.assertFalse(obtido['antes']['plano'])           # só depois do OK
+        self.assertTrue(obtido['plano'])
+        self.assertFalse(obtido['minha'])
+        self.assertEqual(obtido['preco'], '150 Stars')
+
+    # ---------------------------- tela Expirada (uma vez por dia) ----------------------------
+    def test_expirada_uma_vez_por_dia_com_o_armazenamento_falso(self):
+        cenario = """
+            await __ocioso();
+            console.log(JSON.stringify({ chamadas: __chamadas(), expirada: __visivel('expirada'), tela: __visivel('tela'),
+              logo: __visivel('tela-logo'), pausado: __visivel('pausado-home'), selo: $('selo-texto').textContent,
+              hoje: __hoje, nuvem: __nuvem && __nuvem.dados ? __nuvem.dados.expirada_vista_em || null : null,
+              leitura: assEstado.leitura }));
+        """
+        base = {'rotas': rotas_da_home(BLOCO_TESTE_VENCIDO)}
+        # Não vista: a Expirada aparece, a home fica por baixo, e o dia de hoje é guardado.
+        obtido = rodar_pagina(base, cenario)
+        self.assertTrue(obtido['expirada'])
+        self.assertFalse(obtido['tela'])
+        self.assertFalse(obtido['logo'])
+        self.assertEqual(obtido['chamadas'], ABERTURA)
+        self.assertEqual(obtido['nuvem'], obtido['hoje'])
+        # Já vista hoje (no aparelho OU na nuvem): direto para a home em modo leitura.
+        for nome, extra in (('localStorage', {'local': {'hoje': True}}), ('CloudStorage', {'nuvem': {'hoje': True}}),
+                            ('ontem', None)):
+            with self.subTest(vista_em=nome):
+                entrada = dict(base, **(extra or {'local': {'dados': {'expirada_vista_em': '2000-01-01'}}}))
+                obtido = rodar_pagina(entrada, cenario)
+                if extra is None:
+                    self.assertTrue(obtido['expirada'])      # outro dia: aparece de novo
+                else:
+                    self.assertFalse(obtido['expirada'])
+                    self.assertTrue(obtido['tela'])
+                    self.assertTrue(obtido['pausado'])
+                    self.assertEqual(obtido['selo'], 'Assinar')
+                    self.assertTrue(obtido['leitura'])
+        # Armazenamento quebrado, ausente ou só a nuvem quebrada: mostra a tela (o lado seguro).
+        for nome, extra in (('os dois quebrados', {'local': {'modo': 'quebrado'}, 'nuvem': {'modo': 'quebrado'}}),
+                            ('sem nenhum', {'local': {'modo': 'sem'}, 'nuvem': {'modo': 'sem'}}),
+                            ('nuvem quebrada', {'nuvem': {'modo': 'quebrado'}})):
+            with self.subTest(armazenamento=nome):
+                obtido = rodar_pagina(dict(base, **extra), cenario)
+                self.assertTrue(obtido['expirada'], nome)
+                self.assertFalse(obtido['tela'])
+        # Dia guardado só no CloudStorage com o localStorage quebrado: vale a nuvem.
+        obtido = rodar_pagina(dict(base, local={'modo': 'quebrado'}, nuvem={'hoje': True}), cenario)
+        self.assertFalse(obtido['expirada'])
+
+    def test_link_assinatura_sempre_abre_a_expirada_para_quem_venceu(self):
+        for nome, extra in (('?tela=assinatura', {'busca': '?tela=assinatura'}), ('start_param', {'startParam': 'assinatura'})):
+            with self.subTest(link=nome):
+                entrada = dict({'rotas': rotas_da_home(BLOCO_PRO_VENCIDO), 'local': {'hoje': True}, 'nuvem': {'hoje': True}}, **extra)
+                obtido = rodar_pagina(entrada, """
+                    await __ocioso();
+                    console.log(JSON.stringify({ expirada: __visivel('expirada'), assinaturas: __visivel('assinaturas'), chamadas: __chamadas() }));
+                """)
+                self.assertTrue(obtido['expirada'])       # mesmo já vista hoje
+                self.assertFalse(obtido['assinaturas'])
+                self.assertEqual(obtido['chamadas'], ABERTURA)
+        # Outro link qualquer não conta.
+        obtido = rodar_pagina({'rotas': rotas_da_home(BLOCO_PRO_VENCIDO), 'local': {'hoje': True}, 'busca': '?tela=outra', 'startParam': 'x'},
+                              "await __ocioso(); console.log(JSON.stringify({ expirada: __visivel('expirada') }));")
+        self.assertFalse(obtido['expirada'])
+
+    def test_textos_da_expirada(self):
+        casos = [(BLOCO_TESTE_VENCIDO, 'Seu Teste de 10 Dias Terminou. Para Continuar Usando o L1d3r, Assine o Plano Pro.',
+                  'Seu Teste Terminou em:', '11/11/2026', 'Assinar'),
+                 (BLOCO_PRO_VENCIDO, 'Sua Assinatura Pro Venceu. Renove Para Continuar Usando o L1d3r.',
+                  'Venceu em:', '01/11/2026', 'Renovar Assinatura')]
+        for bloco, apoio, rotulo, data, botao in casos:
+            with self.subTest(estado=bloco['estado']):
+                obtido = rodar_pagina({'rotas': rotas_da_home(bloco)}, """
+                    await __ocioso();
+                    console.log(JSON.stringify({ apoio: $('exp-apoio').textContent, rotulo: $('exp-data-rotulo').textContent,
+                      data: $('exp-data-valor').textContent, botao: $('exp-botao').textContent, stars: $('exp-preco-stars').textContent,
+                      reais: $('exp-preco-reais').textContent, back: __log.ligacoes[__log.ligacoes.length - 1] }));
+                """)
+                self.assertEqual((obtido['apoio'], obtido['rotulo'], obtido['data'], obtido['botao']), (apoio, rotulo, data, botao))
+                self.assertEqual(obtido['stars'], '150 Stars')
+                self.assertEqual(obtido['reais'], '≈ R$ 19 (varia conforme a loja)')
+                self.assertEqual(obtido['back'], 'show')
+
+    def test_mais_tarde_e_o_backbutton_levam_a_home_em_modo_leitura(self):
+        for nome, acao in (('Mais Tarde', "$('exp-mais-tarde').click();"), ('BackButton', '__voltar();')):
+            with self.subTest(saida=nome):
+                obtido = rodar_pagina({'rotas': rotas_da_home(BLOCO_TESTE_VENCIDO)}, """
+                    await __ocioso();
+                    const antes = __chamadas().length;
+                    %s
+                    await __ocioso();
+                    console.log(JSON.stringify({ antes, depois: __chamadas().length, tela: __visivel('tela'), expirada: __visivel('expirada'),
+                      pausado: __visivel('pausado-home'), selo: $('selo-texto').textContent, leitura: assEstado.leitura,
+                      classe: document.body.className, back: __log.ligacoes[__log.ligacoes.length - 1] }));
+                """ % acao)
+                self.assertTrue(obtido['tela'])
+                self.assertFalse(obtido['expirada'])
+                self.assertEqual(obtido['antes'], obtido['depois'])    # a home já estava pronta: sem recarregar
+                self.assertTrue(obtido['pausado'])
+                self.assertEqual(obtido['selo'], 'Assinar')
+                self.assertTrue(obtido['leitura'])
+                self.assertNotIn('modo-assinaturas', obtido['classe'])
+                self.assertEqual(obtido['back'], 'hide')
+
+    # ---------------------------- abertura com plano: link e sem_plano ----------------------------
+    def test_link_para_quem_tem_plano_abre_a_tela_assinaturas_sem_chamada_nova(self):
+        casos = [
+            (BLOCO_TESTE, 'Seu Teste Gratuito Está Ativo. Assine Quando Quiser Para Continuar Usando o L1d3r Depois Dele.',
+             'Seu Teste Está Ativo. Faltam 7 Dias.', 'Assinar', False, True),
+            (BLOCO_PRO, 'Obrigado Por Assinar o L1d3r! Seu Plano Pro Está Ativo.', 'Seu Plano Pro', 'Cancelar Renovação', True, True),
+            (BLOCO_CANCELADO, 'Você Cancelou a Renovação. Seu Plano Pro Continua Ativo Até o Fim do Período Pago.', 'Seu Plano Pro',
+             'Reativar Renovação', False, True),
+            (BLOCO_DADO, 'Seu Plano Pro Está Ativo Até a Data Abaixo.', 'Seu Plano Pro', None, False, False),
+        ]
+        for bloco, apoio, titulo, botao, claro, com_preco in casos:
+            with self.subTest(estado=bloco['estado'], renovacao_cancelada=bloco['renovacao_cancelada']):
+                obtido = rodar_pagina({'rotas': rotas_da_home(bloco), 'busca': '?tela=assinatura'}, """
+                    await __ocioso();
+                    console.log(JSON.stringify({ chamadas: __chamadas(), assinaturas: __visivel('assinaturas'), tela: __visivel('tela'),
+                      apoio: $('ass-apoio').textContent, titulo: $('ass-atual-titulo').textContent, preco: __visivel('ass-cartao-preco'),
+                      botao: $('ass-preco-botao').textContent, botaoVisivel: __visivel('ass-preco-botao'), claro: $('ass-preco-botao').classList.contains('claro'),
+                      testeBotao: __visivel('ass-teste-botao'), atualPrimeiro: $('ass-conteudo').classList.contains('atual-primeiro') }));
+                """)
+                self.assertEqual(obtido['chamadas'], ABERTURA)
+                self.assertTrue(obtido['assinaturas'])
+                self.assertFalse(obtido['tela'])
+                self.assertEqual(obtido['apoio'], apoio)
+                self.assertEqual(obtido['titulo'], titulo)
+                self.assertEqual(obtido['preco'], com_preco)
+                self.assertTrue(obtido['atualPrimeiro'])      # o cartão do plano atual vem antes do de preço
+                self.assertFalse(obtido['testeBotao'])
+                if botao:
+                    self.assertEqual((obtido['botao'], obtido['claro']), (botao, claro))
+                    self.assertTrue(obtido['botaoVisivel'])
+
+    def test_sem_plano_cadastrado_abre_a_tela_assinaturas_principal(self):
+        obtido = rodar_pagina({'rotas': rotas_da_home(BLOCO_SEM_PLANO)}, """
+            await __ocioso();
+            console.log(JSON.stringify({ chamadas: __chamadas(), assinaturas: __visivel('assinaturas'), tela: __visivel('tela'),
+              apoio: $('ass-apoio').textContent, titulo: $('ass-atual-titulo').textContent,
+              datas: $('ass-atual-caixa').children.filter((c) => c.className === 'ass-linha').map((l) => l.children.map((x) => x.textContent)),
+              stars: $('ass-preco-stars').textContent, reais: $('ass-preco-reais').textContent, testeBotao: __visivel('ass-teste-botao'),
+              preco: $('ass-preco-botao').textContent, atualPrimeiro: $('ass-conteudo').classList.contains('atual-primeiro') }));
+        """)
+        self.assertEqual(obtido['chamadas'], ABERTURA)
+        self.assertTrue(obtido['assinaturas'])
+        self.assertFalse(obtido['tela'])
+        self.assertEqual(obtido['apoio'], 'Nossa Aplicação Conta Com Uma Assinatura Simbólica de 150 Stars Por Mês. Mas Não Se Preocupe: '
+                                         'Liberamos 10 Dias Gratuitos Para Novos Usuários Testarem.')
+        self.assertEqual(obtido['titulo'], 'Teste Gratuitamente Por 10 Dias Corridos!')
+        self.assertEqual(obtido['datas'], [['Início do Teste:', '12/11/2026'], ['Fim do Teste:', '22/11/2026']])   # de teste_previsto
+        self.assertEqual((obtido['stars'], obtido['reais']), ('150 Stars', '≈ R$ 19 (varia conforme a loja)'))
+        self.assertTrue(obtido['testeBotao'])
+        self.assertEqual(obtido['preco'], 'Assinar')
+        self.assertFalse(obtido['atualPrimeiro'])             # na principal, o cartão de preço vem primeiro
+
+    # ---------------------------- modo somente leitura ----------------------------
+    def test_bloqueios_do_modo_leitura_mostram_o_aviso_sem_chamar_a_api(self):
+        obtido = rodar_pagina({'rotas': rotas_da_home(BLOCO_TESTE_VENCIDO), 'local': {'hoje': True}}, """
+            await __ocioso();
+            const fotos = [];
+            const foto = (nome) => fotos.push({ nome, aviso: __visivel('aviso-topo'), texto: $('aviso-topo-texto').textContent,
+              cadeado: __visivel('aviso-topo-cadeado'), check: __visivel('aviso-topo-check'), chamadas: __chamadas().length,
+              opcoes: __visivel('registro-opcoes'), escolha: __visivel('recorrentes-escolha'), form: __visivel('recorrente-form'),
+              catNova: __visivel('folha-cat-nova'), catEditar: __visivel('folha-cat-editar'), tela: __visivel('tela') });
+            const limpar = () => { $('aviso-topo').hidden = true; };
+            $('atalho-registrar').click(); foto('registrar'); limpar();
+            $('rec-adicionar').click(); foto('adicionar recorrente'); limpar();
+            abrirFormEditar({ id: 1, descricao: 'x', valor: 1, categoria: 'Casa', dia_cobranca: 3 }); foto('item recorrente'); limpar();
+            abrirSalarioRecorrente(); foto('cartão do salário'); limpar();
+            $('cat-nova').click(); foto('nova categoria'); limpar();
+            abrirFolhaEditar({ id: 1, nome: 'Casa' }); foto('barra'); limpar();
+            console.log(JSON.stringify({ fotos, dica: $('cat-dica').textContent, pausadoRec: __visivel('rec-pausado') }));
+        """)
+        for foto in obtido['fotos']:
+            with self.subTest(toque=foto['nome']):
+                self.assertTrue(foto['aviso'])
+                self.assertEqual(foto['texto'], 'Assine o Pro Para Continuar se Organizando')
+                self.assertTrue(foto['cadeado'])
+                self.assertFalse(foto['check'])
+                self.assertEqual(foto['chamadas'], 4)           # nenhuma chamada à API
+                for aberto in ('opcoes', 'escolha', 'form', 'catNova', 'catEditar'):
+                    self.assertFalse(foto[aberto], aberto)       # nada de formulário nem folha
+                self.assertTrue(foto['tela'])
+        self.assertEqual(obtido['dica'], 'Veja Quanto Cada Categoria Gastou. Para Criar ou Editar, Assine o Plano Pro.')
+        self.assertTrue(obtido['pausadoRec'])
+
+    def test_fora_do_modo_leitura_os_toques_funcionam_como_antes(self):
+        obtido = rodar_pagina({'rotas': rotas_da_home(BLOCO_PRO)}, """
+            await __ocioso();
+            $('atalho-registrar').click();
+            console.log(JSON.stringify({ opcoes: __visivel('registro-opcoes'), aviso: __visivel('aviso-topo'), leitura: assEstado.leitura }));
+        """)
+        self.assertTrue(obtido['opcoes'])
+        self.assertFalse(obtido['aviso'])
+        self.assertFalse(obtido['leitura'])
+
+    def test_403_assinatura_vencida_liga_o_modo_leitura_sem_trocar_de_tela(self):
+        rotas = rotas_da_home(BLOCO_TESTE, {'POST /gastos': {'status': 403, 'body': {'detail': 'assinatura_vencida'}},
+                                            'GET /assinatura': {'status': 200, 'body': BLOCO_TESTE_VENCIDO}})
+        obtido = rodar_pagina({'rotas': rotas}, """
+            await __ocioso();
+            $('atalho-registrar').click();                        // a pessoa está no meio do fluxo de registrar
+            const r = await enviarJson('/gastos', { chave: 'x' });
+            await __ocioso();
+            console.log(JSON.stringify({ erro: r.erro, detalhe: r.detalhe, aviso: __visivel('aviso-topo'), texto: $('aviso-topo-texto').textContent,
+              cadeado: __visivel('aviso-topo-cadeado'), leitura: assEstado.leitura, opcoes: __visivel('registro-opcoes'),
+              pausado: __visivel('pausado-home'), selo: $('selo-texto').textContent, mensagem: mensagemErroRegistro(r, 'gravar', 'gasto'),
+              mensagemChat: mensagemErroRegistro(r, 'interpretar', 'gasto'), chamadas: __chamadas().slice(4), expirada: __visivel('expirada'),
+              assinaturas: __visivel('assinaturas') }));
+        """)
+        self.assertEqual((obtido['erro'], obtido['detalhe']), (403, 'assinatura_vencida'))
+        self.assertTrue(obtido['aviso'])
+        self.assertEqual(obtido['texto'], 'Assine o Pro Para Continuar se Organizando')
+        self.assertTrue(obtido['cadeado'])
+        self.assertTrue(obtido['leitura'])
+        self.assertTrue(obtido['opcoes'])                         # a tela atual continua aberta, sem trocar de tela
+        self.assertFalse(obtido['expirada'])
+        self.assertFalse(obtido['assinaturas'])
+        self.assertTrue(obtido['pausado'])
+        self.assertEqual(obtido['selo'], 'Assinar')               # o JSON completo vem do GET /assinatura em segundo plano
+        self.assertEqual(obtido['mensagem'], '')                  # nunca a mensagem de erro genérica
+        self.assertEqual(obtido['mensagemChat'], '')
+        self.assertEqual(obtido['chamadas'], ['POST /gastos', 'GET /assinatura'])
+
+    def test_403_nas_gravacoes_nao_vira_mensagem_generica(self):
+        obtido = rodar_pagina({'rotas': rotas_da_home(BLOCO_TESTE)}, """
+            const r403 = { erro: 403, detalhe: 'assinatura_vencida' };
+            console.log(JSON.stringify({
+              recGasto: decisaoDaGravacaoRecorrente('criar', r403, 'gasto'), recReceita: decisaoDaGravacaoRecorrente('editar', r403, 'receita'),
+              recApagar: decisaoDaGravacaoRecorrente('apagar', r403, 'gasto'),
+              catCriar: decisaoDaGravacaoCategoria('criar', r403, 20), catExcluir: decisaoDaGravacaoCategoria('excluir', r403, 20),
+              outro403: mensagemErroRegistro({ erro: 403, detalhe: 'outra_coisa' }, 'gravar', 'gasto'),
+            }));
+        """)
+        for chave in ('recGasto', 'recReceita', 'recApagar', 'catCriar', 'catExcluir'):
+            self.assertEqual(obtido[chave], {'acao': 'erro', 'mensagem': ''}, chave)
+        self.assertEqual(obtido['outro403'], '')
+
+    def test_403_assinatura_ausente_abre_a_tela_assinaturas(self):
+        rotas = rotas_da_home(BLOCO_TESTE, {'POST /gastos': {'status': 403, 'body': {'detail': 'assinatura_ausente'}},
+                                            'GET /assinatura': {'status': 200, 'body': BLOCO_SEM_PLANO}})
+        obtido = rodar_pagina({'rotas': rotas}, """
+            await __ocioso();
+            await enviarJson('/gastos', { chave: 'x' });
+            await __ocioso();
+            console.log(JSON.stringify({ assinaturas: __visivel('assinaturas'), tela: __visivel('tela'), aviso: __visivel('aviso-topo'),
+              leitura: assEstado.leitura, teste: __visivel('ass-teste-botao'), chamadas: __chamadas().slice(4) }));
+        """)
+        self.assertTrue(obtido['assinaturas'])
+        self.assertFalse(obtido['tela'])
+        self.assertFalse(obtido['aviso'])
+        self.assertFalse(obtido['leitura'])
+        self.assertTrue(obtido['teste'])
+        self.assertEqual(obtido['chamadas'], ['POST /gastos', 'GET /assinatura'])
+
+    def test_403_de_outro_motivo_nao_liga_o_modo_leitura(self):
+        rotas = rotas_da_home(BLOCO_TESTE, {'POST /gastos': {'status': 403, 'body': {'detail': 'proibido'}}})
+        obtido = rodar_pagina({'rotas': rotas}, """
+            await __ocioso();
+            await enviarJson('/gastos', {});
+            await __ocioso();
+            console.log(JSON.stringify({ aviso: __visivel('aviso-topo'), leitura: assEstado.leitura, chamadas: __chamadas().slice(4) }));
+        """)
+        self.assertFalse(obtido['aviso'])
+        self.assertFalse(obtido['leitura'])
+        self.assertEqual(obtido['chamadas'], ['POST /gastos'])
+
+    def test_pagou_o_json_novo_sem_modo_leitura_desliga_na_hora(self):
+        obtido = rodar_pagina({'rotas': rotas_da_home(BLOCO_TESTE_VENCIDO), 'local': {'hoje': True}}, """
+            await __ocioso();
+            const antes = { leitura: assEstado.leitura, pausado: __visivel('pausado-home'), dica: $('cat-dica').textContent };
+            aplicarAssinatura(%s);
+            console.log(JSON.stringify({ antes, leitura: assEstado.leitura, pausado: __visivel('pausado-home'), pausadoRec: __visivel('rec-pausado'),
+              selo: $('selo-texto').textContent, dica: $('cat-dica').textContent }));
+        """ % json.dumps(BLOCO_PRO))
+        self.assertTrue(obtido['antes']['leitura'])
+        self.assertTrue(obtido['antes']['pausado'])
+        self.assertFalse(obtido['leitura'])
+        self.assertFalse(obtido['pausado'])
+        self.assertFalse(obtido['pausadoRec'])
+        self.assertEqual(obtido['selo'], 'Pro')
+        self.assertEqual(obtido['dica'], 'Clique Nas Barras Para Visualizar e Editar as Categorias')
+
+    def test_selo_assinar_abre_a_folha_plano_com_a_linha_dos_termos(self):
+        obtido = rodar_pagina({'rotas': rotas_da_home(BLOCO_PRO_VENCIDO), 'local': {'hoje': True}}, """
+            await __ocioso();
+            $('selo').click();
+            console.log(JSON.stringify({ plano: __visivel('folha-plano'), minha: __visivel('folha-minha'), stars: $('plano-preco-stars').textContent,
+              reais: $('plano-preco-reais').textContent, ia: $('plano-ia-texto').textContent, iaVisivel: __visivel('plano-item-ia'),
+              chamadas: __chamadas().length }));
+        """)
+        self.assertTrue(obtido['plano'])
+        self.assertFalse(obtido['minha'])
+        self.assertEqual(obtido['stars'], '150 Stars')
+        self.assertEqual(obtido['reais'], '≈ R$ 19 (varia conforme a loja)')
+        self.assertEqual(obtido['ia'], 'Até 17 Registros Por IA Por Dia')
+        self.assertEqual(obtido['chamadas'], 4)
+
+    def test_termos_de_uso_mostram_o_texto_do_get_termos(self):
+        rotas = rotas_da_home(BLOCO_PRO_VENCIDO, {'GET /termos': [{'status': 500, 'body': {'detail': 'erro_interno'}},
+                                                                  {'status': 200, 'body': {'texto': 'Termos linha 1\nlinha 2'}}]})
+        obtido = rodar_pagina({'rotas': rotas, 'local': {'hoje': True}}, """
+            await __ocioso();
+            $('selo').click(); $('plano-termos').click();
+            await __ocioso();
+            const erro = { termos: __visivel('folha-termos'), texto: __visivel('termos-texto'), estado: $('termos-estado-texto').textContent,
+                           tentar: __visivel('termos-tentar') };
+            $('termos-tentar').click();
+            await __ocioso();
+            const ok = { texto: __visivel('termos-texto'), conteudo: $('termos-texto').textContent, estado: __visivel('termos-estado') };
+            __voltar();                                          // fecha só os Termos; a folha Plano Pro continua
+            console.log(JSON.stringify({ erro, ok, termos: __visivel('folha-termos'), plano: __visivel('folha-plano'),
+              gets: __chamadas().filter((c) => c === 'GET /termos').length }));
+        """)
+        self.assertTrue(obtido['erro']['termos'])
+        self.assertFalse(obtido['erro']['texto'])
+        self.assertEqual(obtido['erro']['estado'], 'Não foi possível carregar os termos. Tente de novo.')
+        self.assertTrue(obtido['erro']['tentar'])
+        self.assertTrue(obtido['ok']['texto'])
+        self.assertEqual(obtido['ok']['conteudo'], 'Termos linha 1\nlinha 2')
+        self.assertFalse(obtido['ok']['estado'])
+        self.assertFalse(obtido['termos'])
+        self.assertTrue(obtido['plano'])
+        self.assertEqual(obtido['gets'], 2)
+
+    # ---------------------------- cadastro ----------------------------
+    def rotas_do_cadastro(self, assinatura, extras=None):
+        rotas = {'GET /me': {'status': 404, 'body': {'detail': 'usuario_nao_cadastrado'}},
+                 'GET /resumo': {'status': 404, 'body': {'detail': 'usuario_nao_cadastrado'}},
+                 'GET /historico': {'status': 404, 'body': {'detail': 'usuario_nao_cadastrado'}},
+                 'GET /movimentacoes/recentes': {'status': 404, 'body': {'detail': 'usuario_nao_cadastrado'}},
+                 'GET /assinatura': {'status': 200, 'body': assinatura}}
+        rotas.update(extras or {})
+        return rotas
+
+    def test_cadastro_chave_desligada_vai_direto_ao_passo_3(self):
+        obtido = rodar_pagina({'rotas': self.rotas_do_cadastro(bloco_assinatura(ligada=False))}, """
+            await __ocioso();
+            const escolha = { visivel: __visivel('boas-vindas'), desabilitado: $('escolha-novo').disabled, fechado: __visivel('escolha-fechado'),
+                              sub: $('escolha-novo-sub').textContent };
+            $('escolha-novo').click();
+            cadastroEstado.nome = 'Ygor'; cadastroEstado.dia = 5; cadastroEstado.passo = 2; atualizarCadastro();
+            const antes = __chamadas().length;
+            continuarCadastro();
+            await __ocioso();
+            console.log(JSON.stringify({ escolha, passo: cadastroEstado.passo, cadastro: __visivel('cadastro'), assinaturas: __visivel('assinaturas'),
+              novas: __chamadas().length - antes, chamadas: __chamadas().slice(4) }));
+        """)
+        self.assertTrue(obtido['escolha']['visivel'])
+        self.assertFalse(obtido['escolha']['desabilitado'])
+        self.assertFalse(obtido['escolha']['fechado'])
+        self.assertEqual(obtido['escolha']['sub'], 'Configure tudo em 1 minuto')
+        self.assertEqual(obtido['passo'], 3)                     # como sempre foi: direto para as categorias
+        self.assertTrue(obtido['cadastro'])
+        self.assertFalse(obtido['assinaturas'])
+        self.assertEqual(obtido['novas'], 0)
+        self.assertEqual(obtido['chamadas'], ['GET /assinatura'])    # só a do cadastro (antes do passo 2), nenhuma na abertura da home
+
+    def test_cadastro_passa_pelas_assinaturas_e_o_teste_segue_para_as_categorias(self):
+        rotas = self.rotas_do_cadastro(BLOCO_SEM_PLANO, {
+            'POST /assinaturas/teste': {'status': 201, 'body': {'inicio': '2026-11-12', 'fim': '2026-11-22', 'repetido': False}}})
+        obtido = rodar_pagina({'rotas': rotas}, """
+            await __ocioso();
+            $('escolha-novo').click();
+            cadastroEstado.nome = 'Ygor'; cadastroEstado.dia = 5; cadastroEstado.passo = 2; atualizarCadastro();
+            continuarCadastro();
+            await __ocioso();
+            const tela = { assinaturas: __visivel('assinaturas'), cadastro: __visivel('cadastro'), conteudo: __visivel('ass-conteudo'),
+              datas: $('ass-atual-caixa').children.filter((c) => c.className === 'ass-linha').map((l) => l.children.map((x) => x.textContent)),
+              back: __log.ligacoes[__log.ligacoes.length - 1] };
+            __voltar();                                           // a seta volta ao passo 2
+            const volta = { cadastro: __visivel('cadastro'), assinaturas: __visivel('assinaturas'), passo: cadastroEstado.passo };
+            continuarCadastro();
+            await __ocioso();
+            $('ass-teste-botao').click();
+            const durante = { logo: __visivel('tela-logo'), titulo: $('tela-logo-titulo').textContent };
+            await __ocioso();
+            const feito = { resultado: __visivel('assinatura-resultado'), titulo: $('res-titulo').textContent, texto: $('res-texto').textContent,
+              logo: __visivel('tela-logo'), back: __log.ligacoes[__log.ligacoes.length - 1] };
+            $('res-continuar').click();
+            console.log(JSON.stringify({ tela, volta, durante, feito, passo: cadastroEstado.passo, cadastro: __visivel('cadastro'),
+              posts: __log.fetch.filter((c) => c.metodo === 'POST').map((c) => c.rota) }));
+        """)
+        self.assertTrue(obtido['tela']['assinaturas'])
+        self.assertFalse(obtido['tela']['cadastro'])
+        self.assertTrue(obtido['tela']['conteudo'])
+        self.assertEqual(obtido['tela']['datas'], [['Início do Teste:', '12/11/2026'], ['Fim do Teste:', '22/11/2026']])
+        self.assertEqual(obtido['volta'], {'cadastro': True, 'assinaturas': False, 'passo': 2})
+        self.assertTrue(obtido['durante']['logo'])
+        self.assertEqual(obtido['feito']['titulo'], 'Seu Teste Começou!')
+        self.assertEqual(obtido['feito']['texto'], 'Vale Até 22/11/2026')
+        self.assertTrue(obtido['feito']['resultado'])
+        self.assertFalse(obtido['feito']['logo'])
+        self.assertEqual(obtido['feito']['back'], 'hide')
+        self.assertEqual(obtido['passo'], 3)
+        self.assertTrue(obtido['cadastro'])
+        self.assertEqual(obtido['posts'], ['/assinaturas/teste'])
+
+    def test_erro_no_teste_e_vagas_esgotadas(self):
+        casos = [
+            ('banco_ocupado', {'status': 503, 'body': {'detail': 'banco_ocupado'}}, 'erro'),
+            ('sem resposta', {'status': 599, 'body': {}}, 'erro'),
+            ('vagas', {'status': 409, 'body': {'detail': 'vagas_teste_esgotadas'}}, 'esgotado'),
+        ]
+        for nome, resposta, esperado in casos:
+            with self.subTest(caso=nome):
+                rotas = self.rotas_do_cadastro(BLOCO_SEM_PLANO, {'POST /assinaturas/teste': resposta})
+                obtido = rodar_pagina({'rotas': rotas}, """
+                    await __ocioso();
+                    $('escolha-novo').click();
+                    cadastroEstado.nome = 'Ygor'; cadastroEstado.dia = 5; cadastroEstado.passo = 2; atualizarCadastro();
+                    continuarCadastro();
+                    await __ocioso();
+                    $('ass-teste-botao').click();
+                    await __ocioso();
+                    console.log(JSON.stringify({ erro: __visivel('ass-teste-erro'), textoErro: $('ass-teste-erro').querySelector('span').textContent,
+                      vagas: __visivel('ass-vagas'), caixa: __visivel('ass-atual-caixa'), botaoDesabilitado: $('ass-teste-botao').disabled,
+                      resultado: __visivel('assinatura-resultado'), logo: __visivel('tela-logo'), assinaturas: __visivel('assinaturas') }));
+                """)
+                self.assertTrue(obtido['assinaturas'])
+                self.assertFalse(obtido['resultado'])
+                self.assertFalse(obtido['logo'])
+                if esperado == 'erro':
+                    self.assertTrue(obtido['erro'])
+                    self.assertFalse(obtido['vagas'])
+                    self.assertTrue(obtido['caixa'])             # a caixa das datas continua
+                    self.assertFalse(obtido['botaoDesabilitado'])  # tenta de novo
+                else:
+                    self.assertFalse(obtido['erro'])
+                    self.assertTrue(obtido['vagas'])
+                    self.assertFalse(obtido['caixa'])            # a caixa de aviso no lugar das datas
+                    self.assertTrue(obtido['botaoDesabilitado'])  # apagado e sem toque
+
+    def test_erro_no_teste_tenta_de_novo_no_segundo_toque(self):
+        rotas = self.rotas_do_cadastro(BLOCO_SEM_PLANO, {'POST /assinaturas/teste': [
+            {'status': 503, 'body': {'detail': 'banco_ocupado'}},
+            {'status': 201, 'body': {'inicio': '2026-11-12', 'fim': '2026-11-22', 'repetido': False}}]})
+        obtido = rodar_pagina({'rotas': rotas}, """
+            await __ocioso();
+            $('escolha-novo').click();
+            cadastroEstado.nome = 'Ygor'; cadastroEstado.dia = 5; cadastroEstado.passo = 2; atualizarCadastro();
+            continuarCadastro(); await __ocioso();
+            $('ass-teste-botao').click(); await __ocioso();
+            const erro = __visivel('ass-teste-erro');
+            $('ass-teste-botao').click(); await __ocioso();
+            console.log(JSON.stringify({ erro, resultado: __visivel('assinatura-resultado'), titulo: $('res-titulo').textContent }));
+        """)
+        self.assertTrue(obtido['erro'])
+        self.assertTrue(obtido['resultado'])
+        self.assertEqual(obtido['titulo'], 'Seu Teste Começou!')
+
+    def test_cadastros_fechados_apagam_o_sou_novo_por_aqui(self):
+        obtido = rodar_pagina({'rotas': self.rotas_do_cadastro(bloco_assinatura(estado='sem_plano', selo=None, cadastro_aberto=False))}, """
+            await __ocioso();
+            $('escolha-novo').click();                            // o toque não faz nada
+            console.log(JSON.stringify({ desabilitado: $('escolha-novo').disabled, sub: $('escolha-novo-sub').textContent,
+              caixa: __visivel('escolha-fechado'), amigo: $('escolha-amigo').disabled, boasVindas: __visivel('boas-vindas'),
+              cadastro: __visivel('cadastro') }));
+        """)
+        self.assertTrue(obtido['desabilitado'])
+        self.assertEqual(obtido['sub'], 'Cadastros fechados')
+        self.assertTrue(obtido['caixa'])
+        self.assertFalse(obtido['amigo'])                         # "Já Sou Amigo do Adm" continua normal
+        self.assertTrue(obtido['boasVindas'])
+        self.assertFalse(obtido['cadastro'])
+
+    def test_assinaturas_sem_rede_mostra_o_erro_com_tentar_de_novo(self):
+        rotas = self.rotas_do_cadastro(BLOCO_SEM_PLANO, {'GET /assinatura': [
+            {'status': 200, 'body': BLOCO_SEM_PLANO}, {'status': 599, 'body': {}}, {'status': 200, 'body': BLOCO_SEM_PLANO}]})
+        obtido = rodar_pagina({'rotas': rotas}, """
+            await __ocioso();
+            $('escolha-novo').click();
+            cadastroEstado.nome = 'Ygor'; cadastroEstado.dia = 5; cadastroEstado.passo = 2; atualizarCadastro();
+            continuarCadastro(); await __ocioso();
+            const erro = { erro: __visivel('ass-erro'), conteudo: __visivel('ass-conteudo'), titulo: $('ass-erro-titulo').textContent,
+                           texto: $('ass-erro-texto').textContent, seta: __visivel('ass-voltar') };
+            $('ass-erro-tentar').click(); await __ocioso();
+            console.log(JSON.stringify({ erro, conteudo: __visivel('ass-conteudo'), erroDepois: __visivel('ass-erro'), seta: __visivel('ass-voltar') }));
+        """)
+        self.assertTrue(obtido['erro']['erro'])
+        self.assertFalse(obtido['erro']['conteudo'])
+        self.assertEqual(obtido['erro']['titulo'], 'Não Conseguimos Verificar Sua Assinatura')
+        self.assertEqual(obtido['erro']['texto'], 'Confira a sua conexão e tente de novo.')
+        self.assertFalse(obtido['erro']['seta'])
+        self.assertTrue(obtido['conteudo'])
+        self.assertFalse(obtido['erroDepois'])
+        self.assertTrue(obtido['seta'])
+
+    # ---------------------------- pagamento ----------------------------
+    def rotas_de_pagamento(self, bloco_inicial, sequencia, fatura=None):
+        return rotas_da_home(bloco_inicial, {
+            'POST /assinaturas/fatura': fatura or {'status': 200, 'body': {'link': 'https://t.me/$abc', 'stars': 150}},
+            'GET /assinatura': sequencia,
+        })
+
+    def test_pagamento_a_partir_da_pro_venceu_confirma_e_mostra_o_obrigado_renovacao(self):
+        sequencia = [{'status': 200, 'body': BLOCO_PRO_VENCIDO}, {'status': 200, 'body': BLOCO_PRO_VENCIDO},
+                     {'status': 200, 'body': BLOCO_PRO}]
+        obtido = rodar_pagina({'rotas': self.rotas_de_pagamento(BLOCO_PRO_VENCIDO, sequencia)}, """
+            await __ocioso();
+            $('exp-botao').click();
+            const folha = __visivel('folha-plano');
+            $('plano-pagar').click();
+            await __ocioso();
+            const aberta = { faturas: __log.faturas.slice(), pagando: $('plano-pagar').disabled };
+            __ultimaFatura.cb('paid');
+            const conf = { confirmando: __visivel('assinatura-confirmando'), folha: __visivel('folha-plano'), texto: $('conf-texto').textContent };
+            await __ocioso();
+            const gets = __chamadas().filter((c) => c === 'GET /assinatura').length;
+            const fim = { resultado: __visivel('assinatura-resultado'), titulo: $('res-titulo').textContent, texto: $('res-texto').textContent,
+                          leitura: assEstado.leitura, selo: $('selo-texto').textContent };
+            __rotas['GET /me'] = { status: 200, body: { user_id: 1, nome: 'Ygor Lima', assinatura: %s } };   // o servidor já sabe do Pro
+            $('res-continuar').click();
+            await __ocioso();
+            console.log(JSON.stringify({ folha, aberta, conf, gets, fim, tela: __visivel('tela'), resultadoDepois: __visivel('assinatura-resultado'),
+              pausado: __visivel('pausado-home'), abertura: __chamadas().filter((c) => c === 'GET /me').length }));
+        """ % json.dumps(BLOCO_PRO))
+        self.assertTrue(obtido['folha'])
+        self.assertEqual(obtido['aberta']['faturas'], ['https://t.me/$abc'])
+        self.assertTrue(obtido['aberta']['pagando'])
+        self.assertTrue(obtido['conf']['confirmando'])
+        self.assertFalse(obtido['conf']['folha'])
+        self.assertEqual(obtido['conf']['texto'], 'Isso Leva Só Alguns Segundos.')
+        self.assertEqual(obtido['gets'], 3)                       # consultou até o Pro chegar
+        self.assertTrue(obtido['fim']['resultado'])
+        self.assertEqual(obtido['fim']['titulo'], 'Assinatura Renovada!')
+        self.assertEqual(obtido['fim']['texto'], 'Obrigado Por Continuar Com a Gente, Ygor Lima. Agradecemos a Sua Confiança no L1d3r. '
+                                                'Seu Plano Pro Renova em 12/12/2026 Usando as Stars Que Estão na Sua Conta.')
+        self.assertFalse(obtido['fim']['leitura'])                # pagou: o modo leitura desliga na hora
+        self.assertEqual(obtido['fim']['selo'], 'Pro')
+        self.assertTrue(obtido['tela'])                           # "Continuar" leva à home (recarregada)
+        self.assertFalse(obtido['resultadoDepois'])
+        self.assertFalse(obtido['pausado'])
+        self.assertEqual(obtido['abertura'], 2)
+
+    def test_obrigado_nova_para_quem_assina_durante_o_teste(self):
+        sequencia = [{'status': 200, 'body': BLOCO_PRO}]
+        obtido = rodar_pagina({'rotas': self.rotas_de_pagamento(BLOCO_TESTE, sequencia)}, """
+            await __ocioso();
+            $('selo').click(); $('min-principal').click();       // Grátis -> Assinar o Plano Pro
+            const folhas = { plano: __visivel('folha-plano'), minha: __visivel('folha-minha') };
+            $('plano-pagar').click(); await __ocioso();
+            __ultimaFatura.cb('pending');                        // "pending" também vai para o Confirmando
+            await __ocioso();
+            console.log(JSON.stringify({ folhas, titulo: $('res-titulo').textContent, texto: $('res-texto').textContent }));
+        """)
+        self.assertEqual(obtido['folhas'], {'plano': True, 'minha': False})
+        self.assertEqual(obtido['titulo'], 'Obrigado Pela Assinatura, Ygor Lima!')
+        self.assertEqual(obtido['texto'], 'Seu Plano Pro Está Ativo. Ele Renova em 12/12/2026 Usando as Stars Que Estão na Sua Conta.')
+
+    def test_pagamento_cancelado_volta_a_folha_e_recusado_mostra_a_linha_vermelha(self):
+        sequencia = [{'status': 200, 'body': BLOCO_PRO_VENCIDO}]
+        rotas = self.rotas_de_pagamento(BLOCO_PRO_VENCIDO, sequencia)
+        # cancelled: a folha continua aberta, nada mais acontece
+        obtido = rodar_pagina({'rotas': rotas}, """
+            await __ocioso();
+            $('exp-botao').click(); $('plano-pagar').click(); await __ocioso();
+            __ultimaFatura.cb('cancelled');
+            console.log(JSON.stringify({ folha: __visivel('folha-plano'), erro: __visivel('plano-erro'), erroExp: __visivel('exp-erro'),
+              confirmando: __visivel('assinatura-confirmando'), pagarAtivo: !$('plano-pagar').disabled, gets: __chamadas().filter((c) => c === 'GET /assinatura').length }));
+        """)
+        self.assertTrue(obtido['folha'])
+        self.assertFalse(obtido['erro'])
+        self.assertFalse(obtido['erroExp'])
+        self.assertFalse(obtido['confirmando'])
+        self.assertTrue(obtido['pagarAtivo'])
+        self.assertEqual(obtido['gets'], 0)
+        # failed estando na tela Expirada: a linha vermelha no cartão, acima do botão; a folha fecha
+        obtido = rodar_pagina({'rotas': rotas}, """
+            await __ocioso();
+            $('exp-botao').click(); $('plano-pagar').click(); await __ocioso();
+            __ultimaFatura.cb('failed');
+            console.log(JSON.stringify({ folha: __visivel('folha-plano'), erroExp: __visivel('exp-erro'), texto: $('exp-erro').querySelector('span').textContent,
+              expirada: __visivel('expirada'), botaoAtivo: !$('exp-botao').disabled }));
+        """)
+        self.assertFalse(obtido['folha'])
+        self.assertTrue(obtido['erroExp'])
+        self.assertEqual(obtido['texto'], 'Não Conseguimos Concluir o Pagamento. Tente de Novo.')
+        self.assertTrue(obtido['expirada'])
+        self.assertTrue(obtido['botaoAtivo'])
+        # failed fora da Expirada (selo "Assinar"): a linha vermelha dentro da folha Plano Pro
+        obtido = rodar_pagina({'rotas': rotas, 'local': {'hoje': True}}, """
+            await __ocioso();
+            $('selo').click(); $('plano-pagar').click(); await __ocioso();
+            __ultimaFatura.cb('failed');
+            console.log(JSON.stringify({ folha: __visivel('folha-plano'), erro: __visivel('plano-erro'), texto: $('plano-erro').querySelector('span').textContent,
+              erroExp: __visivel('exp-erro') }));
+        """)
+        self.assertTrue(obtido['folha'])
+        self.assertTrue(obtido['erro'])
+        self.assertEqual(obtido['texto'], 'Não Conseguimos Concluir o Pagamento. Tente de Novo.')
+        self.assertFalse(obtido['erroExp'])
+
+    def test_fatura_com_erro_do_servidor(self):
+        casos = [
+            ('assinaturas_desligadas', {'status': 409, 'body': {'detail': 'assinaturas_desligadas'}},
+             'As assinaturas ainda não estão abertas. Volte em breve.'),
+            ('telegram_indisponivel', {'status': 502, 'body': {'detail': 'telegram_indisponivel'}}, 'Não Conseguimos Abrir o Pagamento. Tente de Novo.'),
+            ('erro_interno', {'status': 500, 'body': {'detail': 'erro_interno'}}, 'Não Conseguimos Abrir o Pagamento. Tente de Novo.'),
+            ('sem resposta', {'status': 599, 'body': {}}, 'Não Conseguimos Abrir o Pagamento. Tente de Novo.'),
+        ]
+        for nome, fatura, texto in casos:
+            with self.subTest(erro=nome):
+                rotas = self.rotas_de_pagamento(BLOCO_PRO_VENCIDO, [{'status': 200, 'body': BLOCO_PRO_VENCIDO}], fatura)
+                obtido = rodar_pagina({'rotas': rotas, 'local': {'hoje': True}}, """
+                    await __ocioso();
+                    $('selo').click(); $('plano-pagar').click(); await __ocioso();
+                    console.log(JSON.stringify({ erro: __visivel('plano-erro'), texto: $('plano-erro').querySelector('span').textContent, faturas: __log.faturas.length,
+                      pagarAtivo: !$('plano-pagar').disabled, confirmando: __visivel('assinatura-confirmando') }));
+                """)
+                self.assertTrue(obtido['erro'])
+                self.assertEqual(obtido['texto'], texto)
+                self.assertEqual(obtido['faturas'], 0)           # openInvoice nem foi chamado
+                self.assertTrue(obtido['pagarAtivo'])
+                self.assertFalse(obtido['confirmando'])
+
+    def test_fora_do_telegram_o_pagamento_mostra_o_aviso_padrao_sem_chamar_a_api(self):
+        obtido = rodar_pagina({'rotas': self.rotas_de_pagamento(BLOCO_PRO_VENCIDO, [{'status': 200, 'body': BLOCO_PRO_VENCIDO}]),
+                               'local': {'hoje': True}}, """
+            await __ocioso();
+            delete tg.openInvoice;
+            $('selo').click(); $('plano-pagar').click(); await __ocioso();
+            console.log(JSON.stringify({ texto: $('plano-erro').querySelector('span').textContent, posts: __chamadas().filter((c) => c.startsWith('POST')).length }));
+        """)
+        self.assertEqual(obtido['texto'], 'Abra esta tela pelo botão do bot no Telegram.')
+        self.assertEqual(obtido['posts'], 0)
+
+    def test_confirmando_depois_de_30_segundos_nunca_libera_sozinho_e_o_toque_confere_de_novo(self):
+        rotas = self.rotas_de_pagamento(BLOCO_PRO_VENCIDO, [{'status': 200, 'body': BLOCO_PRO_VENCIDO}])
+        obtido = rodar_pagina({'rotas': rotas, 'local': {'hoje': True}}, """
+            await __ocioso();
+            $('selo').click(); $('plano-pagar').click(); await __ocioso();
+            __ultimaFatura.cb('paid');
+            await __ocioso();
+            const gets1 = __chamadas().filter((c) => c === 'GET /assinatura').length;
+            const demorou = { confirmando: __visivel('assinatura-confirmando'), resultado: __visivel('assinatura-resultado'),
+              texto: $('conf-texto').textContent, tocavel: $('conf-area').classList.contains('tocavel'), virtual: __virtual };
+            __rotas['GET /assinatura'] = [{ status: 200, body: %s }];     // agora o pagamento chegou
+            $('conf-area').click();
+            await __ocioso();
+            console.log(JSON.stringify({ gets1, demorou, resultado: __visivel('assinatura-resultado'), titulo: $('res-titulo').textContent }));
+        """ % json.dumps(BLOCO_PRO))
+        self.assertEqual(obtido['gets1'], 16)                     # a cada 2 s, por 30 s (0, 2, ..., 30)
+        self.assertTrue(obtido['demorou']['confirmando'])
+        self.assertFalse(obtido['demorou']['resultado'])
+        self.assertEqual(obtido['demorou']['texto'], 'O pagamento foi feito, mas ainda não chegou. Toque para conferir de novo.')
+        self.assertTrue(obtido['demorou']['tocavel'])
+        self.assertTrue(obtido['resultado'])
+        self.assertEqual(obtido['titulo'], 'Assinatura Renovada!')     # a tela de onde veio era a Pro Venceu
+
+    def test_back_na_tela_confirmando_e_no_resultado_nao_faz_nada(self):
+        rotas = self.rotas_de_pagamento(BLOCO_PRO_VENCIDO, [{'status': 200, 'body': BLOCO_PRO_VENCIDO}])
+        obtido = rodar_pagina({'rotas': rotas, 'local': {'hoje': True}}, """
+            await __ocioso();
+            $('selo').click(); $('plano-pagar').click(); await __ocioso();
+            __ultimaFatura.cb('paid'); await __ocioso();
+            __voltar();
+            console.log(JSON.stringify({ confirmando: __visivel('assinatura-confirmando'), tela: __visivel('tela'), back: __log.ligacoes[__log.ligacoes.length - 1] }));
+        """)
+        self.assertTrue(obtido['confirmando'])
+        self.assertFalse(obtido['tela'])
+        self.assertEqual(obtido['back'], 'hide')
+
+    def test_cancelar_e_assinar_pela_propria_tela_assinaturas(self):
+        # Aberta pelo link: o botão do cartão de preço é o mesmo da folha (Cancelar Renovação, com o showConfirm antes).
+        rotas = rotas_da_home(BLOCO_PRO, {'POST /assinaturas/renovacao': {'status': 200, 'body': BLOCO_CANCELADO}})
+        obtido = rodar_pagina({'rotas': rotas, 'busca': '?tela=assinatura'}, """
+            await __ocioso();
+            $('ass-preco-botao').click();
+            const pedido = { confirms: __log.confirms.slice(), posts: __log.fetch.filter((c) => c.metodo === 'POST').length };
+            __ultimoConfirm.cb(true);
+            await __ocioso();
+            console.log(JSON.stringify({ pedido, posts: __log.fetch.filter((c) => c.metodo === 'POST').map((c) => c.corpo),
+              apoio: $('ass-apoio').textContent, botao: $('ass-preco-botao').textContent, claro: $('ass-preco-botao').classList.contains('claro'),
+              linhas: $('ass-atual-caixa').children.filter((c) => c.className === 'ass-linha').map((l) => l.children[1].textContent),
+              precoApoio: $('ass-preco-apoio').textContent, selo: $('selo-texto').textContent }));
+        """)
+        self.assertEqual(obtido['pedido'], {'confirms': ['Cancelar a renovação? Seu Plano Pro continua ativo até 12/12/2026.'], 'posts': 0})
+        self.assertEqual(obtido['posts'], [{'cancelar': True}])
+        self.assertEqual(obtido['apoio'], 'Você Cancelou a Renovação. Seu Plano Pro Continua Ativo Até o Fim do Período Pago.')
+        self.assertEqual((obtido['botao'], obtido['claro']), ('Reativar Renovação', False))
+        self.assertEqual(obtido['linhas'], ['12/12/2026', 'Cancelada'])
+        self.assertEqual(obtido['precoApoio'], 'Não Haverá Nova Cobrança. Reative Para Continuar Depois de 12/12/2026.')
+        self.assertEqual(obtido['selo'], 'Pro')
+        # No teste em andamento, "Assinar" abre a folha Plano Pro; o pagamento recusado dentro dela mostra a linha vermelha.
+        rotas = self.rotas_de_pagamento(BLOCO_TESTE, [{'status': 200, 'body': BLOCO_TESTE}])
+        obtido = rodar_pagina({'rotas': rotas, 'busca': '?tela=assinatura'}, """
+            await __ocioso();
+            $('ass-preco-botao').click();
+            const folha = __visivel('folha-plano');
+            $('plano-pagar').click(); await __ocioso();
+            __ultimaFatura.cb('failed');
+            const recusado = __visivel('plano-erro');
+            $('plano-voltar').click();
+            console.log(JSON.stringify({ folha, recusado, fechou: !__visivel('folha-plano'), assinaturas: __visivel('assinaturas') }));
+        """)
+        self.assertEqual(obtido, {'folha': True, 'recusado': True, 'fechou': True, 'assinaturas': True})
+
+
+class TestEstruturaDasAssinaturas(unittest.TestCase):
+    """Texto do index.html: blocos, textos e medidas dos quadros do Paper, ordem da abertura e regras da nota da PRO-108."""
+
+    # ---------------------------- blocos e textos ----------------------------
+    def test_blocos_das_assinaturas_existem_escondidos_e_em_tela_cheia(self):
+        for identificador in ('assinaturas', 'expirada', 'assinatura-resultado', 'assinatura-confirmando'):
+            with self.subTest(tela=identificador):
+                self.assertIn('<main id="%s" class="tela-cheia" hidden>' % identificador, HOME)
+        # Os 4 ficam depois da tela Categorias e antes do aviso do topo (que fica fora dos <main>).
+        self.assertLess(HOME.index('<main id="categorias"'), HOME.index('<main id="assinaturas"'))
+        self.assertLess(HOME.index('<main id="assinatura-confirmando"'), HOME.index('id="aviso-topo"'))
+        for identificador in ('folha-plano', 'folha-minha', 'folha-termos'):
+            with self.subTest(folha=identificador):
+                self.assertIn('<div class="folha-camada" id="%s" role="dialog" aria-modal="true"' % identificador, bloco_folha(identificador))
+                self.assertIn('data-fechar="%s"' % identificador, bloco_folha(identificador))
+        # Os Termos vêm por último: ficam por cima da Plano Pro e da Minha Assinatura (mesmo z-index).
+        self.assertLess(HOME.index('id="folha-plano"'), HOME.index('id="folha-termos"'))
+        self.assertLess(HOME.index('id="folha-minha"'), HOME.index('id="folha-termos"'))
+
+    def test_cabecalhos_com_e_sem_seta(self):
+        # Só a tela Assinaturas tem a seta (no cadastro volta ao passo 2); Expirada, Resultado e Confirmando não.
+        self.assertIn('id="ass-voltar"', bloco_main('assinaturas'))
+        for identificador in ('expirada', 'assinatura-resultado', 'assinatura-confirmando'):
+            with self.subTest(tela=identificador):
+                bloco = bloco_main(identificador)
+                self.assertIn('class="cabecalho cabecalho-registro cabecalho-sem-seta"', bloco)
+                self.assertNotIn('<button class="botao-menu"', bloco)
+                self.assertIn('<h1 class="titulo-tela">Assinaturas</h1>', bloco)
+        # O sem-seta tem a altura do cabeçalho com a seta (o botão tem 44px).
+        self.assertIn('min-height: 44px', regra_css('.cabecalho-sem-seta .cabecalho-linha'))
+
+    def test_textos_fixos_dos_quadros(self):
+        textos = {
+            'assinaturas': ('Plano Pro', 'por mês', 'Testar Gratuitamente', 'As Vagas de Teste de Hoje Acabaram.',
+                            'Volte amanhã para testar, ou assine o Plano Pro agora.', 'Tentar de novo', 'Carregando...'),
+            'expirada': ('Mais Tarde', 'Com Telegram Stars Você Paga com Segurança Pela App Store ou Play Store.',
+                         'Seus Dados Continuam Guardados. Em Mais Tarde, Você Ainda Pode Ver Tudo, Só Não Registra.', 'Assinar'),
+            'assinatura-resultado': ('Continuar',),
+            'assinatura-confirmando': ('Confirmando o Pagamento...', 'Isso Leva Só Alguns Segundos.'),
+        }
+        for identificador, lista in textos.items():
+            for texto in lista:
+                with self.subTest(tela=identificador, texto=texto):
+                    self.assertIn(texto, bloco_main(identificador))
+        plano = bloco_folha('folha-plano')
+        for texto in ('Plano Pro', 'Até 20 Categorias', 'Ao assinar, você concorda com os', 'Termos de Uso', 'Pagar com Stars', 'Voltar',
+                      'A Assinatura Renova a Cada 30 Dias Usando as Stars Que Estão na Sua Conta, e Você Pode Cancelar Quando Quiser.'):
+            with self.subTest(folha='plano', texto=texto):
+                self.assertIn(texto, plano)
+        minha = bloco_folha('folha-minha')
+        for texto in ('Minha Assinatura', 'Fechar', 'Termos de Uso'):
+            with self.subTest(folha='minha', texto=texto):
+                self.assertIn(texto, minha)
+        self.assertIn('Novos Cadastros Estão Fechados no Momento.', HOME)
+        self.assertIn('Volte em breve. Quem já tem conta entra normalmente.', HOME)
+        self.assertEqual(HOME.count('<span>Registros Pausados Até Você Assinar o Pro</span>'), 2)    # home e Recorrentes
+        # "Até 20 Categorias" é o limite do servidor; 30 dias, o período do Pro; 10 dias, o teste (só os textos).
+        self.assertEqual(categorias.LIMITE_CATEGORIAS, 20)
+        self.assertEqual(assinaturas.DIAS_PRO_PADRAO, 30)
+        self.assertEqual(assinaturas.DIAS_TESTE, 10)
+        self.assertIn('const DIAS_TESTE = 10;', codigo_puro(HOME))
+        # O nome do app nas telas é "L1d3r": o novo HTML nunca escreve "Fin4nce".
+        for identificador in ('assinaturas', 'expirada', 'assinatura-resultado', 'assinatura-confirmando'):
+            self.assertNotIn('Fin4nce', bloco_main(identificador))
+        for identificador in ('folha-plano', 'folha-minha', 'folha-termos'):
+            self.assertNotIn('Fin4nce', bloco_folha(identificador))
+
+    def test_nenhum_numero_de_preco_escrito_na_tela(self):
+        # O preço ("150 Stars" e "≈ R$ 19") e o limite ("17") vêm do servidor: nenhum desses números no HTML novo.
+        novo = ''.join(bloco_main(i) for i in ('assinaturas', 'expirada', 'assinatura-resultado', 'assinatura-confirmando'))
+        novo += ''.join(bloco_folha(i) for i in ('folha-plano', 'folha-minha', 'folha-termos'))
+        for proibido in ('150', '≈ R$', 'R$ 19', ' 17 ', 'Stars por mês'):
+            with self.subTest(proibido=proibido):
+                self.assertNotIn(proibido, novo)
+        puro = codigo_puro(HOME)
+        for funcao in ('function textosDaTelaAssinaturas', 'function textosDaFolha', 'function textosDaExpirada', 'function textoPrecoStars'):
+            corpo = corpo_da_funcao(puro, funcao)
+            self.assertNotIn('150', corpo)
+            self.assertNotIn('"17"', corpo)
+
+    def test_selo_so_tem_tres_textos_e_nenhum_free_teste_ou_admin(self):
+        puro = codigo_puro(HOME)
+        self.assertIn('const SELOS = { gratis: "Grátis", pro: "Pro", assinar: "Assinar" };', puro)
+        self.assertNotIn('Free', HOME)
+        self.assertNotIn('Admin', HOME)
+        # O texto do selo vem só do SELOS, pela função seloDaHome, que só lê o campo "selo".
+        selo = corpo_da_funcao(puro, 'function seloDaHome')
+        self.assertIn('b.selo', selo)
+        for proibido in ('b.estado', 'dias_restantes', 'inicio', 'fim', 'modo_leitura', 'valor_stars'):
+            self.assertNotIn(proibido, selo)
+        principal = codigo_principal(HOME)
+        desenho = corpo_da_funcao(principal, 'function desenharSelo')
+        self.assertIn('$("selo-texto").textContent = selo.texto;', desenho)
+        self.assertIn('$("selo-linha").hidden = !selo;', desenho)
+        self.assertEqual(principal.count('"selo-texto"'), 1)
+        # Só o selo tocável ganha a classe .tocavel; o estado pressionado (CSS) só existe com ela.
+        self.assertIn('(selo.tocavel ? " tocavel" : "")', desenho)
+        css = css_da_home()
+        pressionados = re.findall(r'(?m)^\s*(\.selo[^{]*:active[^{]*|\.selo[^{]*\.tocado[^{]*)\{', css)
+        self.assertTrue(pressionados)
+        for seletor in pressionados:
+            for parte in seletor.split(','):
+                with self.subTest(seletor=parte.strip()):
+                    self.assertIn('.tocavel', parte)
+        self.assertIn('0 0 0 3px var(--cor-selo-anel)', css)
+        raiz = HOME[HOME.index(':root {'):HOME.index('}', HOME.index(':root {'))]
+        for token in ('--cor-selo-tocado: #FFFFFF4D;', '--cor-selo-anel: #FFFFFF1F;', '--cor-borda-botao: #D9D9D9;'):
+            self.assertIn(token, raiz)
+
+    def test_toque_no_selo_so_com_selo_tocavel(self):
+        principal = codigo_principal(HOME)
+        toque = corpo_da_funcao(principal, 'function aoTocarNoSelo')
+        self.assertIn('acaoDoToqueNoSelo(assEstado.bloco)', toque)
+        self.assertLess(toque.index('if (acao === "nenhuma") return;'), toque.index('classList.add("tocado")'))
+        self.assertLess(toque.index('if (acao === "nenhuma") return;'), toque.index('abrirFolhaPlano("selo")'))
+        # Abrir a folha não chama a API nem mostra a tela da logo.
+        for proibido in ('chamar(', 'enviarJson(', 'enviarComMetodo(', 'mostrarTelaLogo('):
+            self.assertNotIn(proibido, toque)
+            self.assertNotIn(proibido, corpo_da_funcao(principal, 'function abrirMinhaAssinatura'))
+            self.assertNotIn(proibido, corpo_da_funcao(principal, 'function desenharMinhaAssinatura'))
+
+    # ---------------------------- abertura ----------------------------
+    def test_abertura_mantem_as_4_chamadas_e_decide_pelo_bloco_do_me(self):
+        principal = codigo_principal(HOME)
+        corpo = corpo_da_funcao(principal, 'async function carregar')
+        self.assertEqual(corpo.count('chamar('), 4)
+        self.assertIn('chamar("/me"), chamar("/resumo"), chamar("/historico"), chamar("/movimentacoes/recentes")', corpo)
+        for proibido in ('ROTA_ASSINATURA', '"/assinatura"', 'enviarJson', 'recarregarAssinatura', 'buscarAssinaturas'):
+            self.assertNotIn(proibido, corpo)
+        # O bloco vem do /me (resultados[0].dados.assinatura / me.assinatura) e passa por duas funções.
+        self.assertIn('decidirAberturaPelaAssinatura(resultados[0].dados.assinatura)', corpo)
+        self.assertIn('aplicarAssinatura(me.assinatura)', corpo)
+        # A decisão é a função pura, e a tela da logo só sai depois dela (o armazenamento é lido com a logo na tela).
+        self.assertLess(corpo.index('decidirAberturaPelaAssinatura('), corpo.index('esconderTelaLogo();'))
+        self.assertLess(corpo.index('aplicarAssinatura(me.assinatura)'), corpo.index('abrirExpiradaNaAbertura()'))
+        decide = corpo_da_funcao(principal, 'async function decidirAberturaPelaAssinatura')
+        self.assertIn('destinoDaAbertura(bloco, { link: link, vistaHoje: vistaHoje })', decide)
+        # Só lê o armazenamento quando precisa: modo leitura sem link.
+        self.assertIn('if (modoLeituraDoBloco(bloco) && !link) vistaHoje = await expiradaVistaHoje(', decide)
+        self.assertIn('window.location.search', decide)
+        self.assertIn('startParamDoTelegram()', decide)
+        # Só a abertura decide por telas novas: as outras cargas (Registrar, tour...) só aplicam o bloco.
+        self.assertIn('if (abertura && destino === "home")', corpo)
+        # A chamada do GET /assinatura não aparece na home, só nas telas de assinatura e no cadastro.
+        usos = [m.start() for m in re.finditer(r'chamar\(ROTA_ASSINATURA\)', principal)]
+        self.assertGreaterEqual(len(usos), 3)
+
+    def test_nenhuma_data_de_plano_e_calculada_no_cliente(self):
+        principal = codigo_principal(HOME)
+        puro = codigo_puro(HOME)
+        # new Date só no relógio de Brasília de sempre e na marca "vista hoje"; Date.now só na marca; nenhum Date.parse/getTime em plano.
+        permitido = {'function agoraEmBrasilia', 'function diaDeBrasilia'}
+        sem_comentarios = lambda texto: re.sub(r'//[^\n]*', '', texto)
+        for nome, codigo in (('principal', sem_comentarios(principal)), ('puro', sem_comentarios(puro))):
+            for m in re.finditer(r'new Date\(', codigo):
+                inicio = max(codigo.rfind('\n    function ', 0, m.start()), codigo.rfind('\n    async function ', 0, m.start()))
+                cabeca = codigo[inicio:codigo.index('(', inicio + 5)].strip().split('\n')[-1]
+                self.assertIn(cabeca, permitido, nome)
+        self.assertNotIn('Date.parse', HOME)
+        self.assertNotIn('getTime', HOME)
+        for funcao in ('function formatarDataPlano', 'function textosDaFolha', 'function textosDaTelaAssinaturas', 'function textosDaExpirada',
+                       'function textoConfirmarCancelamento', 'function textosDoTesteAtivado', 'function textosDoObrigado'):
+            self.assertNotIn('Date', corpo_da_funcao(puro, funcao), funcao)
+        # dd/mm/aaaa só por texto: o formatador usa a expressão regular, nenhum split de data com Date.
+        self.assertIn(r'/^(\d{4})-(\d{2})-(\d{2})$/', corpo_da_funcao(puro, 'function formatarDataPlano'))
+
+    def test_decisao_da_abertura_usa_a_ordem_da_nota(self):
+        puro = codigo_puro(HOME)
+        corpo = corpo_da_funcao(puro, 'function destinoDaAbertura')
+        ordem = ['if (!b) return "home";', 'if (b.modo_leitura === true)', 'if (b.estado === "sem_plano") return "assinaturas";',
+                 'if (ctx.link) return "assinaturas";', 'return "home";']
+        posicoes = [corpo.index(trecho) for trecho in ordem[:-1]] + [corpo.rindex(ordem[-1])]
+        self.assertEqual(posicoes, sorted(posicoes))
+
+    # ---------------------------- modo somente leitura ----------------------------
+    def test_bloqueios_do_modo_leitura_sao_a_primeira_coisa_das_funcoes(self):
+        principal = codigo_principal(HOME)
+        for funcao in ('function abrirOpcoes', 'function abrirEscolha(origem)', 'function abrirSalarioRecorrente', 'function abrirFormEditar',
+                       'function abrirFolhaNova', 'function abrirFolhaEditar'):
+            with self.subTest(funcao=funcao):
+                corpo = corpo_da_funcao(principal, funcao)
+                resto = corpo[corpo.index('{') + 1:].lstrip()
+                self.assertTrue(resto.startswith('if (bloquearNoModoLeitura()) return;'), funcao)
+        # O guarda não chama a API: só o aviso do cadeado.
+        guarda = corpo_da_funcao(principal, 'function bloquearNoModoLeitura')
+        self.assertIn('mostrarAvisoTopo(avisoDoModoLeitura(), "cadeado");', guarda)
+        for proibido in ('chamar(', 'enviarJson(', 'enviarComMetodo(', 'fetch('):
+            self.assertNotIn(proibido, guarda)
+        # Os toques ligados a elas: Registrar, Adicionar Recorrente, item de recorrente, Nova Categoria e barra.
+        self.assertIn('$("atalho-registrar").addEventListener("click", abrirOpcoes);', principal)
+        self.assertIn('$("rec-adicionar").addEventListener("click", () => abrirEscolha("lista"));', principal)
+        self.assertIn('if (r) abrirFormEditar(r);', principal)
+        self.assertIn('$("cat-nova").addEventListener("click", abrirFolhaNova);', principal)
+        self.assertIn('if (c) abrirFolhaEditar(c);', principal)
+
+    def test_modo_leitura_so_liga_com_o_servidor_ou_com_um_403(self):
+        principal = codigo_principal(HOME)
+        atribuicoes = re.findall(r'assEstado\.leitura\s*=[^=]', principal)
+        self.assertEqual(len(atribuicoes), 1)     # só o aplicarAssinatura mexe nele
+        aplicar = corpo_da_funcao(principal, 'function aplicarAssinatura')
+        self.assertIn('assEstado.leitura = !!forcarLeitura || modoLeituraDoBloco(bloco);', aplicar)
+        liga = corpo_da_funcao(principal, 'function ligarModoLeitura')
+        self.assertIn(', true);', liga)           # forcarLeitura: só a partir do 403
+        self.assertEqual(len(re.findall(r'ligarModoLeitura\(\)', principal)), 2)    # a definição e o aoAcessoRecusado
+        recusado = corpo_da_funcao(principal, 'function aoAcessoRecusado')
+        self.assertIn('acaoDoAcessoRecusado(status, detalhe)', recusado)
+        self.assertIn('abrirAssinaturasPorFalta();', recusado)
+
+    def test_tratamento_central_do_403_fica_nas_duas_funcoes_que_chamam_a_api(self):
+        principal = codigo_principal(HOME)
+        for funcao in ('async function chamar(', 'async function enviarComMetodo'):
+            with self.subTest(funcao=funcao):
+                corpo = corpo_da_funcao(principal, funcao)
+                self.assertIn('aoAcessoRecusado(resposta.status, detalhe);', corpo)
+        self.assertEqual(principal.count('fetch('), 2)    # todo o tráfego passa por elas
+        self.assertEqual(principal.count('aoAcessoRecusado('), 3)   # as duas chamadas e a definição
+        # 403 nunca vira mensagem genérica nos pontos de erro.
+        puro = codigo_puro(HOME)
+        self.assertIn('if (status === 403) return "";', corpo_da_funcao(puro, 'function mensagemErroRegistro'))
+        self.assertIn('if (resultado.erro === 403) return { acao: "erro", mensagem: "" };', corpo_da_funcao(puro, 'function decisaoDaGravacaoRecorrente'))
+        self.assertIn('if (resultado.erro === 403) return { acao: "erro", mensagem: "" };', corpo_da_funcao(puro, 'function decisaoDaGravacaoCategoria'))
+        self.assertIn('hidden = !decisao.mensagem', corpo_da_funcao(principal, 'async function apagarRecorrente'))
+
+    def test_aviso_do_modo_leitura_e_o_mesmo_aviso_de_10_segundos_com_cadeado(self):
+        principal = codigo_principal(HOME)
+        aviso = corpo_da_funcao(principal, 'function mostrarAvisoTopo')
+        self.assertIn('function mostrarAvisoTopo(aviso, icone)', aviso)
+        self.assertIn('}, 10000)', aviso)
+        self.assertIn('$("aviso-topo-cadeado").hidden = icone !== "cadeado";', aviso)
+        self.assertIn('id="aviso-topo-cadeado"', HOME)
+        self.assertIn('id="aviso-topo-check"', HOME)
+        self.assertIn('<rect x="4.5" y="9" width="11" height="8" rx="2"/><path d="M7 9V6.5a3 3 0 0 1 6 0V9"/>', HOME)
+
+    def test_linha_de_pausado_na_home_e_em_recorrentes(self):
+        home = HOME[HOME.index('<main id="tela">'):HOME.index('<main id="detalhe"')]
+        # Entre o topo (</header>) e os atalhos.
+        self.assertLess(home.index('</header>'), home.index('id="pausado-home"'))
+        self.assertLess(home.index('id="pausado-home"'), home.index('<nav class="atalhos"'))
+        lista = bloco_main('recorrentes-lista')
+        self.assertLess(lista.index('id="rec-pausado"'), lista.index('id="rec-adicionar"'))     # acima de "Adicionar Recorrente"
+        self.assertIn('id="rec-pausado" hidden', lista)
+        self.assertIn('id="pausado-home" hidden', home)
+        # Só o modo leitura as mostra.
+        aplicar = corpo_da_funcao(codigo_principal(HOME), 'function aplicarAssinatura')
+        self.assertIn('$("pausado-home").hidden = !assEstado.leitura;', aplicar)
+        self.assertIn('$("rec-pausado").hidden = !assEstado.leitura;', aplicar)
+        self.assertIn('$("cat-dica").textContent = textoDicaCategorias(assEstado.leitura);', aplicar)
+        # Categorias não tem a linha de pausado.
+        self.assertNotIn('pausado', bloco_main('categorias'))
+
+    # ---------------------------- navegação ----------------------------
+    def test_voltar_das_assinaturas(self):
+        principal = codigo_principal(HOME)
+        voltar = corpo_da_funcao(principal, 'function voltarUmNivel')
+        ordem = ['if (!$("tela-logo").hidden) return;', 'folhaAberta()', 'if (!$("assinatura-confirmando").hidden || !$("assinatura-resultado").hidden) return;',
+                 'if (!$("expirada").hidden)', 'maisTarde();', 'if (!$("assinaturas").hidden)', 'voltarDasAssinaturas();', 'if (!$("categorias").hidden)']
+        posicoes = [voltar.index(trecho) for trecho in ordem]
+        self.assertEqual(posicoes, sorted(posicoes))
+        self.assertIn('FOLHAS_RECORRENTES.concat(FOLHAS_CATEGORIAS).concat(FOLHAS_ASSINATURA)', corpo_da_funcao(principal, 'function folhaAberta'))
+        self.assertIn('assEstado.ocupado', corpo_da_funcao(principal, 'function fecharFolhaAtual'))
+        self.assertIn('if (assEstado.ocupado) return;', corpo_da_funcao(principal, 'function voltarDasAssinaturas'))
+        # Mais Tarde e o BackButton da Expirada levam à mesma função (a home em modo leitura, sem recarregar se já está pronta).
+        self.assertIn('irParaHomeDasAssinaturas();', corpo_da_funcao(principal, 'function maisTarde'))
+        casa = corpo_da_funcao(principal, 'function irParaHomeDasAssinaturas')
+        self.assertIn('if ($("numeros").hidden) {', casa)
+        self.assertIn('$("tela").hidden = false;', casa)
+        self.assertIn('$("exp-mais-tarde").addEventListener("click", maisTarde);', principal)
+        # O Continuar do resultado: passo 3 no cadastro, home recarregada fora dele.
+        continuar = corpo_da_funcao(principal, 'function continuarDoResultado')
+        self.assertIn('voltarAoCadastro(3)', continuar)
+        self.assertIn('irParaHomeDepoisDeAssinar()', continuar)
+        self.assertIn('carregar();', corpo_da_funcao(principal, 'function irParaHomeDepoisDeAssinar'))
+
+    def test_cadastro_passa_pelo_passo_assinaturas_entre_o_dia_e_as_categorias(self):
+        principal = codigo_principal(HOME)
+        continuar = corpo_da_funcao(principal, 'function continuarCadastro')
+        self.assertLess(continuar.index('e.passo === 2 && cadastroPassaPelasAssinaturas(assEstado.previo.estado)'), continuar.index('e.passo++;'))
+        self.assertIn('abrirAssinaturasDoCadastro();', continuar)
+        abrir = corpo_da_funcao(principal, 'function abrirAssinaturasDoCadastro')
+        self.assertIn('assEstado.origem = "cadastro";', abrir)
+        self.assertIn('mostrarBackButton(true);', abrir)
+        self.assertIn('voltarAoCadastro(2)', corpo_da_funcao(principal, 'function voltarDasAssinaturas'))
+        # A escolha inicial sabe se os cadastros estão fechados pelo GET /assinatura (a abertura da home não usa esta chamada).
+        self.assertIn('buscarAssinaturaPrevia();', corpo_da_funcao(principal, 'function abrirEscolhaInicial'))
+        self.assertIn('cadastroFechado(assEstado.previo.bloco)', corpo_da_funcao(principal, 'function abrirCadastro'))
+
+    # ---------------------------- teste, pagamento e renovação ----------------------------
+    def test_testar_gratuitamente_usa_a_logo_com_tempo_minimo_e_a_rota_do_teste(self):
+        principal = codigo_principal(HOME)
+        corpo = corpo_da_funcao(principal, 'async function testarGratuitamente')
+        self.assertIn('mostrarTelaLogo("Assinaturas"', corpo)
+        self.assertIn('comTempoMinimo(', corpo)
+        self.assertIn('enviarJson(ROTA_ASSINATURA_TESTE, undefined, 15000)', corpo)
+        self.assertIn('TEMPO_MINIMO_LOGO_MS', corpo)
+        self.assertLess(corpo.index('if (a.ocupado || a.testeEstado === "esgotado") return;'), corpo.index('mostrarTelaLogo('))
+        # A logo sai na mesma tarefa em que o resultado entra.
+        self.assertLess(corpo.index('mostrarResultado(t.titulo, t.texto);'), corpo.index('esconderTelaLogo();'))
+        # Nenhuma nova tentativa sozinha: o erro mostra a linha vermelha e o botão tenta de novo.
+        self.assertNotIn('gravarComTentativas', corpo)
+
+    def test_pagamento_usa_a_fatura_o_openinvoice_e_o_confirmando(self):
+        principal = codigo_principal(HOME)
+        pagar = corpo_da_funcao(principal, 'async function pagarComStars')
+        self.assertIn('enviarJson(ROTA_ASSINATURA_FATURA, undefined, 15000)', pagar)
+        self.assertIn('tg.openInvoice(decisao.link, aoStatusDoPagamento);', pagar)
+        self.assertLess(pagar.index('typeof tg.openInvoice !== "function"'), pagar.index('enviarJson('))   # fora do Telegram: sem chamada
+        self.assertIn('MENSAGEM_FORA_DO_TELEGRAM', pagar)
+        status = corpo_da_funcao(principal, 'function aoStatusDoPagamento')
+        self.assertIn('decisaoDoPagamento(status)', status)
+        confere = corpo_da_funcao(principal, 'async function conferirPagamento')
+        self.assertIn('aguardarPagamento(() => chamar(ROTA_ASSINATURA), esperar, () => performance.now(), p.antes, PAGAMENTO_LIMITE_MS, PAGAMENTO_PASSO_MS)', confere)
+        self.assertIn('aplicarAssinatura(r.bloco);', confere)
+        self.assertNotIn('setInterval', HOME)
+        self.assertIn('const PAGAMENTO_LIMITE_MS = 30000;', codigo_puro(HOME))
+        self.assertIn('const PAGAMENTO_PASSO_MS = 2000;', codigo_puro(HOME))
+        # A tela nunca libera sozinha: depois dos 30 s só o toque na área confere de novo.
+        self.assertIn("$(\"conf-area\").addEventListener(\"click\", () => { if (!assEstado.pagamento.aguardando) conferirPagamento(false); });", principal)
+
+    def test_cancelar_e_reativar_so_depois_do_showconfirm_e_sem_tela_da_logo(self):
+        principal = codigo_principal(HOME)
+        for funcao, esperado in (('function pedirCancelamento', 'mudarRenovacao(true)'), ('function pedirReativacao', 'mudarRenovacao(false)')):
+            corpo = corpo_da_funcao(principal, funcao)
+            self.assertIn('confirmarNativo(', corpo)
+            self.assertLess(corpo.index('confirmarNativo('), corpo.index(esperado))
+            self.assertNotIn('enviarJson', corpo)
+        self.assertIn('tg.showConfirm(texto, (confirmado) => aoResponder(!!confirmado))', corpo_da_funcao(principal, 'function confirmarNativo'))
+        muda = corpo_da_funcao(principal, 'async function mudarRenovacao')
+        self.assertIn('enviarJson(ROTA_ASSINATURA_RENOVACAO, { cancelar: cancelar }, 20000)', muda)
+        self.assertNotIn('mostrarTelaLogo', muda)
+        self.assertNotIn('comTempoMinimo', muda)
+        self.assertIn('aplicarAssinatura(resultado.dados);', muda)    # a resposta é o JSON novo
+        # 409 reativacao_recusada: o alerta e, ao fechar, a folha Plano Pro.
+        self.assertIn('alertaNativoComRetorno(decisao.mensagem, () => abrirFolhaPlano(', muda)
+        self.assertIn('tg.showAlert(texto, aoFechar)', corpo_da_funcao(principal, 'function alertaNativoComRetorno'))
+
+    def test_rotas_codigos_e_campos_sao_os_do_servidor(self):
+        api = open(os.path.join(RAIZ, 'api', 'main.py'), encoding='utf-8').read()
+        fonte = open(os.path.join(RAIZ, 'assinaturas.py'), encoding='utf-8').read()
+        puro = codigo_puro(HOME)
+        for constante, verbo, rota in (('ROTA_ASSINATURA', 'get', '/assinatura'), ('ROTA_ASSINATURA_TESTE', 'post', '/assinaturas/teste'),
+                                       ('ROTA_ASSINATURA_FATURA', 'post', '/assinaturas/fatura'),
+                                       ('ROTA_ASSINATURA_RENOVACAO', 'post', '/assinaturas/renovacao'), ('ROTA_TERMOS', 'get', '/termos')):
+            with self.subTest(rota=rota):
+                self.assertIn('const %s = "%s";' % (constante, rota), puro)
+                self.assertRegex(api, r'@app\.%s\("%s"' % (verbo, re.escape(rota)))
+        # Códigos 409 e 403 que a tela trata existem no servidor, com o status que a tela espera.
+        for codigo in ('teste_ja_usado', 'plano_ativo', 'assinaturas_desligadas', 'reativacao_recusada'):
+            with self.subTest(codigo=codigo):
+                self.assertIn('"%s": 409' % codigo, api)
+                self.assertIn(codigo, puro)
+        for codigo in ('assinatura_vencida', 'assinatura_ausente'):
+            with self.subTest(codigo=codigo):
+                self.assertIn('detail=codigo', api)
+                self.assertIn('"%s"' % codigo, api)
+                self.assertIn('"%s"' % codigo, corpo_da_funcao(puro, 'function acaoDoAcessoRecusado'))
+        self.assertIn('"assinatura_ausente" if situacao.estado == "sem_plano" else "assinatura_vencida"', api)
+        self.assertIn('detail="cancelar_invalido"', api)
+        # vagas_teste_esgotadas é da PRO-109 (o servidor ainda não manda); a tela já trata.
+        self.assertNotIn('vagas_teste_esgotadas', fonte)
+        self.assertIn('vagas_teste_esgotadas', corpo_da_funcao(puro, 'function decisaoDoTeste'))
+        # O corpo do cancelar é {"cancelar": bool}; o teste e a fatura não levam corpo.
+        self.assertIn('cancelar: Any = None', api)
+        # Os campos do bloco que a tela lê existem no montar_bloco_assinatura (cadastro_aberto vem na PRO-109).
+        bloco = corpo_da_funcao(fonte, 'def montar_bloco_assinatura')
+        lidos = ('ligada', 'estado', 'inicio', 'fim', 'teste_previsto', 'preco', 'limite_ia_dia', 'selo', 'selo_tocavel', 'dias_restantes',
+                 'valor_stars', 'proxima_renovacao', 'renovacao_cancelada', 'vale_ate', 'modo_leitura')
+        for campo in lidos:
+            with self.subTest(campo=campo):
+                self.assertIn('"%s"' % campo, bloco)
+                self.assertTrue(campo in puro, campo)
+        self.assertIn('"stars": preco_pro_stars(), "reais_aproximado": PRECO_REAIS_APROXIMADO', bloco)
+        self.assertNotIn('cadastro_aberto', fonte)
+        # O texto do 409 assinaturas_desligadas foi decidido pelo Ygor.
+        self.assertIn('const MSG_ASSINATURAS_DESLIGADAS = "As assinaturas ainda não estão abertas. Volte em breve.";', puro)
+
+    def test_limite_do_429_vem_do_bloco(self):
+        principal = codigo_principal(HOME)
+        self.assertIn('mensagemErroRegistro(resultado, "interpretar", e.tipo, limiteIaDiaAtual())', corpo_da_funcao(principal, 'async function interpretar'))
+        self.assertIn('assEstado.bloco.limite_ia_dia', corpo_da_funcao(principal, 'function limiteIaDiaAtual'))
+
+    def test_folha_minha_assinatura_fecha_por_botao_fundo_e_arrasto(self):
+        principal = codigo_principal(HOME)
+        self.assertIn('FOLHAS_ASSINATURA.forEach(tornarFolhaArrastavel);', principal)
+        arrasto = corpo_da_funcao(principal, 'function tornarFolhaArrastavel')
+        for trecho in ('touchstart', 'touchmove', 'touchend', 'arrastoFechaAFolha(deslocamento)', 'folha.scrollTop > 0', 'camada.hidden = true;'):
+            self.assertIn(trecho, arrasto)
+        self.assertIn('$("min-fechar").addEventListener("click", fecharFolhaAtual);', principal)
+        # O toque no fundo escuro é o [data-fechar] de sempre, ligado a todas as folhas.
+        self.assertIn('document.querySelectorAll("[data-fechar]").forEach((fundo) => fundo.addEventListener("click", fecharFolhaAtual));', principal)
+        self.assertIn('.folha { overscroll-behavior: contain; }', css_da_home())
+
+    # ---------------------------- medidas dos quadros ----------------------------
+    def test_medidas_do_css_seguem_os_quadros_do_paper(self):
+        esperado = {
+            '.selo': ('height: 28px', 'padding: 0 12px', 'border-radius: 999px', 'font-size: 13px', 'line-height: 18px', 'gap: 4px'),
+            '.selo-linha': ('padding: 10px 24px 0',),
+            '.pausado-linha': ('gap: 6px', 'font-size: 13px', 'line-height: 18px', 'font-weight: 500', 'color: var(--cor-texto-2)'),
+            '.pausado-linha.na-home': ('padding: 14px 24px 0',),
+            '.ass-corpo': ('padding: 16px 24px 32px', 'gap: 20px'),
+            '.ass-apoio-bloco': ('gap: 16px',),
+            '.ass-apoio': ('font-size: 15px', 'line-height: 22px', 'color: var(--cor-texto-2)'),
+            '.ass-cartao': ('padding: 20px', 'gap: 14px', 'border-radius: 18px', 'border: 1px solid var(--cor-divisoria)'),
+            '.ass-preco-valor': ('font-size: 34px', 'line-height: 40px', 'font-weight: 800', 'letter-spacing: -0.02em'),
+            '.ass-cartao-titulo': ('font-size: 18px', 'line-height: 24px', 'font-weight: 800'),
+            '.ass-caixa': ('padding: 4px 16px', 'border-radius: 14px', 'background: var(--cor-fundo-suave)'),
+            '.ass-linha': ('height: 44px', 'gap: 12px'),
+            '.ass-linha-valor': ('font-size: 15px', 'line-height: 20px', 'font-weight: 700'),
+            '.ass-sep': ('height: 1px', 'background: var(--cor-branco)'),
+            '.ass-aviso-caixa': ('padding: 14px 16px', 'gap: 4px', 'border-radius: 14px'),
+            '.ass-erro-bloco': ('gap: 12px',),
+            '.ass-confirmando': ('padding: 0 24px 116px',),
+            '.ass-conf-caixa': ('height: 320px', 'gap: 16px'),
+            '.plano-preco-caixa': ('padding: 14px 16px', 'gap: 6px', 'border-radius: 14px'),
+            '.plano-preco-valor': ('font-size: 28px', 'line-height: 34px', 'font-weight: 800'),
+            '.plano-itens': ('gap: 10px',),
+            '.plano-item': ('gap: 10px', 'font-size: 15px', 'line-height: 20px', 'font-weight: 700'),
+            '.plano-acoes': ('padding-top: 4px', 'gap: 6px'),
+            '.min-termos': ('height: 32px',),
+            '.min-apoio': ('padding-bottom: 8px', 'font-size: 14px', 'line-height: 20px'),
+            '.botao-principal.claro': ('border: 1px solid var(--cor-borda-botao)', 'background: var(--cor-branco)'),
+        }
+        for seletor, trechos in esperado.items():
+            regra = regra_css(seletor)
+            for trecho in trechos:
+                with self.subTest(seletor=seletor, medida=trecho):
+                    self.assertIn(trecho, regra)
+
+    def test_reaproveita_as_classes_dos_quadros_ja_existentes(self):
+        # O resultado (Teste Ativado e Obrigado) é o molde estado-central: ícone de 64px, título 20/28 e apoio 15/22.
+        resultado = bloco_main('assinatura-resultado')
+        for classe in ('estado-central', 'estado-icone', 'estado-textos', 'estado-titulo', 'estado-texto', 'rodape-tela', 'botao-principal'):
+            self.assertIn('class="%s' % classe, resultado)
+        self.assertIn('width: 64px', regra_css('.estado-icone'))
+        self.assertIn('font-size: 20px', regra_css('.estado-titulo'))
+        # Carregando e Confirmando usam a logo animada de sempre (CSS só); o erro de rede, a caixa tracejada das Categorias.
+        for identificador in ('assinaturas', 'assinatura-confirmando'):
+            self.assertIn('class="logo-animada"', bloco_main(identificador))
+        self.assertIn('class="cat-erro-caixa"', bloco_main('assinaturas'))
+        # Os botões são o .botao-principal (52px, raio 16) e o Mais Tarde/Voltar/Fechar, o .botao-texto (44px).
+        self.assertIn('height: 52px', regra_css('.botao-confirmar, .botao-principal'))
+        self.assertIn('height: 44px', regra_css('.botao-texto'))
+        self.assertIn('class="botao-texto ass-mais-tarde"', bloco_main('expirada'))
+        # A folha é a mesma dos Recorrentes (raio 24, alça de 36x4, padding 12 24 32) e fica entre o aviso e a logo.
+        self.assertIn('padding: 12px 24px calc(32px + env(safe-area-inset-bottom, 0px))', regra_css('.folha'))
+        self.assertIn('border-radius: 24px 24px 0 0', regra_css('.folha'))
+        for identificador in ('folha-plano', 'folha-minha', 'folha-termos'):
+            self.assertIn('<div class="folha-alca"></div>', bloco_folha(identificador))
+
+    def test_cartao_de_preco_vem_antes_na_principal_e_depois_nas_outras_variacoes(self):
+        self.assertIn('order: -2', regra_css('.ass-apoio-bloco'))
+        self.assertIn('order: -1', regra_css('.ass-corpo.atual-primeiro #ass-cartao-atual'))
+        bloco = bloco_main('assinaturas')
+        self.assertLess(bloco.index('id="ass-cartao-preco"'), bloco.index('id="ass-cartao-atual"'))   # a ordem do HTML é a da principal
+        puro = codigo_puro(HOME)
+        self.assertIn('atualPrimeiro: false', corpo_da_funcao(puro, 'function textosDaTelaAssinaturas'))
+
+    def test_termos_de_uso_abre_o_texto_do_get_termos(self):
+        principal = codigo_principal(HOME)
+        corpo = corpo_da_funcao(principal, 'async function abrirTermos')
+        self.assertIn('chamar(ROTA_TERMOS)', corpo)
+        self.assertIn('$("termos-texto").textContent = termosEstado.texto;', corpo)
+        self.assertIn('$("plano-termos").addEventListener("click", abrirTermos);', principal)
+        self.assertIn('$("min-termos").addEventListener("click", abrirTermos);', principal)
+        self.assertIn('white-space: pre-wrap', regra_css('.termos-texto'))
+
+    def test_todo_id_que_o_script_busca_existe_no_html(self):
+        ids = set(ids_da_home())
+        usados = set(re.findall(r'\$\("([^"]+)"\)', codigo_principal(HOME)))
+        self.assertEqual(usados - ids, set())
+        # Os ids montados por prefixo (desenharPreco e mostrarErroCampo) também existem.
+        for prefixo in ('ass-preco', 'exp-preco', 'plano-preco'):
+            for sufixo in ('-stars', '-reais'):
+                self.assertIn(prefixo + sufixo, ids)
+        for erro in ('ass-teste-erro', 'exp-erro', 'plano-erro'):
+            self.assertIn('id="%s"' % erro, HOME)
+
+    def test_nenhum_innerhtml_nas_telas_novas(self):
+        principal = codigo_principal(HOME)
+        for funcao in ('function desenharLinhas', 'function desenharAssinaturas', 'function desenharMinhaAssinatura', 'function desenharSelo',
+                       'async function abrirTermos', 'function mostrarResultado', 'function abrirExpirada'):
+            self.assertNotIn('innerHTML', corpo_da_funcao(principal, funcao))
+        self.assertIn('criar("span", "ass-linha-rotulo", linha[0])', corpo_da_funcao(principal, 'function desenharLinhas'))
+
+
+@unittest.skipUnless(NODE, 'node não encontrado')
+class TestAssinaturasFuncoesPuras(unittest.TestCase):
+    def rodar(self, corpo):
+        return rodar_node(com_funcoes_puras(corpo))
+
+    def test_selo_e_toque(self):
+        obtido = self.rodar("""
+            const blocos = { gratis: { ligada: true, selo: 'gratis', selo_tocavel: true }, pro: { ligada: true, selo: 'pro', selo_tocavel: true },
+              assinar: { ligada: true, selo: 'assinar', selo_tocavel: true }, admin: { ligada: true, selo: 'pro', selo_tocavel: false },
+              semTocavel: { ligada: true, selo: 'pro' }, nulo: { ligada: true, selo: null }, estranho: { ligada: true, selo: 'Free' },
+              desligada: { ligada: false, selo: 'pro', selo_tocavel: true }, vazio: {}, nada: null, indefinido: undefined, texto: 'pro' };
+            const saida = {};
+            for (const [nome, b] of Object.entries(blocos)) saida[nome] = { selo: seloDaHome(b), acao: acaoDoToqueNoSelo(b) };
+            console.log(JSON.stringify(saida));
+        """)
+        self.assertEqual(obtido['gratis'], {'selo': {'variante': 'gratis', 'texto': 'Grátis', 'seta': False, 'tocavel': True}, 'acao': 'minha'})
+        self.assertEqual(obtido['pro'], {'selo': {'variante': 'pro', 'texto': 'Pro', 'seta': False, 'tocavel': True}, 'acao': 'minha'})
+        self.assertEqual(obtido['assinar'], {'selo': {'variante': 'assinar', 'texto': 'Assinar', 'seta': True, 'tocavel': True}, 'acao': 'plano'})
+        self.assertEqual(obtido['admin'], {'selo': {'variante': 'pro', 'texto': 'Pro', 'seta': False, 'tocavel': False}, 'acao': 'nenhuma'})
+        self.assertEqual(obtido['semTocavel']['acao'], 'nenhuma')
+        for nome in ('nulo', 'estranho', 'desligada', 'vazio', 'nada', 'indefinido', 'texto'):
+            with self.subTest(sem_selo=nome):
+                self.assertEqual(obtido[nome], {'selo': None, 'acao': 'nenhuma'})
+
+    def test_destino_da_abertura(self):
+        obtido = self.rodar("""
+            const saida = [];
+            const estados = { semBloco: undefined, nulo: null, desligada: { ligada: false, modo_leitura: true, estado: 'sem_plano' },
+              teste: { ligada: true, estado: 'teste', modo_leitura: false }, pro: { ligada: true, estado: 'pro', modo_leitura: false },
+              admin: { ligada: true, estado: 'pro', modo_leitura: false, selo_tocavel: false },
+              semPlano: { ligada: true, estado: 'sem_plano', modo_leitura: false },
+              testeVencido: { ligada: true, estado: 'teste_vencido', modo_leitura: true }, proVencido: { ligada: true, estado: 'pro_vencido', modo_leitura: true } };
+            for (const [nome, b] of Object.entries(estados))
+              for (const link of [false, true])
+                for (const vistaHoje of [false, true])
+                  saida.push({ nome, link, vistaHoje, destino: destinoDaAbertura(b, { link, vistaHoje }) });
+            console.log(JSON.stringify(saida));
+        """)
+        esperado = {}
+        for linha in obtido:
+            esperado[(linha['nome'], linha['link'], linha['vistaHoje'])] = linha['destino']
+        for nome in ('semBloco', 'nulo', 'desligada'):
+            for link in (False, True):
+                for vista in (False, True):
+                    self.assertEqual(esperado[(nome, link, vista)], 'home', (nome, link, vista))   # (1) como hoje, até com link
+        for nome in ('teste', 'pro', 'admin'):
+            for vista in (False, True):
+                self.assertEqual(esperado[(nome, False, vista)], 'home', nome)                      # (5)
+                self.assertEqual(esperado[(nome, True, vista)], 'assinaturas', nome)                # (4) link
+        for vista in (False, True):
+            for link in (False, True):
+                self.assertEqual(esperado[('semPlano', link, vista)], 'assinaturas')                # (3)
+        for nome in ('testeVencido', 'proVencido'):
+            self.assertEqual(esperado[(nome, False, False)], 'expirada')                            # (2) ainda não vista hoje
+            self.assertEqual(esperado[(nome, False, True)], 'home')                                 # (2) vista: a home em modo leitura
+            self.assertEqual(esperado[(nome, True, False)], 'expirada')                             # link: sempre a Expirada
+            self.assertEqual(esperado[(nome, True, True)], 'expirada')
+
+    def test_link_dia_de_brasilia_e_ja_vista(self):
+        obtido = self.rodar("""
+            console.log(JSON.stringify({
+              links: [linkDeAssinatura('?tela=assinatura', null), linkDeAssinatura('', 'assinatura'), linkDeAssinatura('?a=1&tela=assinatura', undefined),
+                      linkDeAssinatura('?tela=outra', 'x'), linkDeAssinatura('', null), linkDeAssinatura(undefined, undefined), linkDeAssinatura('?tela=Assinatura', null)],
+              dias: [diaDeBrasilia(Date.UTC(2026, 10, 13, 2, 30), 'America/Sao_Paulo'), diaDeBrasilia(Date.UTC(2026, 10, 13, 3, 0), 'America/Sao_Paulo'),
+                     diaDeBrasilia(Date.UTC(2026, 0, 1, 2, 59), 'America/Sao_Paulo'), diaDeBrasilia(Date.UTC(2026, 6, 15, 12, 0), 'America/Sao_Paulo')],
+              vista: [expiradaJaVistaHoje(null, null, '2026-11-12'), expiradaJaVistaHoje('2026-11-12', null, '2026-11-12'),
+                      expiradaJaVistaHoje(null, '2026-11-12', '2026-11-12'), expiradaJaVistaHoje('2026-11-11', '2026-11-11', '2026-11-12'),
+                      expiradaJaVistaHoje(undefined, undefined, '2026-11-12'), expiradaJaVistaHoje('2026-11-12', '2026-11-12', ''),
+                      expiradaJaVistaHoje('2026-11-12', null, null)],
+            }));
+        """)
+        self.assertEqual(obtido['links'], [True, True, True, False, False, False, False])
+        self.assertEqual(obtido['dias'], ['2026-11-12', '2026-11-13', '2025-12-31', '2026-07-15'])   # sempre o dia de Brasília, nunca o UTC
+        self.assertEqual(obtido['vista'], [False, True, True, False, False, False, False])
+
+    def test_formatos(self):
+        obtido = self.rodar("""
+            console.log(JSON.stringify({
+              datas: ['2026-11-21', '2026-01-05', '', null, undefined, '21/11/2026', '2026-1-5', '2026-11-21T10:00:00'].map(formatarDataPlano),
+              dias: [7, 2, 1, 0, -1, null, undefined, 1.5, '3'].map(textoDias),
+              valor: [150, 100, null, 0, 1.5].map(textoValorStars),
+              stars: [{ stars: 150 }, { stars: 10000 }, {}, null, { stars: 0 }].map(textoPrecoStars),
+              reais: [{ reais_aproximado: 19 }, { reais_aproximado: 19.5 }, {}, null, { reais_aproximado: 0 }].map(textoPrecoReais),
+              ia: [17, 25, null, 0, undefined].map(textoLimiteIa),
+              dica: [textoDicaCategorias(false), textoDicaCategorias(true)],
+              confirmar: textoConfirmarCancelamento('2026-12-12'),
+              aviso: avisoDoModoLeitura(),
+            }));
+        """)
+        self.assertEqual(obtido['datas'], ['21/11/2026', '05/01/2026', '', '', '', '', '', ''])
+        self.assertEqual(obtido['dias'], ['Faltam 7 Dias.', 'Faltam 2 Dias.', 'Falta 1 Dia.', 'Termina Hoje.', '', '', '', '', ''])
+        self.assertEqual(obtido['valor'], ['150 Stars por mês', '100 Stars por mês', '', '', ''])
+        self.assertEqual(obtido['stars'], ['150 Stars', '10000 Stars', '', '', ''])
+        self.assertEqual(obtido['reais'], ['≈ R$ 19 (varia conforme a loja)', '≈ R$ 19,5 (varia conforme a loja)', '', '', ''])
+        self.assertEqual(obtido['ia'], ['Até 17 Registros Por IA Por Dia', 'Até 25 Registros Por IA Por Dia', '', '', ''])
+        self.assertEqual(obtido['dica'][0], 'Clique Nas Barras Para Visualizar e Editar as Categorias')
+        self.assertEqual(obtido['dica'][1], 'Veja Quanto Cada Categoria Gastou. Para Criar ou Editar, Assine o Plano Pro.')
+        self.assertEqual(obtido['confirmar'], 'Cancelar a renovação? Seu Plano Pro continua ativo até 12/12/2026.')
+        self.assertEqual(obtido['aviso'], {'antes': '', 'negrito': 'Assine o Pro', 'depois': ' Para Continuar se Organizando',
+                                          'texto': 'Assine o Pro Para Continuar se Organizando'})
+
+    def test_estado_da_folha_pela_tabela_da_nota(self):
+        obtido = self.rodar("""
+            const base = { ligada: true };
+            const casos = {
+              gratis: { selo: 'gratis' },
+              gratisComRenovacao: { selo: 'gratis', proxima_renovacao: '2026-12-12' },
+              proAtivo: { selo: 'pro', proxima_renovacao: '2026-12-12', renovacao_cancelada: false },
+              proAtivoMesmoCancelado: { selo: 'pro', proxima_renovacao: '2026-12-12', renovacao_cancelada: true },
+              cancelada: { selo: 'pro', proxima_renovacao: null, renovacao_cancelada: true },
+              dado: { selo: 'pro', proxima_renovacao: null, renovacao_cancelada: false },
+              dadoSemCampos: { selo: 'pro' },
+              assinar: { selo: 'assinar' }, semSelo: { selo: null },
+            };
+            const saida = {};
+            for (const [nome, c] of Object.entries(casos)) saida[nome] = estadoDaFolha(Object.assign({}, base, c));
+            saida.desligada = estadoDaFolha({ ligada: false, selo: 'pro' });
+            saida.nulo = estadoDaFolha(null);
+            console.log(JSON.stringify(saida));
+        """)
+        self.assertEqual(obtido, {'gratis': 'gratis', 'gratisComRenovacao': 'gratis', 'proAtivo': 'pro-ativo', 'proAtivoMesmoCancelado': 'pro-ativo',
+                                  'cancelada': 'renovacao-cancelada', 'dado': 'pro-dado', 'dadoSemCampos': 'pro-dado', 'assinar': None,
+                                  'semSelo': None, 'desligada': None, 'nulo': None})
+
+    def test_modos_da_tela_assinaturas_e_da_expirada(self):
+        obtido = self.rodar("""
+            const b = (c) => Object.assign({ ligada: true }, c);
+            console.log(JSON.stringify({
+              modos: [b({ estado: 'sem_plano' }), b({ estado: 'teste' }), b({ estado: 'pro', proxima_renovacao: '2026-12-12' }),
+                      b({ estado: 'pro', renovacao_cancelada: true }), b({ estado: 'pro' }), b({ estado: 'teste_vencido' }), b({ estado: 'pro_vencido' }),
+                      b({ estado: 'outro' }), { ligada: false, estado: 'teste' }, null].map(modoDaTelaAssinaturas),
+              expirada: [b({ estado: 'teste_vencido', fim: '2026-11-11' }), b({ estado: 'pro_vencido', fim: '2026-11-01' }), b({ estado: 'teste' }), null].map(textosDaExpirada),
+            }));
+        """)
+        self.assertEqual(obtido['modos'], ['principal', 'teste', 'pro-ativo', 'renovacao-cancelada', 'pro-dado', 'vencido', 'vencido', None, None, None])
+        self.assertEqual(obtido['expirada'][0]['botao'], 'Assinar')
+        self.assertFalse(obtido['expirada'][0]['renovacao'])
+        self.assertEqual(obtido['expirada'][1]['botao'], 'Renovar Assinatura')
+        self.assertTrue(obtido['expirada'][1]['renovacao'])
+        self.assertEqual(obtido['expirada'][2:], [None, None])
+
+    def test_decisoes_por_status_das_rotas_novas(self):
+        obtido = self.rodar("""
+            const r = (erro, detalhe, dados) => (erro === undefined ? { dados } : { erro, detalhe });
+            console.log(JSON.stringify({
+              teste: [r(undefined, null, { inicio: '2026-11-12', fim: '2026-11-22', repetido: false }), r(undefined, null, { inicio: 'a', fim: 'b', repetido: true }),
+                      r(409, 'teste_ja_usado'), r(409, 'plano_ativo'), r(409, 'vagas_teste_esgotadas'), r(503, 'banco_ocupado'), r(500, 'erro_interno'),
+                      r(0), r(401), r(403, 'assinatura_vencida')].map(decisaoDoTeste),
+              fatura: [r(undefined, null, { link: 'https://t.me/$abc', stars: 150 }), r(undefined, null, { link: 'ftp://x' }), r(undefined, null, {}),
+                       r(409, 'assinaturas_desligadas'), r(409, 'plano_ativo'), r(502, 'telegram_indisponivel'), r(500, 'erro_interno'), r(0), r(401)].map(decisaoDaFatura),
+              pagamento: ['paid', 'pending', 'cancelled', 'failed', 'outra', undefined, null].map(decisaoDoPagamento),
+              cancelar: [r(undefined, null, {}), r(502, 'telegram_indisponivel'), r(0), r(409, 'sem_assinatura_stars'), r(409, 'reativacao_recusada'), r(422, 'cancelar_invalido'),
+                         r(401)].map((x) => decisaoDaRenovacao(true, x)),
+              reativar: [r(undefined, null, {}), r(409, 'reativacao_recusada'), r(502, 'telegram_indisponivel'), r(0)].map((x) => decisaoDaRenovacao(false, x)),
+              acesso: [[403, 'assinatura_vencida'], [403, 'assinatura_ausente'], [403, 'outra'], [409, 'assinatura_vencida'], [200, undefined], [401, 'assinatura_vencida']]
+                        .map((x) => acaoDoAcessoRecusado(x[0], x[1])),
+            }));
+        """)
+        sessao = 'Sua sessão expirou. Feche e abra o app de novo.'
+        falhou_teste = 'Não Conseguimos Começar o Teste. Tente de Novo.'
+        self.assertEqual(obtido['teste'], [
+            {'acao': 'ativado', 'inicio': '2026-11-12', 'fim': '2026-11-22'}, {'acao': 'ativado', 'inicio': 'a', 'fim': 'b'},
+            {'acao': 'recarregar'}, {'acao': 'recarregar'}, {'acao': 'esgotado'},
+            {'acao': 'erro', 'mensagem': falhou_teste}, {'acao': 'erro', 'mensagem': falhou_teste}, {'acao': 'erro', 'mensagem': falhou_teste},
+            {'acao': 'erro', 'mensagem': sessao}, {'acao': 'erro', 'mensagem': falhou_teste}])
+        falhou_fatura = 'Não Conseguimos Abrir o Pagamento. Tente de Novo.'
+        self.assertEqual(obtido['fatura'], [
+            {'acao': 'abrir', 'link': 'https://t.me/$abc'}, {'acao': 'erro', 'mensagem': falhou_fatura}, {'acao': 'erro', 'mensagem': falhou_fatura},
+            {'acao': 'erro', 'mensagem': 'As assinaturas ainda não estão abertas. Volte em breve.'}, {'acao': 'recarregar'},
+            {'acao': 'erro', 'mensagem': falhou_fatura}, {'acao': 'erro', 'mensagem': falhou_fatura}, {'acao': 'erro', 'mensagem': falhou_fatura},
+            {'acao': 'erro', 'mensagem': sessao}])
+        self.assertEqual(obtido['pagamento'], ['confirmar', 'confirmar', 'voltar', 'recusado', 'voltar', 'voltar', 'voltar'])
+        nao_cancelou = {'acao': 'erro', 'mensagem': 'Não foi possível cancelar agora. Tente de novo.'}
+        self.assertEqual(obtido['cancelar'], [{'acao': 'atualizar'}, nao_cancelou, nao_cancelou, nao_cancelou, nao_cancelou, nao_cancelou,
+                                              {'acao': 'erro', 'mensagem': sessao}])
+        self.assertEqual(obtido['reativar'], [
+            {'acao': 'atualizar'},
+            {'acao': 'recusada', 'mensagem': 'Não foi possível reativar por aqui. Você pode assinar de novo sem perder nenhum dia.'},
+            {'acao': 'erro', 'mensagem': 'Não foi possível reativar agora. Tente de novo.'},
+            {'acao': 'erro', 'mensagem': 'Não foi possível reativar agora. Tente de novo.'}])
+        self.assertEqual(obtido['acesso'], ['vencida', 'ausente', None, None, None, None])
+
+    def test_pagamento_confirmado_so_pelo_json_do_servidor(self):
+        obtido = self.rodar("""
+            const b = (c) => Object.assign({ ligada: true, estado: 'pro', vale_ate: '2026-12-12', renovacao_cancelada: false }, c);
+            console.log(JSON.stringify([
+              pagamentoConfirmado(b({ estado: 'pro_vencido' }), b()),                       // venceu e pagou
+              pagamentoConfirmado(b({ estado: 'teste' }), b()),                             // teste e pagou
+              pagamentoConfirmado(null, b()),
+              pagamentoConfirmado(b({ estado: 'pro_vencido' }), b({ estado: 'pro_vencido' })),     // ainda não chegou
+              pagamentoConfirmado(b({ estado: 'teste' }), b({ estado: 'teste' })),
+              pagamentoConfirmado(b(), b()),                                                // já era Pro e nada mudou
+              pagamentoConfirmado(b(), b({ vale_ate: '2027-01-11' })),                      // pagou de novo: o fim andou
+              pagamentoConfirmado(b({ renovacao_cancelada: true }), b({ renovacao_cancelada: false })),
+              pagamentoConfirmado(b({ estado: 'teste' }), { ligada: false, estado: 'pro' }),
+              pagamentoConfirmado(b({ estado: 'teste' }), null),
+            ]));
+        """)
+        self.assertEqual(obtido, [True, True, True, False, False, False, True, True, False, False])
+
+    def test_aguardar_pagamento_consulta_de_2_em_2_s_por_ate_30_s(self):
+        obtido = self.rodar("""
+            (async () => {
+              const pago = { ligada: true, estado: 'pro', vale_ate: '2026-12-12' };
+              const venceu = { ligada: true, estado: 'pro_vencido' };
+              async function cenario(respostas) {
+                let agora = 0; const esperas = []; let consultas = 0;
+                const r = await aguardarPagamento(async () => { consultas++; const x = respostas(consultas); return x; },
+                  async (ms) => { esperas.push(ms); agora += ms; }, () => agora, venceu, PAGAMENTO_LIMITE_MS, PAGAMENTO_PASSO_MS);
+                return { r, consultas, esperas: esperas.length, passo: esperas[0] };
+              }
+              const logo = await cenario((n) => ({ dados: n >= 3 ? pago : venceu }));
+              const nunca = await cenario(() => ({ dados: venceu }));
+              const rede = await cenario((n) => (n < 5 ? { erro: 0 } : { dados: pago }));
+              const primeira = await cenario(() => ({ dados: pago }));
+              console.log(JSON.stringify({ logo, nunca, rede, primeira }));
+            })();
+        """)
+        self.assertEqual(obtido['logo']['r'], {'confirmado': True, 'bloco': {'ligada': True, 'estado': 'pro', 'vale_ate': '2026-12-12'}})
+        self.assertEqual((obtido['logo']['consultas'], obtido['logo']['esperas'], obtido['logo']['passo']), (3, 2, 2000))
+        self.assertEqual(obtido['nunca']['r'], {'confirmado': False})
+        self.assertEqual((obtido['nunca']['consultas'], obtido['nunca']['esperas']), (16, 15))    # 0, 2, 4, ..., 30 s
+        self.assertTrue(obtido['rede']['r']['confirmado'])                                       # falha de rede na consulta: segue tentando
+        self.assertEqual(obtido['rede']['consultas'], 5)
+        self.assertEqual((obtido['primeira']['consultas'], obtido['primeira']['esperas']), (1, 0))
+
+    def test_textos_das_folhas_da_tela_e_do_obrigado(self):
+        obtido = self.rodar("""
+            const b = (c) => Object.assign({ ligada: true, preco: { stars: 150, reais_aproximado: 19 } }, c);
+            const pro = b({ estado: 'pro', selo: 'pro', inicio: '2026-11-12', fim: '2026-12-12', vale_ate: '2026-12-12', proxima_renovacao: '2026-12-12', valor_stars: 150 });
+            console.log(JSON.stringify({
+              obrigadoNova: textosDoObrigado('nova', 'Ygor', '2026-12-12'), obrigadoRenovacao: textosDoObrigado('renovacao', 'Ygor', '2026-12-12'),
+              semNome: textosDoObrigado('nova', '  ', '2026-12-12'), semData: textosDoObrigado('nova', 'Ygor', null), semNomeRenovacao: textosDoObrigado('renovacao', null, null),
+              tipos: [tipoDoObrigado(b({ estado: 'pro_vencido' })), tipoDoObrigado(b({ estado: 'teste' })), tipoDoObrigado(b({ estado: 'teste_vencido' })), tipoDoObrigado(null)],
+              ativado: [textosDoTesteAtivado('2026-11-22'), textosDoTesteAtivado(undefined)],
+              tela: { pro: textosDaTelaAssinaturas('pro-ativo', pro), dado: textosDaTelaAssinaturas('pro-dado', pro), nulo: textosDaTelaAssinaturas('pro-ativo', null),
+                      outro: textosDaTelaAssinaturas('vencido', pro) },
+              canc: textosDaTelaAssinaturas('renovacao-cancelada', pro).precoApoio,
+              semPreco: textosDaTelaAssinaturas('principal', b({ preco: null, teste_previsto: { inicio: '2026-11-12', fim: '2026-11-22' } })).apoio,
+              arrasto: [0, 50, 99, 100, 250, NaN, null].map(arrastoFechaAFolha),
+              cadastro: [cadastroFechado({ ligada: true, cadastro_aberto: false }), cadastroFechado({ ligada: true, cadastro_aberto: true }),
+                         cadastroFechado({ ligada: true }), cadastroFechado({ ligada: false, cadastro_aberto: false }), cadastroFechado(null)],
+              passa: ['nao-iniciado', 'pendente', 'ligada', 'falhou', 'desligada'].map(cadastroPassaPelasAssinaturas),
+            }));
+        """)
+        self.assertEqual(obtido['obrigadoNova'], {'titulo': 'Obrigado Pela Assinatura, Ygor!',
+                         'texto': 'Seu Plano Pro Está Ativo. Ele Renova em 12/12/2026 Usando as Stars Que Estão na Sua Conta.'})
+        self.assertEqual(obtido['obrigadoRenovacao'], {'titulo': 'Assinatura Renovada!', 'texto':
+                         'Obrigado Por Continuar Com a Gente, Ygor. Agradecemos a Sua Confiança no L1d3r. Seu Plano Pro Renova em 12/12/2026 Usando as Stars Que Estão na Sua Conta.'})
+        self.assertEqual(obtido['semNome']['titulo'], 'Obrigado Pela Assinatura!')
+        self.assertEqual(obtido['semData']['texto'], 'Seu Plano Pro Está Ativo.')
+        self.assertEqual(obtido['semNomeRenovacao'], {'titulo': 'Assinatura Renovada!',
+                         'texto': 'Obrigado Por Continuar Com a Gente. Agradecemos a Sua Confiança no L1d3r.'})
+        self.assertEqual(obtido['tipos'], ['renovacao', 'nova', 'nova', 'nova'])
+        self.assertEqual(obtido['ativado'], [{'titulo': 'Seu Teste Começou!', 'texto': 'Vale Até 22/11/2026'}, {'titulo': 'Seu Teste Começou!', 'texto': ''}])
+        self.assertEqual(obtido['tela']['pro']['linhas'], [['Ativo Até:', '12/12/2026'], ['Renovação:', 'Automática']])
+        self.assertEqual(obtido['tela']['pro']['botao'], {'texto': 'Cancelar Renovação', 'acao': 'cancelar', 'claro': True})
+        self.assertFalse(obtido['tela']['dado']['mostrarPreco'])
+        self.assertIsNone(obtido['tela']['dado']['botao'])
+        self.assertIsNone(obtido['tela']['nulo'])
+        self.assertIsNone(obtido['tela']['outro'])
+        self.assertEqual(obtido['canc'], 'Não Haverá Nova Cobrança. Reative Para Continuar Depois de 12/12/2026.')
+        self.assertEqual(obtido['semPreco'], 'Nossa Aplicação Conta Com Uma Assinatura Simbólica Por Mês. Mas Não Se Preocupe: Liberamos 10 Dias Gratuitos Para Novos Usuários Testarem.')
+        self.assertEqual(obtido['arrasto'], [False, False, False, True, True, False, False])
+        self.assertEqual(obtido['cadastro'], [True, False, False, False, False])
+        self.assertEqual(obtido['passa'], [True, True, True, True, False])
+
+    def test_limite_do_429_vem_do_bloco(self):
+        obtido = self.rodar("""
+            const r = { erro: 429, detalhe: 'limite_diario_ia' };
+            console.log(JSON.stringify([mensagemErroRegistro(r, 'interpretar', 'gasto', 25), mensagemErroRegistro(r, 'interpretar', 'gasto', 17),
+                                        mensagemErroRegistro(r, 'interpretar', 'gasto'), mensagemErroRegistro(r, 'interpretar', 'gasto', null)]));
+        """)
+        self.assertEqual(obtido[0], 'Você usou os 25 registros com IA de hoje. Amanhã o limite volta a zero.')
+        self.assertEqual(obtido[1], obtido[2])
+        self.assertEqual(obtido[1], obtido[3])
+        self.assertIn('17', obtido[1])
+        self.assertEqual(assinaturas.LIMITE_IA_DIA_PADRAO, 17)
 
 
 if __name__ == '__main__':

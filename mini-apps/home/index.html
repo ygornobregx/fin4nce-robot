@@ -42,6 +42,12 @@
       --cor-barra-categoria: #D4D4D6;
       --cor-categoria-excluida: #F6F6F7;  /* trilho da categoria excluída (quadro EXCLUÍDA COM GASTO - V1) */
       --cor-borda-selo: #E0E0E2;          /* borda do selo "Excluída" */
+      /* Assinaturas (PRO-108): botão claro, selo da home tocado e ícone de pausa do modo somente leitura */
+      --cor-borda-botao: #D9D9D9;         /* borda do botão claro "Cancelar Renovação" */
+      --cor-selo-tocado: #FFFFFF4D;       /* fundo do selo "Grátis" pressionado */
+      --cor-selo-anel: #FFFFFF1F;         /* anel de 3px do selo pressionado */
+      --cor-selo-pro-tocado: #E4E4E6;     /* fundo do selo claro ("Pro" e "Assinar") pressionado */
+      --cor-pausado-icone: #8A8A8A;       /* ícone de pausa de "Registros Pausados" */
     }
 
     * { box-sizing: border-box; }
@@ -1349,6 +1355,101 @@
     }
     .cat-tipo[aria-selected="true"] { background: var(--cor-grafite); color: var(--cor-branco); }
     .cat-tipo.apagada { color: var(--cor-desabilitado-texto); }
+
+    /* ---------- Assinaturas (PRO-108, quadros FUTURO - ASSINATURAS - ..., MINHA ASSINATURA, HOME COM SELO, MODO LEITURA) ---------- */
+    /* Só variáveis do :root (nenhuma cor solta). Medidas dos quadros: 1 unidade do Paper = 4px. */
+    body.modo-assinaturas { padding-bottom: 0; }
+    /* Cabeçalho sem a seta: a mesma altura do cabeçalho com a seta (o botão tem 44px) */
+    .cabecalho-sem-seta .cabecalho-linha { min-height: 44px; }
+
+    /* Selo da home (abaixo da saudação): pílula de 28px. "Grátis" translúcido; "Pro" e "Assinar" claros. */
+    .selo-linha { padding: 10px 24px 0; display: flex; }
+    .selo {
+      height: 28px;
+      padding: 0 12px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      border-radius: 999px;
+      font-size: 13px;
+      line-height: 18px;
+      white-space: pre;
+      cursor: default;
+    }
+    .selo.gratis { background: var(--cor-botao-menu); color: var(--cor-branco); font-weight: 700; }
+    .selo.pro, .selo.assinar { background: var(--cor-branco); color: var(--cor-grafite); font-weight: 800; }
+    .selo svg { width: 12px; height: 12px; flex-shrink: 0; fill: none; stroke: var(--cor-grafite); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    /* Estado pressionado: só com .tocavel (o selo do admin não pressiona) */
+    .selo.tocavel { cursor: pointer; }
+    .selo.tocavel:active, .selo.tocavel.tocado { box-shadow: 0 0 0 3px var(--cor-selo-anel); }
+    .selo.gratis.tocavel:active, .selo.gratis.tocavel.tocado { background: var(--cor-selo-tocado); }
+    .selo.pro.tocavel:active, .selo.pro.tocavel.tocado, .selo.assinar.tocavel:active, .selo.assinar.tocavel.tocado { background: var(--cor-selo-pro-tocado); }
+
+    /* "Registros Pausados Até Você Assinar o Pro" (modo somente leitura): home, entre o topo e os atalhos, e Recorrentes */
+    .pausado-linha { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; line-height: 18px; font-weight: 500; color: var(--cor-texto-2); }
+    .pausado-linha.na-home { padding: 14px 24px 0; }
+    .pausado-linha svg { width: 14px; height: 14px; flex-shrink: 0; }
+    .pausado-linha svg rect { fill: var(--cor-pausado-icone); }
+
+    /* Tela Assinaturas e Assinatura Expirada */
+    .ass-corpo { flex-grow: 1; padding: 16px 24px 32px; display: flex; flex-direction: column; gap: 20px; }
+    .ass-apoio-bloco { order: -2; display: flex; flex-direction: column; gap: 16px; }
+    .ass-corpo.atual-primeiro #ass-cartao-atual { order: -1; }
+    .ass-apoio { font-size: 15px; line-height: 22px; font-weight: 500; color: var(--cor-texto-2); }
+    .ass-data { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--cor-texto-2); }
+    .ass-data strong { font-weight: 700; color: var(--cor-texto); }
+    .ass-cartao { padding: 20px; display: flex; flex-direction: column; gap: 14px; border: 1px solid var(--cor-divisoria); border-radius: 18px; }
+    .ass-rotulo { font-size: 13px; line-height: 18px; font-weight: 700; color: var(--cor-texto-2); }
+    .ass-preco { display: flex; flex-direction: column; gap: 4px; }
+    .ass-preco-linha { display: flex; align-items: baseline; gap: 6px; }
+    .ass-preco-valor { font-size: 34px; line-height: 40px; font-weight: 800; letter-spacing: -0.02em; color: var(--cor-texto); }
+    .ass-preco-sufixo { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--cor-texto-2); }
+    .ass-cartao-apoio { font-size: 14px; line-height: 20px; font-weight: 500; color: var(--cor-texto-2); }
+    .ass-cartao-titulo { font-size: 18px; line-height: 24px; font-weight: 800; letter-spacing: -0.01em; color: var(--cor-texto); }
+    .ass-caixa { padding: 4px 16px; display: flex; flex-direction: column; border-radius: 14px; background: var(--cor-fundo-suave); }
+    .ass-linha { height: 44px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .ass-linha-rotulo { font-size: 14px; line-height: 20px; font-weight: 500; color: var(--cor-texto-2); }
+    .ass-linha-valor { flex-shrink: 0; font-size: 15px; line-height: 20px; font-weight: 700; color: var(--cor-texto); }
+    .ass-sep { height: 1px; flex-shrink: 0; background: var(--cor-branco); }
+    .ass-aviso-caixa { padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; border-radius: 14px; background: var(--cor-fundo-suave); }
+    .ass-aviso-titulo { font-size: 15px; line-height: 20px; font-weight: 700; color: var(--cor-texto); }
+    .ass-aviso-texto { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--cor-texto-2); }
+    /* Linha vermelha (erro do teste, pagamento recusado, assinaturas desligadas): a .campo-erro com o ícone alinhado ao topo */
+    .campo-erro.ass-erro { align-items: flex-start; }
+    .campo-erro.ass-erro svg { margin-top: 1px; }
+    .ass-erro-bloco { display: flex; flex-direction: column; gap: 12px; }
+    .botao-principal.claro { border: 1px solid var(--cor-borda-botao); background: var(--cor-branco); color: var(--cor-texto); }
+    .botao-principal.claro:disabled { color: var(--cor-desabilitado-texto); }
+    .ass-mais-tarde { width: 100%; }
+    .ass-rodape-texto { padding: 0 4px; text-align: center; font-size: 13px; line-height: 18px; font-weight: 500; color: var(--cor-texto-2); }
+    /* Carregando, erro de rede e Confirmando o Pagamento: no meio da tela, 116px acima do fim */
+    .ass-confirmando { flex-grow: 1; padding: 0 24px 116px; display: flex; flex-direction: column; justify-content: center; gap: 20px; }
+    .ass-conf-caixa { height: 320px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; text-align: center; }
+    .ass-conf-caixa.tocavel { cursor: pointer; }
+    .ass-conf-titulo { font-size: 15px; line-height: 22px; font-weight: 600; color: var(--cor-texto-2); }
+    .ass-conf-texto { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--cor-texto-2); }
+    .aviso-topo-icone #aviso-topo-cadeado { stroke-width: 1.8; }   /* o cadeado do quadro AVISO tem traço de 1,8 */
+    .estado-icone .marca-ok { width: 28px; height: 28px; fill: none; stroke: var(--cor-grafite); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+    /* Boas-vindas com os cadastros fechados: o cartão "Sou Novo Por Aqui" apagado e sem toque */
+    .opcao:disabled { opacity: 0.45; cursor: default; }
+
+    /* Folhas Plano Pro, Termos de Uso e Minha Assinatura (o esqueleto é o da .folha dos Recorrentes) */
+    .folha { overscroll-behavior: contain; }
+    .plano-preco { display: flex; flex-direction: column; gap: 8px; }
+    .plano-preco-caixa { padding: 14px 16px; display: flex; align-items: baseline; gap: 6px; border-radius: 14px; background: var(--cor-fundo-suave); }
+    .plano-preco-valor { font-size: 28px; line-height: 34px; font-weight: 800; letter-spacing: -0.02em; color: var(--cor-texto); }
+    .plano-itens { display: flex; flex-direction: column; gap: 10px; }
+    .plano-item { display: flex; align-items: center; gap: 10px; font-size: 15px; line-height: 20px; font-weight: 700; color: var(--cor-texto); }
+    .plano-item svg { width: 20px; height: 20px; flex-shrink: 0; fill: none; stroke: var(--cor-grafite); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .plano-acoes { padding-top: 4px; display: flex; flex-direction: column; gap: 6px; }
+    .plano-termos { padding-bottom: 6px; text-align: center; font-size: 13px; line-height: 18px; font-weight: 500; color: var(--cor-texto-2); }
+    .plano-nota { text-align: center; font-size: 13px; line-height: 18px; font-weight: 500; color: var(--cor-texto-2); }
+    .link-termos { font: inherit; font-weight: 700; color: var(--cor-texto); text-decoration: underline; }
+    .min-apoio { padding-bottom: 8px; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--cor-texto-2); }
+    .min-termos { height: 32px; display: flex; align-items: center; justify-content: center; font-size: 13px; line-height: 18px; }
+    .termos-texto { font-size: 14px; line-height: 20px; font-weight: 500; color: var(--cor-texto-2); white-space: pre-wrap; overflow-wrap: anywhere; }
   </style>
 </head>
 <body>
@@ -1399,6 +1500,14 @@
         </button>
       </div>
 
+      <!-- Selo da assinatura (PRO-108): só de "selo" do bloco assinatura; sem selo, a linha inteira some -->
+      <div class="selo-linha" id="selo-linha" hidden>
+        <button class="selo" id="selo" type="button" aria-label="Minha assinatura">
+          <span id="selo-texto"></span>
+          <svg id="selo-seta" viewBox="0 0 12 12" aria-hidden="true" hidden><path d="M4.5 2.5L8 6l-3.5 3.5"/></svg>
+        </button>
+      </div>
+
       <p class="carregando" id="carregando">Carregando...</p>
 
       <div id="numeros" hidden>
@@ -1415,6 +1524,12 @@
         </div>
       </div>
     </header>
+
+    <!-- Modo somente leitura (PRO-108, D20): só para quem venceu -->
+    <div class="pausado-linha na-home" id="pausado-home" hidden>
+      <svg viewBox="0 0 14 14" aria-hidden="true"><rect x="3.5" y="3" width="2.2" height="8" rx="1"/><rect x="8.3" y="3" width="2.2" height="8" rx="1"/></svg>
+      <span>Registros Pausados Até Você Assinar o Pro</span>
+    </div>
 
     <nav class="atalhos" aria-label="Atalhos">
       <button class="atalho" id="atalho-categorias" type="button" aria-label="Categorias">
@@ -1734,10 +1849,15 @@
         </span>
         <span class="opcao-textos">
           <span class="opcao-titulo">Sou Novo Por Aqui</span>
-          <span class="opcao-subtitulo">Configure tudo em 1 minuto</span>
+          <span class="opcao-subtitulo" id="escolha-novo-sub">Configure tudo em 1 minuto</span>
         </span>
         <svg class="opcao-seta" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5L13 10l-5.5 5.5"/></svg>
       </button>
+      <!-- Cadastros fechados (PRO-108; o servidor só manda cadastro_aberto = false a partir da PRO-109) -->
+      <div class="ass-aviso-caixa" id="escolha-fechado" hidden>
+        <p class="ass-aviso-titulo">Novos Cadastros Estão Fechados no Momento.</p>
+        <p class="ass-aviso-texto">Volte em breve. Quem já tem conta entra normalmente.</p>
+      </div>
       <button class="opcao" id="escolha-amigo" type="button">
         <span class="opcao-icone">
           <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -2199,6 +2319,10 @@
     </div>
 
     <div class="rodape-tela" id="rec-rodape" hidden>
+      <div class="pausado-linha" id="rec-pausado" hidden>
+        <svg viewBox="0 0 14 14" aria-hidden="true"><rect x="3.5" y="3" width="2.2" height="8" rx="1"/><rect x="8.3" y="3" width="2.2" height="8" rx="1"/></svg>
+        <span>Registros Pausados Até Você Assinar o Pro</span>
+      </div>
       <button class="botao-principal com-icone mais" id="rec-adicionar" type="button">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg>
         <span>Adicionar Recorrente</span>
@@ -2310,7 +2434,7 @@
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg>
           </button>
         </div>
-        <p class="cat-dica">Clique Nas Barras Para Visualizar e Editar as Categorias</p>
+        <p class="cat-dica" id="cat-dica">Clique Nas Barras Para Visualizar e Editar as Categorias</p>
       </div>
       <div class="cat-divisoria"></div>
 
@@ -2353,11 +2477,183 @@
     </div>
   </main>
 
+  <!-- Assinaturas (PRO-108): tela aberta no cadastro (depois do dia do ciclo), por link (?tela=assinatura) ou por quem ainda não
+       escolheu o plano. Uma tela só, com variações: principal (teste e Plano Pro), teste em andamento, Pro ativo, renovação
+       cancelada e Pro dado. O cartão do plano atual vai antes do cartão de preço quando a pessoa já tem plano. -->
+  <main id="assinaturas" class="tela-cheia" hidden>
+    <header class="cabecalho cabecalho-registro" id="ass-cabecalho">
+      <div class="cabecalho-linha cabecalho-titulo">
+        <button class="botao-menu" id="ass-voltar" type="button" aria-label="Voltar">
+          <svg viewBox="0 0 22 22" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17 11H5"/><path d="M10 6l-5 5 5 5"/>
+          </svg>
+        </button>
+        <h1 class="titulo-tela">Assinaturas</h1>
+      </div>
+    </header>
+
+    <div class="ass-confirmando" id="ass-carregando" role="status" hidden>
+      <div class="ass-conf-caixa">
+        <span class="estado-icone">
+          <svg class="logo-animada" viewBox="0 0 32 32" aria-hidden="true">
+            <path class="base" d="M8 8L11.5 5"/>
+            <path class="base" d="M11.5 5V22.5C11.5 25.3 10 26.8 8 26.8C6.2 26.8 5.3 25.4 6.3 24.4C7.4 23.3 10.2 24 13 24H24.5L27.5 21.2L24.5 18.4H20.5"/>
+            <path class="base" d="M24.5 18.4L27.5 15.6L24.5 12.8H19.5"/>
+            <path class="traco traco-1" pathLength="1" d="M8 8L11.5 5"/>
+            <path class="traco traco-2" pathLength="1" d="M11.5 5V22.5C11.5 25.3 10 26.8 8 26.8C6.2 26.8 5.3 25.4 6.3 24.4C7.4 23.3 10.2 24 13 24H24.5L27.5 21.2L24.5 18.4H20.5"/>
+            <path class="traco traco-3" pathLength="1" d="M24.5 18.4L27.5 15.6L24.5 12.8H19.5"/>
+          </svg>
+        </span>
+        <p class="ass-conf-titulo">Carregando...</p>
+      </div>
+    </div>
+
+    <div class="ass-confirmando" id="ass-erro" role="alert" hidden>
+      <div class="cat-erro">
+        <div class="cat-erro-caixa">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M2.5 8.8a14 14 0 0 1 19 0"/><path d="M5.8 12.3a9 9 0 0 1 12.4 0"/><path d="M9.2 15.8a4 4 0 0 1 5.6 0"/>
+            <circle class="ponto" cx="12" cy="19.2" r="1.2"/><path d="M4 4l16 16"/>
+          </svg>
+          <p class="cat-erro-titulo" id="ass-erro-titulo"></p>
+          <p class="cat-erro-texto" id="ass-erro-texto"></p>
+        </div>
+        <button class="botao-principal" id="ass-erro-tentar" type="button">Tentar de novo</button>
+      </div>
+    </div>
+
+    <div class="ass-corpo" id="ass-conteudo" hidden>
+      <div class="ass-apoio-bloco">
+        <p class="ass-apoio" id="ass-apoio"></p>
+        <div class="cat-divisoria"></div>
+      </div>
+
+      <div class="ass-cartao" id="ass-cartao-preco">
+        <p class="ass-rotulo">Plano Pro</p>
+        <div class="ass-preco">
+          <div class="ass-preco-linha">
+            <span class="ass-preco-valor" id="ass-preco-stars"></span>
+            <span class="ass-preco-sufixo">por mês</span>
+          </div>
+          <p class="ass-preco-sufixo" id="ass-preco-reais"></p>
+        </div>
+        <p class="ass-cartao-apoio" id="ass-preco-apoio"></p>
+        <button class="botao-principal" id="ass-preco-botao" type="button"></button>
+      </div>
+
+      <div class="ass-cartao" id="ass-cartao-atual">
+        <h2 class="ass-cartao-titulo" id="ass-atual-titulo"></h2>
+        <div class="ass-caixa" id="ass-atual-caixa"></div>
+        <div class="ass-aviso-caixa" id="ass-vagas" hidden>
+          <p class="ass-aviso-titulo">As Vagas de Teste de Hoje Acabaram.</p>
+          <p class="ass-aviso-texto">Volte amanhã para testar, ou assine o Plano Pro agora.</p>
+        </div>
+        <p class="campo-erro ass-erro" id="ass-teste-erro" role="alert" hidden>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.8v3.7"/><circle class="ponto" cx="8" cy="11" r="0.9"/></svg>
+          <span></span>
+        </p>
+        <button class="botao-principal" id="ass-teste-botao" type="button">Testar Gratuitamente</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- Assinatura Expirada (PRO-108, D20): teste terminado ou Pro vencido, uma vez por dia na abertura. "Mais Tarde" (e o
+       BackButton) levam à home em modo somente leitura. O cabeçalho não tem a seta. -->
+  <main id="expirada" class="tela-cheia" hidden>
+    <header class="cabecalho cabecalho-registro cabecalho-sem-seta">
+      <div class="cabecalho-linha cabecalho-titulo">
+        <h1 class="titulo-tela">Assinaturas</h1>
+      </div>
+    </header>
+
+    <div class="ass-corpo">
+      <div class="ass-apoio-bloco">
+        <p class="ass-apoio" id="exp-apoio"></p>
+        <div class="cat-divisoria"></div>
+        <p class="ass-data"><span id="exp-data-rotulo"></span> <strong id="exp-data-valor"></strong></p>
+      </div>
+
+      <div class="ass-cartao">
+        <p class="ass-rotulo">Plano Pro</p>
+        <div class="ass-preco">
+          <div class="ass-preco-linha">
+            <span class="ass-preco-valor" id="exp-preco-stars"></span>
+            <span class="ass-preco-sufixo">por mês</span>
+          </div>
+          <p class="ass-preco-sufixo" id="exp-preco-reais"></p>
+        </div>
+        <p class="ass-cartao-apoio">Com Telegram Stars Você Paga com Segurança Pela App Store ou Play Store.</p>
+        <div class="ass-erro-bloco">
+          <p class="campo-erro ass-erro" id="exp-erro" role="alert" hidden>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.8v3.7"/><circle class="ponto" cx="8" cy="11" r="0.9"/></svg>
+            <span></span>
+          </p>
+          <button class="botao-principal" id="exp-botao" type="button">Assinar</button>
+        </div>
+      </div>
+
+      <button class="botao-texto ass-mais-tarde" id="exp-mais-tarde" type="button">Mais Tarde</button>
+      <p class="ass-rodape-texto">Seus Dados Continuam Guardados. Em Mais Tarde, Você Ainda Pode Ver Tudo, Só Não Registra.</p>
+    </div>
+  </main>
+
+  <!-- Resultado (PRO-108): Teste Ativado, Obrigado (nova) e Obrigado (renovação). O mesmo molde, só mudam o título e o apoio. -->
+  <main id="assinatura-resultado" class="tela-cheia" hidden>
+    <header class="cabecalho cabecalho-registro cabecalho-sem-seta">
+      <div class="cabecalho-linha cabecalho-titulo">
+        <h1 class="titulo-tela">Assinaturas</h1>
+      </div>
+    </header>
+
+    <div class="estado-central" role="status">
+      <span class="estado-icone">
+        <svg class="marca-ok" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10.5l3.2 3.2L15 7"/></svg>
+      </span>
+      <div class="estado-textos">
+        <h2 class="estado-titulo" id="res-titulo"></h2>
+        <p class="estado-texto" id="res-texto"></p>
+      </div>
+    </div>
+
+    <div class="rodape-tela">
+      <button class="botao-principal" id="res-continuar" type="button">Continuar</button>
+    </div>
+  </main>
+
+  <!-- Confirmando o Pagamento (PRO-108): depois do "paid" ou "pending" do openInvoice, consulta o GET /assinatura de 2 em 2 s por
+       até 30 s. Sem seta e sem BackButton; passados os 30 s, a área vira um toque para conferir de novo (nunca libera sozinha). -->
+  <main id="assinatura-confirmando" class="tela-cheia" hidden>
+    <header class="cabecalho cabecalho-registro cabecalho-sem-seta">
+      <div class="cabecalho-linha cabecalho-titulo">
+        <h1 class="titulo-tela">Assinaturas</h1>
+      </div>
+    </header>
+
+    <div class="ass-confirmando">
+      <div class="ass-conf-caixa" id="conf-area" role="status">
+        <span class="estado-icone">
+          <svg class="logo-animada" viewBox="0 0 32 32" aria-hidden="true">
+            <path class="base" d="M8 8L11.5 5"/>
+            <path class="base" d="M11.5 5V22.5C11.5 25.3 10 26.8 8 26.8C6.2 26.8 5.3 25.4 6.3 24.4C7.4 23.3 10.2 24 13 24H24.5L27.5 21.2L24.5 18.4H20.5"/>
+            <path class="base" d="M24.5 18.4L27.5 15.6L24.5 12.8H19.5"/>
+            <path class="traco traco-1" pathLength="1" d="M8 8L11.5 5"/>
+            <path class="traco traco-2" pathLength="1" d="M11.5 5V22.5C11.5 25.3 10 26.8 8 26.8C6.2 26.8 5.3 25.4 6.3 24.4C7.4 23.3 10.2 24 13 24H24.5L27.5 21.2L24.5 18.4H20.5"/>
+            <path class="traco traco-3" pathLength="1" d="M24.5 18.4L27.5 15.6L24.5 12.8H19.5"/>
+          </svg>
+        </span>
+        <p class="ass-conf-titulo">Confirmando o Pagamento...</p>
+        <p class="ass-conf-texto" id="conf-texto">Isso Leva Só Alguns Segundos.</p>
+      </div>
+    </div>
+  </main>
+
   <!-- Aviso no topo da home depois de registrar (some em 10 s) -->
   <div class="aviso-topo" id="aviso-topo" role="status" aria-live="polite" hidden>
     <div class="aviso-topo-linha">
       <span class="aviso-topo-icone">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10.5l3.2 3.2L15 7"/></svg>
+        <svg id="aviso-topo-check" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10.5l3.2 3.2L15 7"/></svg>
+        <!-- Cadeado do modo somente leitura (PRO-108) -->
+        <svg id="aviso-topo-cadeado" viewBox="0 0 20 20" aria-hidden="true" hidden><rect x="4.5" y="9" width="11" height="8" rx="2"/><path d="M7 9V6.5a3 3 0 0 1 6 0V9"/></svg>
       </span>
       <p class="aviso-topo-texto" id="aviso-topo-texto"></p>
     </div>
@@ -2499,6 +2795,77 @@
         <button class="botao-principal" id="cat-nova-salvar" type="button" disabled>Salvar</button>
         <button class="botao-texto" id="cat-nova-cancelar" type="button">Cancelar</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Assinaturas (PRO-108), folhas de baixo: Plano Pro, Minha Assinatura e Termos de Uso. Fora dos <main>, como as dos Recorrentes
+       (o toque no fundo escuro fecha). Termos de Uso vem por último para ficar por cima da Plano Pro e da Minha Assinatura. -->
+  <div class="folha-camada" id="folha-plano" role="dialog" aria-modal="true" aria-labelledby="folha-plano-titulo" hidden>
+    <div class="folha-fundo" data-fechar="folha-plano"></div>
+    <div class="folha">
+      <div class="folha-alca"></div>
+      <h2 class="folha-titulo" id="folha-plano-titulo">Plano Pro</h2>
+      <div class="plano-preco">
+        <div class="plano-preco-caixa">
+          <span class="plano-preco-valor" id="plano-preco-stars"></span>
+          <span class="ass-preco-sufixo">por mês</span>
+        </div>
+        <p class="ass-preco-sufixo" id="plano-preco-reais"></p>
+      </div>
+      <div class="plano-itens">
+        <div class="plano-item">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10.5l3.2 3.2L15 7"/></svg>
+          <span>Até 20 Categorias</span>
+        </div>
+        <div class="plano-item" id="plano-item-ia">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10.5l3.2 3.2L15 7"/></svg>
+          <span id="plano-ia-texto"></span>
+        </div>
+      </div>
+      <div class="plano-acoes">
+        <p class="plano-termos">Ao assinar, você concorda com os <button class="link-termos" id="plano-termos" type="button">Termos de Uso</button>.</p>
+        <p class="campo-erro ass-erro" id="plano-erro" role="alert" hidden>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.8v3.7"/><circle class="ponto" cx="8" cy="11" r="0.9"/></svg>
+          <span></span>
+        </p>
+        <button class="botao-principal" id="plano-pagar" type="button">Pagar com Stars</button>
+        <button class="botao-texto" id="plano-voltar" type="button">Voltar</button>
+        <p class="plano-nota">A Assinatura Renova a Cada 30 Dias Usando as Stars Que Estão na Sua Conta, e Você Pode Cancelar Quando Quiser.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="folha-camada" id="folha-minha" role="dialog" aria-modal="true" aria-labelledby="folha-minha-titulo" hidden>
+    <div class="folha-fundo" data-fechar="folha-minha"></div>
+    <div class="folha">
+      <div class="folha-alca"></div>
+      <div class="folha-titulos">
+        <h2 class="folha-titulo" id="folha-minha-titulo">Minha Assinatura</h2>
+        <p class="folha-texto" id="min-situacao"></p>
+      </div>
+      <div class="ass-caixa" id="min-linhas"></div>
+      <div class="plano-acoes">
+        <p class="min-apoio" id="min-apoio" hidden></p>
+        <button class="botao-principal" id="min-principal" type="button"></button>
+        <button class="botao-texto" id="min-fechar" type="button">Fechar</button>
+        <div class="min-termos" id="min-termos-bloco" hidden>
+          <button class="link-termos" id="min-termos" type="button">Termos de Uso</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="folha-camada" id="folha-termos" role="dialog" aria-modal="true" aria-labelledby="folha-termos-titulo" hidden>
+    <div class="folha-fundo" data-fechar="folha-termos"></div>
+    <div class="folha">
+      <div class="folha-alca"></div>
+      <h2 class="folha-titulo" id="folha-termos-titulo">Termos de Uso</h2>
+      <p class="termos-texto" id="termos-texto" hidden></p>
+      <div class="folha-estado" id="termos-estado">
+        <p id="termos-estado-texto">Carregando...</p>
+        <button id="termos-tentar" type="button" hidden>Tentar de novo</button>
+      </div>
+      <button class="botao-principal" id="termos-fechar" type="button">Fechar</button>
     </div>
   </div>
 
@@ -2655,6 +3022,9 @@
       const codigo = typeof resultado.detalhe === "string" ? resultado.detalhe : "";
       if (status === 0) return MSG_SEM_CONEXAO;
       if (status === 401) return MSG_SESSAO;
+      // 403 assinatura_vencida / assinatura_ausente (PRO-108): tratado de forma central em chamar/enviarComMetodo (aviso do modo
+      // somente leitura ou tela Assinaturas); aqui nunca vira a mensagem de erro genérica.
+      if (status === 403) return "";
       if (status === 404) return MSG_CADASTRO_404;
       if (status === 409) return MSG_CADASTRO_409;
       if (momento === "interpretar") {
@@ -3221,6 +3591,7 @@
       const falhou = operacao === "apagar" ? MSG_RECORRENTE_APAGAR_FALHOU : MSG_RECORRENTE_FALHOU;
       if (resultado.erro === undefined) return { acao: "sucesso" };
       if (resultado.erro === 401) return { acao: "erro", mensagem: MSG_SESSAO };
+      if (resultado.erro === 403) return { acao: "erro", mensagem: "" }; // PRO-108: o aviso central já apareceu; sem mensagem genérica
       if (resultado.erro === 404 && resultado.detalhe === (receita ? "receita_recorrente_nao_encontrada" : "recorrente_nao_encontrado")) {
         if (operacao === "apagar") return { acao: "sucesso" };
         return { acao: "erro", mensagem: MSG_RECORRENTE_NAO_EXISTE, voltarLista: true };
@@ -3362,6 +3733,7 @@
       const falhou = operacao === "excluir" ? MSG_CATEGORIA_EXCLUIR_FALHOU : MSG_CATEGORIA_SALVAR_FALHOU;
       if (resultado.erro === undefined) return { acao: "sucesso" };
       if (resultado.erro === 401) return { acao: "erro", mensagem: MSG_SESSAO };
+      if (resultado.erro === 403) return { acao: "erro", mensagem: "" }; // PRO-108: o aviso central já apareceu; sem mensagem genérica
       if (resultado.erro === 404 && resultado.detalhe === "categoria_inexistente" && operacao !== "criar") {
         if (operacao === "excluir") return { acao: "sucesso" };
         return { acao: "erro", mensagem: MSG_CATEGORIA_NAO_EXISTE, voltarRanking: true };
@@ -3381,6 +3753,428 @@
         }
       }
       return { acao: "erro", mensagem: falhou };
+    }
+
+    // ---------- Assinaturas (PRO-108) ----------
+    // Tudo aqui é puro. O bloco "assinatura" do GET /me (o mesmo JSON do GET /assinatura e da resposta do POST
+    // /assinaturas/renovacao) entra por parâmetro. As datas são só TEXTO "AAAA-MM-DD" do servidor: a tela formata
+    // (dd/mm/aaaa) e nunca calcula data de plano (nada de new Date em data de plano). Quem decide o plano é o servidor.
+    const ROTA_ASSINATURA = "/assinatura";
+    const ROTA_ASSINATURA_TESTE = "/assinaturas/teste";
+    const ROTA_ASSINATURA_FATURA = "/assinaturas/fatura";
+    const ROTA_ASSINATURA_RENOVACAO = "/assinaturas/renovacao";
+    const ROTA_TERMOS = "/termos";
+
+    const DIAS_TESTE = 10;                    // DIAS_TESTE do assinaturas.py (só para os textos "10 Dias")
+    const PAGAMENTO_LIMITE_MS = 30000;        // espera do "Confirmando o Pagamento": até 30 s
+    const PAGAMENTO_PASSO_MS = 2000;          // ... consultando de 2 em 2 s (setTimeout encadeado, nenhum relógio repetido)
+    const ARRASTO_FECHAR_PX = 100;            // arrastar a folha para baixo mais que isto fecha
+
+    const MSG_ASSINATURAS_DESLIGADAS = "As assinaturas ainda não estão abertas. Volte em breve.";
+    const MSG_TESTE_FALHOU = "Não Conseguimos Começar o Teste. Tente de Novo.";
+    const MSG_PAGAMENTO_RECUSADO = "Não Conseguimos Concluir o Pagamento. Tente de Novo.";
+    const MSG_FATURA_FALHOU = "Não Conseguimos Abrir o Pagamento. Tente de Novo.";
+    const MSG_PAGAMENTO_DEMORA = "O pagamento foi feito, mas ainda não chegou. Toque para conferir de novo.";
+    const MSG_PAGAMENTO_ESPERA = "Isso Leva Só Alguns Segundos.";
+    const MSG_CANCELAR_FALHOU = "Não foi possível cancelar agora. Tente de novo.";
+    const MSG_REATIVAR_FALHOU = "Não foi possível reativar agora. Tente de novo.";
+    const MSG_REATIVAR_RECUSADO = "Não foi possível reativar por aqui. Você pode assinar de novo sem perder nenhum dia.";
+    const MSG_TERMOS_FALHOU = "Não foi possível carregar os termos. Tente de novo.";
+    const TEXTO_CONFIRMAR_REATIVAR = "Reativar a renovação? Nada é cobrado agora; a próxima cobrança segue a data de sempre.";
+    const MSG_ERRO_ASSINATURA_TITULO = "Não Conseguimos Verificar Sua Assinatura";
+    const MSG_ERRO_ASSINATURA_TEXTO = "Confira a sua conexão e tente de novo.";
+
+    // O bloco só vale com a chave ligada (ligada === true). Ausente, nulo ou desligada: a tela fica como sempre foi.
+    function blocoDeAssinatura(bloco) {
+      return bloco && typeof bloco === "object" && bloco.ligada === true ? bloco : null;
+    }
+
+    // ---------- Selo da home: sai SÓ do campo "selo" (nunca de estado, datas ou outra coisa) ----------
+    const SELOS = { gratis: "Grátis", pro: "Pro", assinar: "Assinar" };
+
+    // { variante, texto, seta, tocavel } ou null (sem selo: a linha some). tocavel só com selo_tocavel === true.
+    function seloDaHome(bloco) {
+      const b = blocoDeAssinatura(bloco);
+      if (!b || typeof b.selo !== "string" || !Object.prototype.hasOwnProperty.call(SELOS, b.selo)) return null;
+      return { variante: b.selo, texto: SELOS[b.selo], seta: b.selo === "assinar", tocavel: b.selo_tocavel === true };
+    }
+
+    // O que o toque no selo faz: "nenhuma" (admin e selo ausente: nada acontece), "plano" (o selo "Assinar" abre a
+    // folha Plano Pro) ou "minha" (Grátis e Pro abrem a folha Minha Assinatura).
+    function acaoDoToqueNoSelo(bloco) {
+      const selo = seloDaHome(bloco);
+      if (!selo || !selo.tocavel) return "nenhuma";
+      return selo.variante === "assinar" ? "plano" : "minha";
+    }
+
+    // Modo somente leitura (D20): só com modo_leitura === true do servidor (ou com um 403, que a tela trata à parte).
+    function modoLeituraDoBloco(bloco) {
+      const b = blocoDeAssinatura(bloco);
+      return !!b && b.modo_leitura === true;
+    }
+
+    // ---------- Abertura ----------
+    // ?tela=assinatura na URL, ou start_param = "assinatura" (link do bot). 'busca' = window.location.search.
+    function linkDeAssinatura(busca, startParam) {
+      let tela = null;
+      try { tela = new URLSearchParams(String(busca || "")).get("tela"); } catch (e) { tela = null; }
+      return tela === "assinatura" || startParam === "assinatura";
+    }
+
+    // "AAAA-MM-DD" do dia de hoje no fuso 'fuso' (Brasília), para a marca "tela Expirada vista hoje". Não é data de plano.
+    function diaDeBrasilia(agoraMs, fuso) {
+      const partes = new Intl.DateTimeFormat("en-CA", { timeZone: fuso, year: "numeric", month: "2-digit", day: "2-digit" })
+        .formatToParts(new Date(agoraMs));
+      const pegar = (tipo) => (partes.find((p) => p.type === tipo) || {}).value || "";
+      return pegar("year") + "-" + pegar("month") + "-" + pegar("day");
+    }
+
+    // A tela Expirada já apareceu hoje? Vale o dia guardado na nuvem do Telegram OU no localStorage. Sem armazenamento
+    // (nenhum dos dois devolve o dia de hoje): não vista, e a tela aparece (o lado seguro).
+    function expiradaJaVistaHoje(valorNuvem, valorLocal, hoje) {
+      return typeof hoje === "string" && hoje !== "" && (valorNuvem === hoje || valorLocal === hoje);
+    }
+
+    // Ordem de decisão da abertura, com o bloco do /me (ctx = { link, vistaHoje }):
+    //   1. sem bloco, ou ligada = false                          -> "home" (como sempre foi);
+    //   2. modo_leitura: a Expirada se o link a pediu ou se ainda não apareceu hoje; senão a home em modo leitura;
+    //   3. estado "sem_plano" (cadastro feito, plano não escolhido) -> "assinaturas";
+    //   4. link (?tela=assinatura ou start_param)                  -> "assinaturas";
+    //   5. senão "home".
+    function destinoDaAbertura(bloco, ctx) {
+      const b = blocoDeAssinatura(bloco);
+      if (!b) return "home";
+      if (b.modo_leitura === true) return ctx.link || !ctx.vistaHoje ? "expirada" : "home";
+      if (b.estado === "sem_plano") return "assinaturas";
+      if (ctx.link) return "assinaturas";
+      return "home";
+    }
+
+    // ---------- Textos e formatos ----------
+    // "2026-11-21" -> "21/11/2026", só separando o texto (nunca new Date). Fora do formato: "".
+    function formatarDataPlano(texto) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(texto === null || texto === undefined ? "" : texto));
+      return m ? m[3] + "/" + m[2] + "/" + m[1] : "";
+    }
+
+    // dias_restantes: 2 ou mais "Faltam N Dias."; 1 "Falta 1 Dia."; 0 "Termina Hoje."; outro valor: "".
+    function textoDias(dias) {
+      if (!Number.isInteger(dias) || dias < 0) return "";
+      if (dias === 0) return "Termina Hoje.";
+      return dias === 1 ? "Falta 1 Dia." : "Faltam " + dias + " Dias.";
+    }
+
+    // "150 Stars por mês" (da valor_stars da linha em vigor; nunca do preco.stars)
+    function textoValorStars(valorStars) {
+      return Number.isInteger(valorStars) && valorStars > 0 ? valorStars + " Stars por mês" : "";
+    }
+
+    // Preço do plano (preco.stars e preco.reais_aproximado do servidor): "150 Stars" e "≈ R$ 19 (varia conforme a loja)".
+    function textoPrecoStars(preco) {
+      return preco && Number.isInteger(preco.stars) && preco.stars > 0 ? preco.stars + " Stars" : "";
+    }
+
+    function textoPrecoReais(preco) {
+      const n = preco ? preco.reais_aproximado : null;
+      return typeof n === "number" && Number.isFinite(n) && n > 0 ? "≈ R$ " + String(n).replace(".", ",") + " (varia conforme a loja)" : "";
+    }
+
+    // "Até 17 Registros Por IA Por Dia" (limite_ia_dia do servidor); sem número válido (admin: null): sem a linha.
+    function textoLimiteIa(limite) {
+      return Number.isInteger(limite) && limite > 0 ? "Até " + limite + " Registros Por IA Por Dia" : "";
+    }
+
+    function textoDicaCategorias(modoLeitura) {
+      return modoLeitura
+        ? "Veja Quanto Cada Categoria Gastou. Para Criar ou Editar, Assine o Plano Pro."
+        : "Clique Nas Barras Para Visualizar e Editar as Categorias";
+    }
+
+    // O aviso de 10 s do modo somente leitura, no formato do montarAviso: { antes, negrito, depois, texto }.
+    function avisoDoModoLeitura() {
+      return { antes: "", negrito: "Assine o Pro", depois: " Para Continuar se Organizando", texto: "Assine o Pro Para Continuar se Organizando" };
+    }
+
+    // O que fazer com um 403 do servidor (qualquer rota): "vencida" (assinatura_vencida: aviso + modo leitura, sem trocar de
+    // tela e sem a mensagem de erro genérica), "ausente" (assinatura_ausente: tela Assinaturas) ou null (outro erro).
+    function acaoDoAcessoRecusado(status, detalhe) {
+      if (status !== 403) return null;
+      if (detalhe === "assinatura_vencida") return "vencida";
+      if (detalhe === "assinatura_ausente") return "ausente";
+      return null;
+    }
+
+    // ---------- Folha Minha Assinatura ----------
+    // Qual estado mostrar (tabela da nota): selo "gratis" -> "gratis"; selo "pro" com proxima_renovacao -> "pro-ativo";
+    // selo "pro" com renovacao_cancelada -> "renovacao-cancelada"; selo "pro" sem os dois (Pro dado) -> "pro-dado".
+    // O selo "assinar" (vencido) não tem folha própria: o toque abre a Plano Pro.
+    function estadoDaFolha(bloco) {
+      const b = blocoDeAssinatura(bloco);
+      if (!b) return null;
+      if (b.selo === "gratis") return "gratis";
+      if (b.selo !== "pro") return null;
+      if (b.proxima_renovacao) return "pro-ativo";
+      if (b.renovacao_cancelada === true) return "renovacao-cancelada";
+      return "pro-dado";
+    }
+
+    // Linhas { rotulo, valor } sem as que não têm valor (data ausente).
+    function linhasComValor(linhas) {
+      return linhas.filter((l) => l[1] !== "");
+    }
+
+    // Tudo que a folha mostra no estado: situacao { antes, negrito }, linhas [[rótulo, valor]], apoio, principal
+    // { texto, acao, claro }, fechar (o "Fechar" cinza) e termos (o link "Termos de Uso"). Datas e números do bloco.
+    function textosDaFolha(estado, bloco) {
+      const b = blocoDeAssinatura(bloco);
+      if (!b) return null;
+      if (estado === "gratis") {
+        return {
+          situacao: { antes: "Seu Teste Gratuito Está Ativo. ", negrito: textoDias(b.dias_restantes) },
+          linhas: linhasComValor([["Plano:", "Grátis"], ["Início do Teste:", formatarDataPlano(b.inicio)], ["Fim do Teste:", formatarDataPlano(b.fim)]]),
+          apoio: "", principal: { texto: "Assinar o Plano Pro", acao: "plano", claro: false }, fechar: true, termos: false,
+        };
+      }
+      if (estado === "pro-ativo") {
+        return {
+          situacao: { antes: "Obrigado Por Assinar o L1d3r! ", negrito: "Seu Plano Pro Está Ativo." },
+          linhas: linhasComValor([["Plano:", "Pro"], ["Valor:", textoValorStars(b.valor_stars)], ["Próxima Renovação:", formatarDataPlano(b.proxima_renovacao)]]),
+          apoio: "A Renovação Usa as Stars Que Estão na Sua Conta. Você Pode Cancelar Quando Quiser.",
+          principal: { texto: "Cancelar Renovação", acao: "cancelar", claro: true }, fechar: true, termos: true,
+        };
+      }
+      if (estado === "renovacao-cancelada") {
+        return {
+          situacao: { antes: "Seu Plano Pro Continua Ativo Até o Fim do Período Pago. ", negrito: "A Renovação Foi Cancelada." },
+          linhas: linhasComValor([["Plano:", "Pro"], ["Vale Até:", formatarDataPlano(b.vale_ate)]]),
+          apoio: "", principal: { texto: "Reativar Renovação", acao: "reativar", claro: false }, fechar: true, termos: false,
+        };
+      }
+      if (estado === "pro-dado") {
+        return {
+          situacao: { antes: "Seu Plano Pro Está Ativo ", negrito: "Até a Data Abaixo." },
+          linhas: linhasComValor([["Plano:", "Pro"], ["Vale Até:", formatarDataPlano(b.vale_ate)]]),
+          apoio: "", principal: { texto: "Fechar", acao: "fechar", claro: false }, fechar: false, termos: false,
+        };
+      }
+      return null;
+    }
+
+    // Confirmação nativa do cancelamento: a data é a vale_ate do servidor (o fim único do Pro).
+    function textoConfirmarCancelamento(valeAte) {
+      return "Cancelar a renovação? Seu Plano Pro continua ativo até " + formatarDataPlano(valeAte) + ".";
+    }
+
+    // ---------- Tela Assinaturas ----------
+    // Qual variação desenhar: "principal" (sem plano: preço e teste), "teste" (teste em andamento), "pro-ativo",
+    // "renovacao-cancelada", "pro-dado" ou "vencido" (a tela Expirada); null se o bloco não serve.
+    function modoDaTelaAssinaturas(bloco) {
+      const b = blocoDeAssinatura(bloco);
+      if (!b) return null;
+      if (b.estado === "sem_plano") return "principal";
+      if (b.estado === "teste") return "teste";
+      if (b.estado === "teste_vencido" || b.estado === "pro_vencido") return "vencido";
+      if (b.estado !== "pro") return null;
+      if (b.proxima_renovacao) return "pro-ativo";
+      if (b.renovacao_cancelada === true) return "renovacao-cancelada";
+      return "pro-dado";
+    }
+
+    const APOIO_CARTAO_PRECO = "Com Telegram Stars Você Paga com Segurança Pela App Store ou Play Store.";
+    const APOIO_CARTAO_PRO = "A Renovação Usa as Stars Que Estão na Sua Conta. Você Pode Cancelar Quando Quiser.";
+
+    // Textos de cada variação (quadros PRINCIPAL, TESTE EM ANDAMENTO, PRO ATIVO e RENOVAÇÃO CANCELADA): apoio do topo, se o
+    // cartão do plano atual vem antes do cartão de preço, o título e as linhas do cartão atual, o apoio e o botão do
+    // cartão de preço (botao null = sem botão) e se o cartão de preço aparece.
+    function textosDaTelaAssinaturas(modo, bloco) {
+      const b = blocoDeAssinatura(bloco);
+      if (!b) return null;
+      const preco = b.preco || {};
+      if (modo === "principal") {
+        const previsto = b.teste_previsto || {};
+        const stars = textoPrecoStars(preco);
+        return {
+          apoio: "Nossa Aplicação Conta Com Uma Assinatura Simbólica" + (stars ? " de " + stars : "") + " Por Mês. Mas Não Se Preocupe: Liberamos "
+            + DIAS_TESTE + " Dias Gratuitos Para Novos Usuários Testarem.",
+          atualPrimeiro: false, mostrarPreco: true,
+          atualTitulo: "Teste Gratuitamente Por " + DIAS_TESTE + " Dias Corridos!",
+          linhas: linhasComValor([["Início do Teste:", formatarDataPlano(previsto.inicio)], ["Fim do Teste:", formatarDataPlano(previsto.fim)]]),
+          precoApoio: APOIO_CARTAO_PRECO, botao: { texto: "Assinar", acao: "plano", claro: false },
+        };
+      }
+      if (modo === "teste") {
+        return {
+          apoio: "Seu Teste Gratuito Está Ativo. Assine Quando Quiser Para Continuar Usando o L1d3r Depois Dele.",
+          atualPrimeiro: true, mostrarPreco: true,
+          atualTitulo: ("Seu Teste Está Ativo. " + textoDias(b.dias_restantes)).trim(),
+          linhas: linhasComValor([["Início do Teste:", formatarDataPlano(b.inicio)], ["Fim do Teste:", formatarDataPlano(b.fim)]]),
+          precoApoio: APOIO_CARTAO_PRECO, botao: { texto: "Assinar", acao: "plano", claro: false },
+        };
+      }
+      if (modo === "pro-ativo") {
+        return {
+          apoio: "Obrigado Por Assinar o L1d3r! Seu Plano Pro Está Ativo.",
+          atualPrimeiro: true, mostrarPreco: true, atualTitulo: "Seu Plano Pro",
+          linhas: linhasComValor([["Ativo Até:", formatarDataPlano(b.vale_ate)], ["Renovação:", "Automática"]]),
+          precoApoio: APOIO_CARTAO_PRO, botao: { texto: "Cancelar Renovação", acao: "cancelar", claro: true },
+        };
+      }
+      if (modo === "renovacao-cancelada") {
+        const data = formatarDataPlano(b.vale_ate);
+        return {
+          apoio: "Você Cancelou a Renovação. Seu Plano Pro Continua Ativo Até o Fim do Período Pago.",
+          atualPrimeiro: true, mostrarPreco: true, atualTitulo: "Seu Plano Pro",
+          linhas: linhasComValor([["Ativo Até:", data], ["Renovação:", "Cancelada"]]),
+          precoApoio: "Não Haverá Nova Cobrança. Reative Para Continuar Depois de " + data + ".",
+          botao: { texto: "Reativar Renovação", acao: "reativar", claro: false },
+        };
+      }
+      if (modo === "pro-dado") {
+        return {
+          apoio: "Seu Plano Pro Está Ativo Até a Data Abaixo.",
+          atualPrimeiro: true, mostrarPreco: false, atualTitulo: "Seu Plano Pro",
+          linhas: linhasComValor([["Ativo Até:", formatarDataPlano(b.vale_ate)]]),
+          precoApoio: "", botao: null,
+        };
+      }
+      return null;
+    }
+
+    // ---------- Tela Assinatura Expirada ----------
+    // teste_vencido: "Assinar"; pro_vencido: "Renovar Assinatura" (e o pagamento confirmado leva ao OBRIGADO RENOVAÇÃO).
+    function textosDaExpirada(bloco) {
+      const b = blocoDeAssinatura(bloco);
+      if (!b) return null;
+      if (b.estado === "teste_vencido") {
+        return {
+          apoio: "Seu Teste de " + DIAS_TESTE + " Dias Terminou. Para Continuar Usando o L1d3r, Assine o Plano Pro.",
+          rotuloData: "Seu Teste Terminou em:", data: formatarDataPlano(b.fim), botao: "Assinar", renovacao: false,
+        };
+      }
+      if (b.estado === "pro_vencido") {
+        return {
+          apoio: "Sua Assinatura Pro Venceu. Renove Para Continuar Usando o L1d3r.",
+          rotuloData: "Venceu em:", data: formatarDataPlano(b.fim), botao: "Renovar Assinatura", renovacao: true,
+        };
+      }
+      return null;
+    }
+
+    // ---------- Teste grátis (POST /assinaturas/teste) ----------
+    // 201 e 200 (repetido): Teste Ativado. 409 teste_ja_usado e plano_ativo: a tela está desatualizada, busca o
+    // GET /assinatura de novo. vagas_teste_esgotadas (PRO-109): Vagas Esgotadas. O resto (sem resposta, banco_ocupado, 500):
+    // Erro no Teste, e o botão tenta de novo. 401: a mensagem de sessão. O servidor decide; a tela não conta dias.
+    function decisaoDoTeste(resultado) {
+      if (resultado.erro === undefined) {
+        const d = resultado.dados || {};
+        return { acao: "ativado", inicio: d.inicio, fim: d.fim };
+      }
+      if (resultado.erro === 401) return { acao: "erro", mensagem: MSG_SESSAO };
+      if (resultado.detalhe === "vagas_teste_esgotadas") return { acao: "esgotado" };
+      if (resultado.erro === 409 && (resultado.detalhe === "teste_ja_usado" || resultado.detalhe === "plano_ativo")) return { acao: "recarregar" };
+      return { acao: "erro", mensagem: MSG_TESTE_FALHOU };
+    }
+
+    function textosDoTesteAtivado(fim) {
+      const data = formatarDataPlano(fim);
+      return { titulo: "Seu Teste Começou!", texto: data ? "Vale Até " + data : "" };
+    }
+
+    // ---------- Pagamento (POST /assinaturas/fatura e Telegram.WebApp.openInvoice) ----------
+    // 200 com o link: abre a fatura. 409 assinaturas_desligadas: o texto decidido pelo Ygor. 409 plano_ativo: busca o
+    // estado de novo. 401: sessão. O resto (502 telegram_indisponivel, 500, sem resposta): não abriu o pagamento.
+    function decisaoDaFatura(resultado) {
+      if (resultado.erro === undefined) {
+        const link = resultado.dados && resultado.dados.link;
+        return typeof link === "string" && link.indexOf("https://") === 0 ? { acao: "abrir", link: link } : { acao: "erro", mensagem: MSG_FATURA_FALHOU };
+      }
+      if (resultado.erro === 401) return { acao: "erro", mensagem: MSG_SESSAO };
+      if (resultado.erro === 409 && resultado.detalhe === "assinaturas_desligadas") return { acao: "erro", mensagem: MSG_ASSINATURAS_DESLIGADAS };
+      if (resultado.erro === 409 && resultado.detalhe === "plano_ativo") return { acao: "recarregar" };
+      return { acao: "erro", mensagem: MSG_FATURA_FALHOU };
+    }
+
+    // O status que o openInvoice devolve: 'paid' e 'pending' vão para o Confirmando; 'cancelled' volta à folha (nada
+    // acontece); 'failed' mostra a linha vermelha. Qualquer outro valor: como cancelado.
+    function decisaoDoPagamento(status) {
+      if (status === "paid" || status === "pending") return "confirmar";
+      if (status === "failed") return "recusado";
+      return "voltar";
+    }
+
+    // O pagamento chegou? O GET /assinatura passou a "pro" (antes não era), ou, já sendo Pro, o fim mudou ou a renovação
+    // cancelada foi reativada. Só o JSON do servidor libera (o cliente nunca decide o plano).
+    function pagamentoConfirmado(antes, depois) {
+      const d = blocoDeAssinatura(depois);
+      if (!d || d.estado !== "pro") return false;
+      const a = blocoDeAssinatura(antes);
+      if (!a || a.estado !== "pro") return true;
+      return a.vale_ate !== d.vale_ate || (a.renovacao_cancelada === true && d.renovacao_cancelada !== true);
+    }
+
+    // Espera o pagamento chegar: consulta, e se ainda não chegou espera 'passoMs' (setTimeout, pelo 'esperar') e consulta
+    // de novo, até 'limiteMs'. 'consultar', 'esperar' e 'relogio' vêm de fora para o teste poder trocá-los.
+    // Devolve { confirmado: true, bloco } ou { confirmado: false } (a tela então oferece conferir de novo).
+    async function aguardarPagamento(consultar, esperar, relogio, antes, limiteMs, passoMs) {
+      const inicio = relogio();
+      for (;;) {
+        const r = await consultar();
+        if (r && r.erro === undefined && pagamentoConfirmado(antes, r.dados)) return { confirmado: true, bloco: r.dados };
+        if (relogio() - inicio >= limiteMs) return { confirmado: false };
+        await esperar(passoMs);
+      }
+    }
+
+    // Pago a partir da tela "Pro Venceu": OBRIGADO RENOVAÇÃO; nos outros casos, OBRIGADO NOVA.
+    function tipoDoObrigado(blocoAntes) {
+      const a = blocoDeAssinatura(blocoAntes);
+      return a && a.estado === "pro_vencido" ? "renovacao" : "nova";
+    }
+
+    // Títulos do Obrigado. 'nome' é o nome do /me; sem nome, sem a vírgula. A data é a proxima_renovacao do servidor.
+    function textosDoObrigado(tipo, nome, proximaRenovacao) {
+      const quem = String(nome === null || nome === undefined ? "" : nome).trim();
+      const data = formatarDataPlano(proximaRenovacao);
+      const renova = data ? "Renova em " + data + " Usando as Stars Que Estão na Sua Conta." : "";
+      if (tipo === "renovacao") {
+        return {
+          titulo: "Assinatura Renovada!",
+          texto: "Obrigado Por Continuar Com a Gente" + (quem ? ", " + quem : "") + ". Agradecemos a Sua Confiança no L1d3r."
+            + (renova ? " Seu Plano Pro " + renova : ""),
+        };
+      }
+      return {
+        titulo: "Obrigado Pela Assinatura" + (quem ? ", " + quem : "") + "!",
+        texto: "Seu Plano Pro Está Ativo." + (renova ? " Ele " + renova : ""),
+      };
+    }
+
+    // ---------- Cancelar e reativar a renovação (POST /assinaturas/renovacao) ----------
+    // 200: a resposta é o JSON novo (atualiza selo e folha). 409 reativacao_recusada (só na reativação): o alerta e,
+    // ao fechá-lo, a folha Plano Pro. O resto (502, sem rede...): alerta, e a folha fica como estava.
+    function decisaoDaRenovacao(cancelar, resultado) {
+      if (resultado.erro === undefined) return { acao: "atualizar" };
+      if (!cancelar && resultado.erro === 409 && resultado.detalhe === "reativacao_recusada") return { acao: "recusada", mensagem: MSG_REATIVAR_RECUSADO };
+      if (resultado.erro === 401) return { acao: "erro", mensagem: MSG_SESSAO };
+      return { acao: "erro", mensagem: cancelar ? MSG_CANCELAR_FALHOU : MSG_REATIVAR_FALHOU };
+    }
+
+    // ---------- Cadastro ----------
+    // Cadastros fechados (PRO-109): só com cadastro_aberto === false no bloco. Ausente = aberto.
+    function cadastroFechado(bloco) {
+      const b = blocoDeAssinatura(bloco);
+      return !!b && b.cadastro_aberto === false;
+    }
+
+    // Depois do dia do ciclo o cadastro passa pela tela Assinaturas, a não ser que o servidor tenha dito que a chave está
+    // desligada (então o cadastro segue como sempre: direto para as categorias).
+    function cadastroPassaPelasAssinaturas(estadoPrevio) {
+      return estadoPrevio !== "desligada";
+    }
+
+    // Arrastar a folha para baixo: fecha quando passa de ARRASTO_FECHAR_PX.
+    function arrastoFechaAFolha(deslocamentoPx) {
+      return Number.isFinite(deslocamentoPx) && deslocamentoPx >= ARRASTO_FECHAR_PX;
     }
   </script>
   <!-- FIM FUNCOES PURAS -->
@@ -3584,6 +4378,7 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
         if (!resposta.ok) {
           let detalhe;
           try { detalhe = (await resposta.json()).detail; } catch (e) { /* corpo sem JSON */ }
+          aoAcessoRecusado(resposta.status, detalhe); // 403 assinatura_vencida/ausente: tratamento central (PRO-108)
           return { erro: resposta.status, detalhe };
         }
         return { dados: await resposta.json() };
@@ -3613,6 +4408,7 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
         if (!resposta.ok) {
           let detalhe;
           try { detalhe = (await resposta.json()).detail; } catch (e) { /* corpo sem JSON */ }
+          aoAcessoRecusado(resposta.status, detalhe); // 403 assinatura_vencida/ausente: tratamento central (PRO-108)
           const retryAfter = parseInt(resposta.headers.get("Retry-After"), 10);
           return { erro: resposta.status, detalhe, retryAfter: Number.isFinite(retryAfter) ? retryAfter : undefined };
         }
@@ -3647,6 +4443,7 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
 
     function voltarParaCarregando() {
       esconderBoasVindas();
+      esconderTelasAssinatura();
       $("aviso").hidden = true;
       $("tela").hidden = false;
       $("numeros").hidden = true;
@@ -3681,10 +4478,14 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
       const resultados = abertura
         ? await comTempoMinimo(chamadas, TEMPO_MINIMO_LOGO_MS, (r) => destinoDaCarga(r) !== "aviso", () => performance.now(), esperar, 0)
         : await chamadas;
+      const destino = destinoDaCarga(resultados);
+      // PRO-108: a abertura decide, pelo bloco "assinatura" do /me (nenhuma chamada nova), se mostra a tela Expirada, a tela
+      // Assinaturas ou a home. Só lê o armazenamento (até 2 s, com a logo ainda na tela) quando precisa.
+      let destinoAssinatura = "home";
+      if (abertura && destino === "home") destinoAssinatura = await decidirAberturaPelaAssinatura(resultados[0].dados.assinatura);
       // O destino é mostrado logo abaixo, na mesma tarefa: a logo some sem um desenho no meio.
       if (abertura) esconderTelaLogo();
       // Sem cadastro (404 usuario_nao_cadastrado do /me): a escolha inicial (PRO-97, D1), no lugar do aviso.
-      const destino = destinoDaCarga(resultados);
       if (destino === "escolha") {
         abrirEscolhaInicial();
         return;
@@ -3698,6 +4499,9 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
       mostrarCabecalho(me, resumo);
       mostrarGrafico(historico.meses || []);
       mostrarExtrato(recentes.movimentacoes || []);
+      aplicarAssinatura(me.assinatura); // selo, modo somente leitura e dica das Categorias (sem a chave: nada muda)
+      if (destinoAssinatura === "expirada") abrirExpiradaNaAbertura();
+      else if (destinoAssinatura === "assinaturas") abrirAssinaturasNaAbertura();
     }
 
     // ---------- Telegram ----------
@@ -3869,6 +4673,7 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
     }
 
     function abrirOpcoes() {
+      if (bloquearNoModoLeitura()) return; // modo somente leitura: só o aviso, sem abrir nada (PRO-108)
       rolagemHome = window.scrollY;
       rolagemGrafico = $("grafico-area").scrollLeft;
       $("tela").hidden = true;
@@ -3932,6 +4737,15 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
       if (!$("tela-logo").hidden) return; // a tela da logo está por cima: nada embaixo recebe comando (PRO-100)
       if (folhaAberta()) {                // folha de baixo aberta: fecha a folha (PRO-101)
         fecharFolhaAtual();
+        return;
+      }
+      if (!$("assinatura-confirmando").hidden || !$("assinatura-resultado").hidden) return; // sem saída: o pagamento confirma e o Continuar segue (PRO-108)
+      if (!$("expirada").hidden) {        // Assinatura Expirada: o voltar faz o mesmo que "Mais Tarde" (home em modo somente leitura)
+        maisTarde();
+        return;
+      }
+      if (!$("assinaturas").hidden) {     // tela Assinaturas: no cadastro volta ao passo 2; fora dele, à home
+        voltarDasAssinaturas();
         return;
       }
       if (!$("categorias").hidden) {      // ranking das Categorias (PRO-105): sem gravar, volta à home
@@ -4084,7 +4898,7 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
       if (versao !== e.versao) return; // o usuário voltou enquanto a IA pensava
       e.interpretando = false;
       if (resultado.erro !== undefined) {
-        e.erroChat = mensagemErroRegistro(resultado, "interpretar", e.tipo);
+        e.erroChat = mensagemErroRegistro(resultado, "interpretar", e.tipo, limiteIaDiaAtual());
       } else if (!previaValida(resultado.dados, e.tipo)) {
         e.erroChat = MSG_NAO_ENTENDI;
       } else {
@@ -4124,8 +4938,11 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
     }
 
     // Aviso no topo da home por 10 s, com a barra que esvazia.
-    function mostrarAvisoTopo(aviso) {
+    // 'icone' "cadeado" = o aviso do modo somente leitura (PRO-108); sem ele, o ícone de certo de sempre.
+    function mostrarAvisoTopo(aviso, icone) {
       clearTimeout(temporizadorAviso);
+      $("aviso-topo-check").hidden = icone === "cadeado";
+      $("aviso-topo-cadeado").hidden = icone !== "cadeado";
       $("aviso-topo-texto").replaceChildren(
         document.createTextNode(aviso.antes),
         criar("strong", "", aviso.negrito),
@@ -4206,6 +5023,8 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
 
     function abrirEscolhaInicial() {
       mostrarTelaBoasVindas("boas-vindas");
+      desenharCadastroFechado();
+      buscarAssinaturaPrevia(); // ligada? cadastros abertos? (o /me deu 404: sem bloco; a home não usa esta chamada)
     }
 
     // --- "Já Sou Amigo do Adm" ---
@@ -4269,6 +5088,8 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
     }
 
     function abrirCadastro() {
+      if (cadastroFechado(assEstado.previo.bloco)) return; // cadastros fechados (PRO-109): sem toque
+      buscarAssinaturaPrevia(); // se o "Já Sou Amigo do Adm" chegou aqui sem passar pela escolha inicial
       cadastroEstado.passo = 1;
       cadastroEstado.erro = null;
       mostrarTelaBoasVindas("cadastro");
@@ -4414,6 +5235,11 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
         return;
       }
       if (document.activeElement) document.activeElement.blur();
+      // PRO-108: depois do dia do ciclo vem a tela Assinaturas (a não ser que a chave esteja desligada: segue como sempre).
+      if (e.passo === 2 && cadastroPassaPelasAssinaturas(assEstado.previo.estado)) {
+        abrirAssinaturasDoCadastro();
+        return;
+      }
       if (e.passo < 3) {
         e.passo++;
         atualizarCadastro();
@@ -4654,12 +5480,12 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
     }
 
     function folhaAberta() {
-      return FOLHAS_RECORRENTES.concat(FOLHAS_CATEGORIAS).find((f) => !$(f).hidden) || null;
+      return FOLHAS_RECORRENTES.concat(FOLHAS_CATEGORIAS).concat(FOLHAS_ASSINATURA).find((f) => !$(f).hidden) || null;
     }
 
     function fecharFolhaAtual() {
       const id = folhaAberta();
-      if (!id || (id === "folha-apagar" && apagarRec.apagando) || categoriasOcupadas()) return;
+      if (!id || (id === "folha-apagar" && apagarRec.apagando) || categoriasOcupadas() || assEstado.ocupado) return;
       $(id).hidden = true;
     }
 
@@ -4693,6 +5519,7 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
     }
 
     function abrirEscolha(origem) {
+      if (bloquearNoModoLeitura()) return; // modo somente leitura (PRO-108): "Adicionar Recorrente" só mostra o aviso
       if (origem) origemEscolha = origem;
       $("escolha-rec-titulo").textContent = tituloDaEscolha(nomeDoUsuario);
       mostrarTelaRecorrentes("recorrentes-escolha");
@@ -4837,6 +5664,7 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
 
     // Cartão do salário do painel vazio (PRO-97, D14 da PRO-103): abre direto a Nova Receita recorrente.
     function abrirSalarioRecorrente() {
+      if (bloquearNoModoLeitura()) return; // modo somente leitura (PRO-108)
       rolagemHome = window.scrollY;
       rolagemGrafico = $("grafico-area").scrollLeft;
       abrirFormNovo("receita", "salario");
@@ -4844,6 +5672,7 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
 
     // Formulário Editar, já preenchido com o recorrente da lista, no modo da aba aberta (sem chave: o PUT repete sem problema).
     function abrirFormEditar(r) {
+      if (bloquearNoModoLeitura()) return; // modo somente leitura (PRO-108): tocar num recorrente só mostra o aviso
       const tipo = listaRecorrentes.aba;
       zerarForm("editar", tipo);
       formRec.id = r.id;
@@ -5093,7 +5922,7 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
       }
       apagarRec.apagando = false;
       $("folha-apagar-erro").textContent = decisao.mensagem;
-      $("folha-apagar-erro").hidden = false;
+      $("folha-apagar-erro").hidden = !decisao.mensagem; // 403 (PRO-108): o aviso central já apareceu, sem mensagem genérica
       $("folha-apagar-confirmar").disabled = false;
       $("folha-apagar-confirmar").textContent = "Sim, Apagar";
       $("folha-apagar-cancelar").disabled = false;
@@ -5373,6 +6202,7 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
 
     // A chave nasce AQUI, ao abrir a folha Nova, e se repete nas novas tentativas do mesmo Salvar.
     function abrirFolhaNova() {
+      if (bloquearNoModoLeitura()) return; // modo somente leitura (PRO-108): Nova Categoria + só mostra o aviso
       if (categoriasOcupadas()) return;
       catNova.chave = gerarChave();
       catNova.nome = "";
@@ -5386,6 +6216,7 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
     }
 
     function abrirFolhaEditar(c) {
+      if (bloquearNoModoLeitura()) return; // modo somente leitura (PRO-108): tocar numa barra só mostra o aviso
       if (categoriasOcupadas()) return;
       catEditar.id = c.id;
       catEditar.nomeOriginal = c.nome;
@@ -5524,6 +6355,726 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
       $("folha-cat-excluir-cancelar").addEventListener("click", fecharFolhaAtual);
     }
 
+    // ---------- Assinaturas (PRO-108) ----------
+    // Tudo condicionado ao "ligada" do bloco "assinatura" do GET /me (o mesmo JSON do GET /assinatura): sem a chave, ou com
+    // ligada = false, o app fica exatamente como era. O cliente nunca decide o plano: só o JSON do servidor (ou a resposta 2xx
+    // das rotas) muda o selo, as folhas e o modo somente leitura. A abertura não ganha chamada: usa o bloco do /me.
+    // Fluxo: cadastro (passo 2) -> tela Assinaturas -> "Testar Gratuitamente" (POST /assinaturas/teste) -> Teste Ativado, ou
+    // "Assinar" -> folha Plano Pro -> "Pagar com Stars" (POST /assinaturas/fatura + openInvoice) -> Confirmando -> Obrigado.
+    // Quem venceu vê a tela Assinatura Expirada uma vez por dia; "Mais Tarde" leva à home em modo somente leitura (D20).
+    const TELAS_ASSINATURA = ["assinaturas", "expirada", "assinatura-resultado", "assinatura-confirmando"];
+    const FOLHAS_ASSINATURA = ["folha-termos", "folha-plano", "folha-minha"];
+    const CHAVE_EXPIRADA_VISTA = "expirada_vista_em";
+    const TEMPO_LEITURA_ARMAZENAMENTO_MS = 2000;
+
+    const assEstado = {
+      bloco: null,               // o último JSON conhecido (ligada = true): /me, GET /assinatura ou resposta da renovação
+      leitura: false,            // modo somente leitura: modo_leitura do servidor ou um 403 assinatura_vencida
+      origem: "outro",           // de onde o fluxo veio: "cadastro" (Continuar vai ao passo 3) ou "outro" (vai à home)
+      testeEstado: "normal",     // cartão do teste: "normal", "esgotado" (vagas) ou "erro"
+      testeMensagem: "",
+      ocupado: false,            // teste, fatura/pagamento ou renovação em andamento: trava os botões e o fechar
+      versaoBusca: 0,            // descarta a resposta atrasada do GET /assinatura de uma tela já fechada
+      atualizando: false,        // GET /assinatura em segundo plano depois de um 403
+      renovacaoLocal: "minha",   // onde cancelar/reativar foi tocado: "minha" (folha) ou "assinaturas" (tela)
+      previo: { estado: "nao-iniciado", bloco: null }, // GET /assinatura antes do cadastro: "pendente", "ligada", "desligada", "falhou"
+      pagamento: { local: "assinaturas", antes: null, tipo: "nova", aguardando: false, versao: 0 },
+    };
+
+    function startParamDoTelegram() {
+      try { return (tg.initDataUnsafe && tg.initDataUnsafe.start_param) || null; } catch (e) { return null; }
+    }
+
+    // O limite do 429 limite_diario_ia: o limite_ia_dia do bloco (sem bloco, a mensagem usa o padrão).
+    function limiteIaDiaAtual() {
+      return assEstado.bloco ? assEstado.bloco.limite_ia_dia : undefined;
+    }
+
+    // --- Dia da tela Expirada: CloudStorage do Telegram, com reserva no localStorage (tudo dentro de try) ---
+    function lerExpiradaLocal() {
+      try { return window.localStorage.getItem(CHAVE_EXPIRADA_VISTA); } catch (e) { return null; }
+    }
+
+    // O CloudStorage responde por callback; sem a função (versão antiga) ou sem resposta em 2 s, vale "não vista".
+    function lerExpiradaNuvem() {
+      return new Promise((resolver) => {
+        let resolvido = false;
+        const fim = (valor) => { if (!resolvido) { resolvido = true; resolver(valor); } };
+        try {
+          tg.CloudStorage.getItem(CHAVE_EXPIRADA_VISTA, (erro, valor) => fim(erro ? null : valor));
+          setTimeout(() => fim(null), TEMPO_LEITURA_ARMAZENAMENTO_MS);
+        } catch (e) {
+          fim(null);
+        }
+      });
+    }
+
+    // Já apareceu hoje (dia de Brasília)? Sem armazenamento algum: não, e a tela aparece (o lado seguro).
+    async function expiradaVistaHoje(hoje) {
+      const local = lerExpiradaLocal();
+      if (expiradaJaVistaHoje(null, local, hoje)) return true; // já vista neste aparelho: não espera a nuvem
+      return expiradaJaVistaHoje(await lerExpiradaNuvem(), local, hoje);
+    }
+
+    function marcarExpiradaVista(hoje) {
+      try { window.localStorage.setItem(CHAVE_EXPIRADA_VISTA, hoje); } catch (e) { /* sem armazenamento */ }
+      try { tg.CloudStorage.setItem(CHAVE_EXPIRADA_VISTA, hoje, () => {}); } catch (e) { /* versão antiga */ }
+    }
+
+    // --- Estado da assinatura na tela: selo, linha de pausado e dica das Categorias ---
+    // 'forcarLeitura' = veio de um 403 assinatura_vencida. O resto do modo leitura é o modo_leitura do servidor, e um JSON
+    // novo sem ele (pagou) desliga o modo na hora.
+    function aplicarAssinatura(bloco, forcarLeitura) {
+      assEstado.bloco = blocoDeAssinatura(bloco);
+      assEstado.leitura = !!forcarLeitura || modoLeituraDoBloco(bloco);
+      desenharSelo();
+      $("pausado-home").hidden = !assEstado.leitura;
+      $("rec-pausado").hidden = !assEstado.leitura;
+      $("cat-dica").textContent = textoDicaCategorias(assEstado.leitura);
+    }
+
+    // O selo vem só do campo "selo". Sem selo (ou valor estranho), a linha inteira some. Só o selo tocável tem a classe
+    // .tocavel (estado pressionado); o do admin é só um texto.
+    function desenharSelo() {
+      const selo = seloDaHome(assEstado.bloco);
+      $("selo-linha").hidden = !selo;
+      if (!selo) return;
+      $("selo").className = "selo " + selo.variante + (selo.tocavel ? " tocavel" : "");
+      $("selo").setAttribute("aria-disabled", String(!selo.tocavel));
+      $("selo-texto").textContent = selo.texto;
+      $("selo-seta").hidden = !selo.seta;
+    }
+
+    function aoTocarNoSelo() {
+      const acao = acaoDoToqueNoSelo(assEstado.bloco);
+      if (acao === "nenhuma") return; // admin: sem estado pressionado, sem folha, sem aviso
+      const selo = $("selo");
+      selo.classList.add("tocado");
+      setTimeout(() => selo.classList.remove("tocado"), 300);
+      if (acao === "plano") abrirFolhaPlano("selo");
+      else abrirMinhaAssinatura();
+    }
+
+    // --- Modo somente leitura (D20): o aviso central, sem chamar a API ---
+    // Devolve true (e mostra o aviso do cadeado) quando está em modo leitura; quem chamou então não faz mais nada.
+    function bloquearNoModoLeitura() {
+      if (!assEstado.leitura) return false;
+      mostrarAvisoTopo(avisoDoModoLeitura(), "cadeado");
+      return true;
+    }
+
+    // Liga o modo leitura na tela em que a pessoa está (sem trocar de tela) e busca o JSON completo em segundo plano.
+    function ligarModoLeitura() {
+      const base = assEstado.bloco ? Object.assign({}, assEstado.bloco) : { ligada: true };
+      aplicarAssinatura(Object.assign(base, { selo: "assinar", selo_tocavel: true, modo_leitura: true }), true);
+      atualizarAssinaturaEmSegundoPlano();
+    }
+
+    async function atualizarAssinaturaEmSegundoPlano() {
+      if (assEstado.atualizando) return;
+      assEstado.atualizando = true;
+      const r = await chamar(ROTA_ASSINATURA);
+      assEstado.atualizando = false;
+      if (r.erro === undefined && blocoDeAssinatura(r.dados)) aplicarAssinatura(r.dados); // quem decide é o servidor
+    }
+
+    // Tratamento CENTRAL dos 403, chamado pelo chamar e pelo enviarComMetodo (toda chamada à API passa por eles).
+    function aoAcessoRecusado(status, detalhe) {
+      const acao = acaoDoAcessoRecusado(status, detalhe);
+      if (acao === "vencida") {
+        ligarModoLeitura();
+        mostrarAvisoTopo(avisoDoModoLeitura(), "cadeado");
+      } else if (acao === "ausente") {
+        abrirAssinaturasPorFalta();
+      }
+    }
+
+    // --- Telas ---
+    // Mostra uma tela das Assinaturas e esconde todas as outras (home, cadastro, folhas dos Recorrentes e Categorias...).
+    function mostrarTelaAssinatura(id) {
+      document.querySelectorAll("main").forEach((m) => { m.hidden = m.id !== id; });
+      FOLHAS_RECORRENTES.concat(FOLHAS_CATEGORIAS).forEach((f) => { $(f).hidden = true; });
+      $("aviso").hidden = true;
+      document.body.classList.remove("modo-chat", "modo-recorrentes", "modo-categorias", "modo-boas-vindas");
+      document.body.classList.add("modo-assinaturas");
+      ajustarAlturaTela();
+      window.scrollTo(0, 0);
+    }
+
+    function esconderTelasAssinatura() {
+      TELAS_ASSINATURA.forEach((t) => { $(t).hidden = true; });
+      FOLHAS_ASSINATURA.forEach((f) => { $(f).hidden = true; });
+      document.body.classList.remove("modo-assinaturas");
+    }
+
+    // De volta à home sem recarregar, se ela já foi desenhada (a abertura desenha a home por baixo da tela Expirada).
+    function irParaHomeDasAssinaturas() {
+      assEstado.versaoBusca++;
+      esconderTelasAssinatura();
+      mostrarBackButton(false);
+      if ($("numeros").hidden) {
+        carregar();
+        return;
+      }
+      $("tela").hidden = false;
+      window.scrollTo(0, 0);
+    }
+
+    // Depois de um pagamento ou teste fora do cadastro: a home recarrega, e o selo e a folha usam o JSON novo.
+    function irParaHomeDepoisDeAssinar() {
+      assEstado.versaoBusca++;
+      esconderTelasAssinatura();
+      mostrarBackButton(false);
+      carregar();
+    }
+
+    // No cadastro: depois das Assinaturas, o passo 3 (categorias); a seta volta ao passo 2.
+    function voltarAoCadastro(passo) {
+      assEstado.versaoBusca++;
+      esconderTelasAssinatura();
+      cadastroEstado.passo = passo;
+      mostrarTelaBoasVindas("cadastro");
+      atualizarCadastro();
+    }
+
+    function seguirSemAssinaturas() {
+      if (assEstado.origem === "cadastro") voltarAoCadastro(3);
+      else irParaHomeDasAssinaturas();
+    }
+
+    function continuarDoResultado() {
+      if (assEstado.origem === "cadastro") voltarAoCadastro(3);
+      else irParaHomeDepoisDeAssinar();
+    }
+
+    function voltarDasAssinaturas() {
+      if (assEstado.ocupado) return;
+      if (assEstado.origem === "cadastro") voltarAoCadastro(2);
+      else irParaHomeDasAssinaturas();
+    }
+
+    function maisTarde() {
+      irParaHomeDasAssinaturas(); // a home em modo somente leitura (o modo_leitura do bloco já está aplicado)
+    }
+
+    // --- Tela Assinaturas (principal, teste em andamento, Pro ativo, renovação cancelada, Pro dado) ---
+    function mostrarEstadoAssinaturas(estado) {
+      $("ass-carregando").hidden = estado !== "carregando";
+      $("ass-erro").hidden = estado !== "erro";
+      $("ass-conteudo").hidden = estado !== "ok";
+      // Carregando e erro de rede: sem a seta (como os quadros); o BackButton do Telegram continua voltando.
+      $("ass-voltar").hidden = estado !== "ok";
+      $("ass-cabecalho").classList.toggle("cabecalho-sem-seta", estado !== "ok");
+    }
+
+    function desenharLinhas(caixa, linhas) {
+      caixa.replaceChildren();
+      linhas.forEach((linha, i) => {
+        if (i > 0) caixa.append(criar("div", "ass-sep"));
+        const item = criar("div", "ass-linha");
+        item.append(criar("span", "ass-linha-rotulo", linha[0]), criar("span", "ass-linha-valor", linha[1]));
+        caixa.append(item);
+      });
+      caixa.hidden = linhas.length === 0;
+    }
+
+    // prefixo: "ass-preco" (tela), "exp-preco" (Expirada) ou "plano-preco" (folha). Preço sempre do servidor.
+    function desenharPreco(prefixo, bloco) {
+      const preco = bloco ? bloco.preco : null;
+      const reais = textoPrecoReais(preco);
+      $(prefixo + "-stars").textContent = textoPrecoStars(preco);
+      $(prefixo + "-reais").textContent = reais;
+      $(prefixo + "-reais").hidden = !reais;
+    }
+
+    function desenharAssinaturas() {
+      const bloco = assEstado.bloco;
+      const modo = modoDaTelaAssinaturas(bloco);
+      const t = textosDaTelaAssinaturas(modo, bloco);
+      if (!t) return;
+      $("ass-apoio").textContent = t.apoio;
+      $("ass-conteudo").classList.toggle("atual-primeiro", t.atualPrimeiro);
+
+      $("ass-cartao-preco").hidden = !t.mostrarPreco;
+      if (t.mostrarPreco) {
+        desenharPreco("ass-preco", bloco);
+        $("ass-preco-apoio").textContent = t.precoApoio;
+        const botao = $("ass-preco-botao");
+        botao.hidden = !t.botao;
+        if (t.botao) {
+          botao.textContent = t.botao.texto;
+          botao.dataset.acao = t.botao.acao;
+          botao.classList.toggle("claro", t.botao.claro);
+        }
+        botao.disabled = assEstado.ocupado;
+      }
+
+      const principal = modo === "principal";
+      const esgotado = principal && assEstado.testeEstado === "esgotado";
+      const erro = principal && assEstado.testeEstado === "erro";
+      $("ass-atual-titulo").textContent = t.atualTitulo;
+      desenharLinhas($("ass-atual-caixa"), t.linhas);
+      if (esgotado) $("ass-atual-caixa").hidden = true; // Vagas Esgotadas: a caixa de aviso no lugar das datas
+      $("ass-vagas").hidden = !esgotado;
+      mostrarErroCampo("ass-teste-erro", erro ? assEstado.testeMensagem : null);
+      $("ass-teste-botao").hidden = !principal;
+      $("ass-teste-botao").disabled = esgotado || assEstado.ocupado;
+    }
+
+    // Escolhe a variação com o bloco: Expirada para quem venceu, a tela para o resto; bloco que não serve: segue sem Assinaturas.
+    function rotearAssinaturas() {
+      const modo = modoDaTelaAssinaturas(assEstado.bloco);
+      if (modo === "vencido") {
+        abrirExpirada();
+        return;
+      }
+      if (modo === null) {
+        seguirSemAssinaturas();
+        return;
+      }
+      mostrarEstadoAssinaturas("ok");
+      desenharAssinaturas();
+    }
+
+    // GET /assinatura (não exige cadastro): carregando -> a variação certa, ou o erro de rede com "Tentar de novo".
+    async function buscarAssinaturas() {
+      const versao = ++assEstado.versaoBusca;
+      mostrarEstadoAssinaturas("carregando");
+      const resultado = await chamar(ROTA_ASSINATURA);
+      if (versao !== assEstado.versaoBusca || $("assinaturas").hidden) return;
+      if (resultado.erro !== undefined) {
+        const erro = mensagemDeErro([resultado]);
+        $("ass-erro-titulo").textContent = erro.tentarDeNovo ? MSG_ERRO_ASSINATURA_TITULO : erro.texto;
+        $("ass-erro-texto").textContent = MSG_ERRO_ASSINATURA_TEXTO;
+        $("ass-erro-texto").hidden = !erro.tentarDeNovo;
+        mostrarEstadoAssinaturas("erro");
+        return;
+      }
+      if (!blocoDeAssinatura(resultado.dados)) { // chave desligada: o app segue como sempre foi
+        seguirSemAssinaturas();
+        return;
+      }
+      aplicarAssinatura(resultado.dados);
+      rotearAssinaturas();
+    }
+
+    // Cadastro: o Continuar do passo 2 abre esta tela (seta volta ao passo 2).
+    function abrirAssinaturasDoCadastro() {
+      assEstado.origem = "cadastro";
+      assEstado.testeEstado = "normal";
+      if (document.activeElement) document.activeElement.blur();
+      mostrarTelaAssinatura("assinaturas");
+      mostrarBackButton(true);
+      buscarAssinaturas();
+    }
+
+    // 403 assinatura_ausente (nunca escolheu o plano): a tela Assinaturas.
+    function abrirAssinaturasPorFalta() {
+      if (!$("assinaturas").hidden) return;
+      assEstado.origem = "outro";
+      assEstado.testeEstado = "normal";
+      mostrarTelaAssinatura("assinaturas");
+      mostrarBackButton(true);
+      buscarAssinaturas();
+    }
+
+    // Abertura com o bloco do /me (sem_plano ou link): a tela já tem o JSON, nenhuma chamada nova.
+    function abrirAssinaturasNaAbertura() {
+      assEstado.origem = "outro";
+      assEstado.testeEstado = "normal";
+      mostrarTelaAssinatura("assinaturas");
+      mostrarBackButton(true);
+      rotearAssinaturas();
+    }
+
+    // O botão do cartão de preço muda com a variação: Assinar, Cancelar Renovação ou Reativar Renovação.
+    function aoTocarNoBotaoDePreco() {
+      const acao = $("ass-preco-botao").dataset.acao;
+      if (acao === "plano") abrirFolhaPlano("assinaturas");
+      else if (acao === "cancelar") pedirCancelamento("assinaturas");
+      else if (acao === "reativar") pedirReativacao("assinaturas");
+    }
+
+    // --- Teste grátis: tela da logo com tempo mínimo, depois o Teste Ativado ---
+    async function testarGratuitamente() {
+      const a = assEstado;
+      if (a.ocupado || a.testeEstado === "esgotado") return;
+      a.ocupado = true;
+      a.testeEstado = "normal";
+      desenharAssinaturas();
+      mostrarTelaLogo("Assinaturas", "Ativando o Seu Teste...", "Só um instante.");
+      const resultado = await comTempoMinimo(
+        enviarJson(ROTA_ASSINATURA_TESTE, undefined, 15000),
+        TEMPO_MINIMO_LOGO_MS, (r) => decisaoDoTeste(r).acao === "ativado", () => performance.now(), esperar
+      );
+      a.ocupado = false;
+      const decisao = decisaoDoTeste(resultado);
+      if (decisao.acao === "ativado") {
+        const t = textosDoTesteAtivado(decisao.fim);
+        mostrarResultado(t.titulo, t.texto);
+        esconderTelaLogo(); // na mesma tarefa: a logo some sem um desenho no meio
+        return;
+      }
+      esconderTelaLogo();
+      if (decisao.acao === "recarregar") {
+        buscarAssinaturas(); // a tela estava desatualizada: o GET /assinatura mostra a verdade
+        return;
+      }
+      a.testeEstado = decisao.acao === "esgotado" ? "esgotado" : "erro";
+      a.testeMensagem = decisao.mensagem || MSG_TESTE_FALHOU;
+      desenharAssinaturas();
+    }
+
+    function mostrarResultado(titulo, texto) {
+      $("res-titulo").textContent = titulo;
+      $("res-texto").textContent = texto;
+      mostrarTelaAssinatura("assinatura-resultado");
+      mostrarBackButton(false);
+    }
+
+    // --- Tela Assinatura Expirada ---
+    function abrirExpirada() {
+      const bloco = assEstado.bloco;
+      const t = textosDaExpirada(bloco);
+      if (!t) {
+        irParaHomeDasAssinaturas();
+        return;
+      }
+      $("exp-apoio").textContent = t.apoio;
+      $("exp-data-rotulo").textContent = t.rotuloData;
+      $("exp-data-valor").textContent = t.data;
+      $("exp-botao").textContent = t.botao;
+      desenharPreco("exp-preco", bloco);
+      mostrarErroCampo("exp-erro", null);
+      mostrarTelaAssinatura("expirada");
+      mostrarBackButton(true); // o BackButton faz o mesmo que "Mais Tarde"
+    }
+
+    // Na abertura: marca o dia (a tela aparece uma vez por dia) e mostra a Expirada por cima da home já desenhada.
+    function abrirExpiradaNaAbertura() {
+      marcarExpiradaVista(diaDeBrasilia(Date.now(), FUSO));
+      assEstado.origem = "outro";
+      abrirExpirada();
+    }
+
+    // O destino da abertura pelo bloco do /me. Só lê o armazenamento (até 2 s) quando precisa: modo leitura sem link.
+    async function decidirAberturaPelaAssinatura(bloco) {
+      try {
+        const link = linkDeAssinatura(window.location.search, startParamDoTelegram());
+        let vistaHoje = false;
+        if (modoLeituraDoBloco(bloco) && !link) vistaHoje = await expiradaVistaHoje(diaDeBrasilia(Date.now(), FUSO));
+        return destinoDaAbertura(bloco, { link: link, vistaHoje: vistaHoje });
+      } catch (e) {
+        return "home"; // nada inesperado trava a abertura: a home abre (o servidor recusa o que a pessoa não pode fazer)
+      }
+    }
+
+    // --- Folha Plano Pro e o pagamento ---
+    // 'local' = de onde veio: "assinaturas" (a tela), "expirada", "selo" ou "minha" (a folha Minha Assinatura).
+    function abrirFolhaPlano(local) {
+      const bloco = assEstado.bloco;
+      if (local !== "assinaturas") assEstado.origem = "outro"; // só a tela do cadastro mantém o "Continuar" no passo 3
+      const p = assEstado.pagamento;
+      p.local = local;
+      p.antes = bloco;
+      p.tipo = tipoDoObrigado(bloco);
+      desenharPreco("plano-preco", bloco);
+      const limite = textoLimiteIa(bloco ? bloco.limite_ia_dia : null);
+      $("plano-ia-texto").textContent = limite;
+      $("plano-item-ia").hidden = !limite;
+      mostrarErroCampo("plano-erro", null);
+      mostrarErroCampo("exp-erro", null);
+      marcarPagando(false);
+      $("folha-minha").hidden = true;
+      $("folha-plano").hidden = false;
+    }
+
+    function marcarPagando(pagando) {
+      $("plano-pagar").disabled = pagando;
+      $("plano-pagar").textContent = pagando ? "Abrindo o Pagamento..." : "Pagar com Stars";
+    }
+
+    // A linha vermelha: na tela Expirada, no cartão (a folha fecha); nos outros lugares, dentro da folha Plano Pro.
+    function mostrarErroPagamento(mensagem) {
+      const naExpirada = assEstado.pagamento.local === "expirada";
+      mostrarErroCampo("plano-erro", naExpirada ? null : mensagem);
+      mostrarErroCampo("exp-erro", naExpirada ? mensagem : null);
+      if (naExpirada && mensagem) $("folha-plano").hidden = true;
+    }
+
+    async function pagarComStars() {
+      const a = assEstado;
+      if (a.ocupado) return;
+      mostrarErroPagamento(null);
+      // openInvoice só existe dentro do Telegram: fora dele, o aviso de sempre (e nenhuma chamada).
+      if (!tg || typeof tg.openInvoice !== "function") {
+        mostrarErroPagamento(MENSAGEM_FORA_DO_TELEGRAM);
+        return;
+      }
+      a.ocupado = true;
+      marcarPagando(true);
+      const resultado = await enviarJson(ROTA_ASSINATURA_FATURA, undefined, 15000);
+      let decisao = decisaoDaFatura(resultado);
+      if (decisao.acao === "abrir") {
+        try {
+          tg.openInvoice(decisao.link, aoStatusDoPagamento);
+          return; // a travada sai no aoStatusDoPagamento
+        } catch (e) {
+          decisao = { acao: "erro", mensagem: MSG_FATURA_FALHOU };
+        }
+      }
+      a.ocupado = false;
+      marcarPagando(false);
+      if (decisao.acao === "recarregar") {
+        $("folha-plano").hidden = true;
+        recarregarAssinatura();
+        return;
+      }
+      mostrarErroPagamento(decisao.mensagem);
+    }
+
+    // 409 plano_ativo: a tela estava desatualizada. Busca o estado e redesenha o que estiver aberto.
+    async function recarregarAssinatura() {
+      const r = await chamar(ROTA_ASSINATURA);
+      if (r.erro === undefined && blocoDeAssinatura(r.dados)) {
+        aplicarAssinatura(r.dados);
+        redesenharAssinaturaAberta();
+      }
+    }
+
+    // O callback do openInvoice: 'paid' | 'pending' | 'cancelled' | 'failed'.
+    function aoStatusDoPagamento(status) {
+      assEstado.ocupado = false;
+      marcarPagando(false);
+      const decisao = decisaoDoPagamento(status);
+      if (decisao === "confirmar") conferirPagamento(true);
+      else if (decisao === "recusado") mostrarErroPagamento(MSG_PAGAMENTO_RECUSADO);
+      // "voltar" (cancelled): a folha Plano Pro continua aberta, nada acontece
+    }
+
+    // --- Confirmando o Pagamento: GET /assinatura de 2 em 2 s por até 30 s; depois, toque para conferir de novo ---
+    function desenharConfirmando() {
+      const p = assEstado.pagamento;
+      $("conf-texto").textContent = p.aguardando ? MSG_PAGAMENTO_ESPERA : MSG_PAGAMENTO_DEMORA;
+      $("conf-area").classList.toggle("tocavel", !p.aguardando);
+    }
+
+    async function conferirPagamento(primeira) {
+      const p = assEstado.pagamento;
+      const versao = ++p.versao;
+      p.aguardando = true;
+      if (primeira) {
+        $("folha-plano").hidden = true;
+        mostrarTelaAssinatura("assinatura-confirmando");
+        mostrarBackButton(false);
+      }
+      desenharConfirmando();
+      const r = await aguardarPagamento(() => chamar(ROTA_ASSINATURA), esperar, () => performance.now(), p.antes, PAGAMENTO_LIMITE_MS, PAGAMENTO_PASSO_MS);
+      if (versao !== p.versao) return;
+      p.aguardando = false;
+      if (!r.confirmado) {
+        desenharConfirmando(); // a tela nunca libera sozinha
+        return;
+      }
+      aplicarAssinatura(r.bloco); // o JSON novo: selo "Pro" e, se havia, o modo leitura desligado na hora
+      const nome = nomeDoUsuario || cadastroEstado.nome;
+      const t = textosDoObrigado(p.tipo, nome, assEstado.bloco ? assEstado.bloco.proxima_renovacao : null);
+      mostrarResultado(t.titulo, t.texto);
+    }
+
+    // --- Termos de Uso (GET /termos, pública): o mesmo texto do /terms do bot ---
+    const termosEstado = { texto: null };
+
+    function mostrarEstadoTermos(estado) {
+      $("termos-texto").hidden = estado !== "ok";
+      $("termos-estado").hidden = estado === "ok";
+      $("termos-estado-texto").textContent = estado === "erro" ? MSG_TERMOS_FALHOU : "Carregando...";
+      $("termos-tentar").hidden = estado !== "erro";
+    }
+
+    async function abrirTermos() {
+      $("folha-termos").hidden = false;
+      if (termosEstado.texto !== null) {
+        mostrarEstadoTermos("ok");
+        return;
+      }
+      mostrarEstadoTermos("carregando");
+      const r = await chamar(ROTA_TERMOS);
+      if (r.erro === undefined && r.dados && typeof r.dados.texto === "string" && r.dados.texto.trim()) {
+        termosEstado.texto = r.dados.texto;
+        $("termos-texto").textContent = termosEstado.texto;
+        mostrarEstadoTermos("ok");
+      } else {
+        mostrarEstadoTermos("erro");
+      }
+    }
+
+    // --- Cancelar e reativar a renovação: confirmação nativa do Telegram e POST /assinaturas/renovacao (sem a tela da logo) ---
+    function confirmarNativo(texto, aoResponder) {
+      try { tg.showConfirm(texto, (confirmado) => aoResponder(!!confirmado)); } catch (e) { aoResponder(window.confirm(texto)); }
+    }
+
+    function alertaNativoComRetorno(texto, aoFechar) {
+      try { tg.showAlert(texto, aoFechar); } catch (e) { window.alert(texto); aoFechar(); }
+    }
+
+    function pedirCancelamento(local) {
+      if (assEstado.ocupado || !assEstado.bloco) return;
+      assEstado.renovacaoLocal = local;
+      confirmarNativo(textoConfirmarCancelamento(assEstado.bloco.vale_ate), (confirmado) => { if (confirmado) mudarRenovacao(true); });
+    }
+
+    function pedirReativacao(local) {
+      if (assEstado.ocupado) return;
+      assEstado.renovacaoLocal = local;
+      confirmarNativo(TEXTO_CONFIRMAR_REATIVAR, (confirmado) => { if (confirmado) mudarRenovacao(false); });
+    }
+
+    // Redesenha a folha Minha Assinatura e a tela Assinaturas se estiverem abertas (depois de um JSON novo).
+    function redesenharAssinaturaAberta() {
+      if (!$("folha-minha").hidden) desenharMinhaAssinatura();
+      if (!$("assinaturas").hidden && !$("ass-conteudo").hidden) rotearAssinaturas();
+    }
+
+    async function mudarRenovacao(cancelar) {
+      const a = assEstado;
+      if (a.ocupado) return;
+      a.ocupado = true;
+      redesenharAssinaturaAberta();
+      const resultado = await enviarJson(ROTA_ASSINATURA_RENOVACAO, { cancelar: cancelar }, 20000);
+      a.ocupado = false;
+      const decisao = decisaoDaRenovacao(cancelar, resultado);
+      if (decisao.acao === "atualizar") {
+        aplicarAssinatura(resultado.dados); // a resposta é o JSON novo: a folha passa para Renovação Cancelada (ou volta a Pro Ativo)
+        redesenharAssinaturaAberta();
+        return;
+      }
+      redesenharAssinaturaAberta();
+      if (decisao.acao === "recusada") {
+        // O Telegram não deixou reativar: o alerta e, ao fechá-lo, a folha Plano Pro (pagar de novo soma 30 dias ao fim atual)
+        alertaNativoComRetorno(decisao.mensagem, () => abrirFolhaPlano(a.renovacaoLocal === "assinaturas" ? "assinaturas" : "minha"));
+        return;
+      }
+      mostrarAlertaNativo(decisao.mensagem);
+    }
+
+    // --- Folha Minha Assinatura (aberta pelo selo): os 4 estados da tabela, sem chamada nova e sem a tela da logo ---
+    function desenharMinhaAssinatura() {
+      const t = textosDaFolha(estadoDaFolha(assEstado.bloco), assEstado.bloco);
+      if (!t) {
+        $("folha-minha").hidden = true;
+        return;
+      }
+      $("min-situacao").replaceChildren(document.createTextNode(t.situacao.antes), criar("strong", "", t.situacao.negrito));
+      desenharLinhas($("min-linhas"), t.linhas);
+      $("min-apoio").textContent = t.apoio;
+      $("min-apoio").hidden = !t.apoio;
+      const principal = $("min-principal");
+      principal.textContent = t.principal.texto;
+      principal.dataset.acao = t.principal.acao;
+      principal.classList.toggle("claro", t.principal.claro);
+      principal.disabled = assEstado.ocupado;
+      $("min-fechar").hidden = !t.fechar;
+      $("min-termos-bloco").hidden = !t.termos;
+    }
+
+    function abrirMinhaAssinatura() {
+      if (!estadoDaFolha(assEstado.bloco)) return;
+      desenharMinhaAssinatura();
+      $("folha-minha").hidden = false;
+    }
+
+    function aoTocarNoPrincipalDaFolha() {
+      const acao = $("min-principal").dataset.acao;
+      if (acao === "plano") abrirFolhaPlano("minha");
+      else if (acao === "cancelar") pedirCancelamento("minha");
+      else if (acao === "reativar") pedirReativacao("minha");
+      else fecharFolhaAtual();
+    }
+
+    // Arrastar a folha para baixo (a partir do topo dela) fecha; antes do limite ela volta ao lugar.
+    function tornarFolhaArrastavel(idCamada) {
+      const camada = $(idCamada);
+      const folha = camada.querySelector(".folha");
+      let inicioY = null;
+      let deslocamento = 0;
+      folha.addEventListener("touchstart", (evento) => {
+        if (folha.scrollTop > 0 || evento.touches.length !== 1) { inicioY = null; return; }
+        inicioY = evento.touches[0].clientY;
+        deslocamento = 0;
+        folha.style.transition = "none";
+      }, { passive: true });
+      folha.addEventListener("touchmove", (evento) => {
+        if (inicioY === null) return;
+        deslocamento = Math.max(0, evento.touches[0].clientY - inicioY);
+        folha.style.transform = deslocamento > 0 ? "translateY(" + deslocamento + "px)" : "";
+      }, { passive: true });
+      const soltar = () => {
+        if (inicioY === null) return;
+        const fechar = arrastoFechaAFolha(deslocamento) && !assEstado.ocupado;
+        inicioY = null;
+        deslocamento = 0;
+        if (fechar) {
+          folha.style.transition = "";
+          folha.style.transform = "";
+          camada.hidden = true;
+        } else {
+          folha.style.transition = "transform 0.2s ease";
+          folha.style.transform = "";
+        }
+      };
+      folha.addEventListener("touchend", soltar);
+      folha.addEventListener("touchcancel", soltar);
+    }
+
+    // --- Cadastro: o GET /assinatura antes do passo 2 (ligada?) e os cadastros fechados ---
+    // Só decide o destino do Continuar do passo 2 (ligada = false: segue como sempre) e o "Sou Novo Por Aqui" apagado. A abertura
+    // da home não usa esta chamada.
+    function desenharCadastroFechado() {
+      const fechado = cadastroFechado(assEstado.previo.bloco);
+      $("escolha-novo").disabled = fechado;
+      $("escolha-novo-sub").textContent = fechado ? "Cadastros fechados" : "Configure tudo em 1 minuto";
+      $("escolha-fechado").hidden = !fechado;
+      $("amigo-novo").disabled = fechado;
+    }
+
+    async function buscarAssinaturaPrevia() {
+      const previo = assEstado.previo;
+      if (previo.estado !== "nao-iniciado" && previo.estado !== "falhou") return;
+      previo.estado = "pendente";
+      const r = await chamar(ROTA_ASSINATURA);
+      if (r.erro !== undefined) {
+        previo.estado = "falhou";
+      } else if (blocoDeAssinatura(r.dados)) {
+        previo.estado = "ligada";
+        previo.bloco = r.dados;
+      } else {
+        previo.estado = "desligada";
+      }
+      desenharCadastroFechado();
+    }
+
+    function iniciarAssinaturas() {
+      $("selo").addEventListener("click", aoTocarNoSelo);
+      $("ass-voltar").addEventListener("click", voltarUmNivel);
+      $("ass-erro-tentar").addEventListener("click", () => buscarAssinaturas());
+      $("ass-preco-botao").addEventListener("click", aoTocarNoBotaoDePreco);
+      $("ass-teste-botao").addEventListener("click", testarGratuitamente);
+      $("exp-botao").addEventListener("click", () => abrirFolhaPlano("expirada"));
+      $("exp-mais-tarde").addEventListener("click", maisTarde);
+      $("res-continuar").addEventListener("click", continuarDoResultado);
+      $("conf-area").addEventListener("click", () => { if (!assEstado.pagamento.aguardando) conferirPagamento(false); });
+      $("plano-pagar").addEventListener("click", pagarComStars);
+      $("plano-voltar").addEventListener("click", fecharFolhaAtual);
+      $("plano-termos").addEventListener("click", abrirTermos);
+      $("min-termos").addEventListener("click", abrirTermos);
+      $("min-principal").addEventListener("click", aoTocarNoPrincipalDaFolha);
+      $("min-fechar").addEventListener("click", fecharFolhaAtual);
+      $("termos-fechar").addEventListener("click", fecharFolhaAtual);
+      $("termos-tentar").addEventListener("click", () => abrirTermos());
+      FOLHAS_ASSINATURA.forEach(tornarFolhaArrastavel);
+    }
+
     function iniciar() {
       if (tg) {
         try { tg.ready(); } catch (e) { /* versão antiga */ }
@@ -5546,6 +7097,7 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
       iniciarBoasVindas();
       iniciarRecorrentes();
       iniciarCategorias();
+      iniciarAssinaturas();
       $("aviso-botao").addEventListener("click", () => carregar()); // sem o evento no lugar do 'abertura'
 
       // Detalhe do gasto: toque na linha, voltar (cabeçalho, erro ou BackButton do Telegram) e ações "Em breve".
