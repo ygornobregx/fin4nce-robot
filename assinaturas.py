@@ -1603,9 +1603,10 @@ def desmarcar_aviso(conn, aviso):
 
 
 # --- TERMOS (/terms E GET /termos) ---
-# Texto aprovado pelo Ygor em 2026-11-12 (7 itens), sem mudança. Só o preço do
-# item 1 vem do PRECO_PRO_STARS, para o texto nunca dizer um preço diferente
-# da fatura.
+# Texto aprovado pelo Ygor em 2026-11-12 (7 itens), sem mudança, exceto o
+# item 4, mudado em 2026-11-13 (PRO-111: os serviços de IA e o processamento
+# fora do Brasil). Só o preço do item 1 vem do PRECO_PRO_STARS, para o texto
+# nunca dizer um preço diferente da fatura.
 TERMOS_TITULO = 'Termos do L1d3r Pro'
 TERMOS_ITENS = (
     'O Plano Pro custa {preco} Stars a cada 30 dias e renova sozinho, usando as Stars da sua conta.',
@@ -1613,8 +1614,9 @@ TERMOS_ITENS = (
     'configurações do Telegram. O Pro vale até o fim do período pago.',
     'Há um teste grátis de 10 dias, uma vez por pessoa. No teste e no Pro, o limite é de 17 registros com IA por '
     'dia (horário de Brasília).',
-    'Os textos que você manda para registrar gastos são enviados a um serviço de IA de terceiros para identificar '
-    'categoria e valor.',
+    'Os textos que você manda para registrar gastos e receitas são enviados a serviços de IA de terceiros '
+    '(DeepSeek e, quando ele não responde, Google Gemini) só para identificar categoria e valor, e podem ser '
+    'processados fora do Brasil.',
     'Reembolso integral se pedido em até 7 dias da primeira cobrança, por /paysupport.',
     'Quando a assinatura vence, seus dados ficam guardados por 12 meses. Você pode vê-los no L1d3r, mas não '
     'registrar até assinar de novo.',

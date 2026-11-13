@@ -15,6 +15,9 @@ conexão chega por parâmetro ('conn'), e o cliente da IA é criado só na
 primeira chamada (obter_cliente_ia), com o google.genai importado lá dentro:
 assim a API importa este módulo sem ter o pacote nem a chave da IA.
 
+Desde a PRO-111, a IA principal é o DeepSeek (chamado pelo httpx, importado
+só dentro da chamada), e o Gemini fica de reserva (gerar_conteudo_com_retry).
+
 As exceções não são embrulhadas: a mensagem de erro do bot mostra str(e)
 ("Erro: 'valor'"), e uma classe de erro nova mudaria o texto visível.
 
@@ -34,13 +37,32 @@ from typing import NamedTuple, Optional
 from calculos import FUSO_BRASILIA, calcular_ciclo_fatura
 
 # Modelo do Gemini usado em todas as chamadas (registro de gasto e recorrente).
+# Desde a PRO-111 ele é a reserva do DeepSeek.
 MODELO_IA = 'gemini-3.6-flash'
+
+# DeepSeek, a IA principal desde a PRO-111. Ligado só quando a variável de
+# ambiente DEEPSEEK_API_KEY não está vazia (lida na hora de cada chamada).
+MODELO_DEEPSEEK = 'deepseek-flash'
+URL_DEEPSEEK = 'https://api.deepseek.com/chat/completions'
+TEMPO_LIMITE_DEEPSEEK = 6.0     # segundos, a chamada inteira (D2); passou disso, vai para o Gemini
+TEMPO_CONEXAO_DEEPSEEK = 3.0    # segundos para conectar
+MAX_TOKENS_DEEPSEEK = 2048      # com folga: a resposta é um JSON curto
 
 # --- IA ---
 _cliente_ia = None
 
-# Log dos tokens de cada chamada à IA (PRO-106, D5): só os números, nunca o
-# texto do usuário, o prompt, a resposta nem o id da pessoa.
+# D4 (PRO-111): True depois de qualquer definir_cliente_ia (a IA falsa dos
+# testes): o DeepSeek fica desligado, mesmo com a chave no ambiente, e os
+# testes antigos continuam sem rede. O código de produção nunca liga isto.
+_deepseek_desligado = False
+
+# Costura dos testes do DeepSeek (definir_transporte_deepseek): um transporte
+# do httpx (ex.: httpx.MockTransport) no lugar da rede. None = rede de verdade.
+_transporte_deepseek = None
+
+# Log de cada resposta da IA (PRO-106, D5; formato da PRO-111): a IA que
+# respondeu, o tempo e os tokens. Nunca o texto do usuário, o prompt, a
+# resposta, o id da pessoa nem a chave.
 _log = logging.getLogger(__name__)
 
 
@@ -57,25 +79,154 @@ def obter_cliente_ia():
     return _cliente_ia
 
 
-def definir_cliente_ia(cliente):
+def definir_cliente_ia(cliente, manter_deepseek=False):
     """Troca o cliente da IA (costura para os testes usarem uma IA falsa, sem
-    rede). O código de produção não chama esta função."""
-    global _cliente_ia
+    rede). O código de produção não chama esta função.
+
+    Desde a PRO-111 (D4), também desliga o DeepSeek (mesmo com cliente=None,
+    que os testes usam para restaurar o anterior): com a IA falsa injetada, a
+    chamada vai direto para ela, nunca para a rede, ainda que o .env tenha a
+    DEEPSEEK_API_KEY. Só os testes do DeepSeek passam manter_deepseek=True,
+    para usar a IA falsa como reserva do DeepSeek falso."""
+    global _cliente_ia, _deepseek_desligado
     _cliente_ia = cliente
+    _deepseek_desligado = not manter_deepseek
 
 
-def _registrar_tokens(resposta):
-    """Escreve no log (nível INFO) os tokens da resposta da IA: entrada, saída,
-    pensamento e total, lidos do 'usage_metadata' com getattr (a IA falsa dos
-    testes não tem esse campo; aí não escreve nada). Nunca levanta erro: o
-    log não pode mudar o retorno nem as exceções da chamada."""
+def definir_transporte_deepseek(transporte):
+    """Troca o transporte do httpx usado na chamada ao DeepSeek (costura para
+    os testes: um httpx.MockTransport responde no lugar da rede). None volta à
+    rede de verdade. O código de produção não chama esta função."""
+    global _transporte_deepseek
+    _transporte_deepseek = transporte
+
+
+class RespostaDeepSeek(NamedTuple):
+    """Resposta do DeepSeek no formato que os chamadores já leem: o texto em
+    '.text' (como a do Gemini) e o 'usage' do servidor (dict; {} se faltar)."""
+    text: str
+    usage: dict
+
+
+class _FalhaDeepSeek(Exception):
+    """Falha da chamada ao DeepSeek, só com o código curto do log (nunca a
+    mensagem do servidor, o prompt nem a chave)."""
+
+    def __init__(self, codigo):
+        super().__init__(codigo)
+        self.codigo = codigo
+
+
+def _chave_deepseek():
+    """A DEEPSEEK_API_KEY do ambiente (aparada), ou None quando ela falta, está
+    vazia ou o DeepSeek foi desligado pela IA injetada (D4)."""
+    if _deepseek_desligado:
+        return None
+    import os
+    chave = (os.environ.get('DEEPSEEK_API_KEY') or '').strip()
+    return chave or None
+
+
+async def _chamar_deepseek(prompt, chave):
+    """Uma chamada ao DeepSeek (formato da OpenAI), sem nova tentativa: o
+    'prompt' vai como a mensagem do usuário, com o modo de pensamento
+    desligado. Devolve RespostaDeepSeek; em qualquer falha, _FalhaDeepSeek com
+    o código: 'timeout', 'http_<status>', 'erro_rede', 'resposta_invalida'
+    (JSON fora do formato) ou 'resposta_vazia' (sem texto, ou só espaços)."""
+    import httpx
+    corpo = {
+        'model': MODELO_DEEPSEEK,
+        'messages': [{'role': 'user', 'content': prompt}],
+        'thinking': {'type': 'disabled'},
+        'stream': False,
+        'max_tokens': MAX_TOKENS_DEEPSEEK,
+    }
+    limite = httpx.Timeout(TEMPO_LIMITE_DEEPSEEK, connect=TEMPO_CONEXAO_DEEPSEEK)
+    try:
+        async with httpx.AsyncClient(transport=_transporte_deepseek, timeout=limite) as cliente:
+            resposta = await cliente.post(URL_DEEPSEEK, json=corpo, headers={'Authorization': f'Bearer {chave}'})
+    except httpx.TimeoutException:
+        raise _FalhaDeepSeek('timeout') from None
+    except Exception:
+        raise _FalhaDeepSeek('erro_rede') from None
+
+    if not 200 <= resposta.status_code < 300:
+        raise _FalhaDeepSeek(f'http_{resposta.status_code}')
+    try:
+        dados = resposta.json()
+        conteudo = dados['choices'][0]['message']['content']
+    except Exception:
+        raise _FalhaDeepSeek('resposta_invalida') from None
+    if conteudo is None or (isinstance(conteudo, str) and not conteudo.strip()):
+        raise _FalhaDeepSeek('resposta_vazia')
+    if not isinstance(conteudo, str):
+        raise _FalhaDeepSeek('resposta_invalida')
+    uso = dados.get('usage')
+    return RespostaDeepSeek(conteudo, uso if isinstance(uso, dict) else {})
+
+
+async def _tentar_deepseek(prompt, chave):
+    """Chama o DeepSeek com o limite de TEMPO_LIMITE_DEEPSEEK para a chamada
+    inteira (asyncio.wait_for). Nunca levanta: devolve (resposta, None) ou
+    (None, codigo da falha)."""
+    try:
+        return await asyncio.wait_for(_chamar_deepseek(prompt, chave), TEMPO_LIMITE_DEEPSEEK), None
+    except _FalhaDeepSeek as falha:
+        return None, falha.codigo
+    except asyncio.TimeoutError:
+        return None, 'timeout'
+    except Exception:
+        return None, 'erro_rede'
+
+
+def _numero(valor):
+    """Só números inteiros vão para o log (bool e o resto viram None)."""
+    return valor if isinstance(valor, int) and not isinstance(valor, bool) else None
+
+
+def _registrar_deepseek(resposta, duracao):
+    """Linha de log (INFO) da resposta do DeepSeek: o tempo e os tokens do
+    'usage' (o campo que faltar fica None). Nunca levanta erro."""
+    try:
+        uso = resposta.usage if isinstance(resposta.usage, dict) else {}
+        detalhes = uso.get('completion_tokens_details')
+        pensamento = detalhes.get('reasoning_tokens') if isinstance(detalhes, dict) else None
+        _log.info(
+            'IA: deepseek tempo=%.2fs entrada=%s cache=%s saida=%s pensamento=%s total=%s',
+            duracao,
+            _numero(uso.get('prompt_tokens')),
+            _numero(uso.get('prompt_cache_hit_tokens')),
+            _numero(uso.get('completion_tokens')),
+            _numero(pensamento),
+            _numero(uso.get('total_tokens')),
+        )
+    except Exception:
+        pass
+
+
+def _registrar_reserva(codigo, duracao):
+    """Linha de log (WARNING) de quando o DeepSeek falha e o Gemini entra.
+    Nunca levanta erro."""
+    try:
+        _log.warning('IA: deepseek falhou (%s) depois de %.2fs, usando o gemini', codigo, duracao)
+    except Exception:
+        pass
+
+
+def _registrar_tokens(resposta, duracao):
+    """Escreve no log (nível INFO) o tempo e os tokens da resposta do Gemini:
+    entrada, cache, saída, pensamento e total, lidos do 'usage_metadata' com
+    getattr (a IA falsa dos testes não tem esse campo; aí não escreve nada).
+    Nunca levanta erro: o log não pode mudar o retorno nem as exceções."""
     try:
         uso = getattr(resposta, 'usage_metadata', None)
         if uso is None:
             return
         _log.info(
-            'Tokens da IA: entrada=%s saida=%s pensamento=%s total=%s',
+            'IA: gemini tempo=%.2fs entrada=%s cache=%s saida=%s pensamento=%s total=%s',
+            duracao,
             getattr(uso, 'prompt_token_count', None),
+            getattr(uso, 'cached_content_token_count', None),
             getattr(uso, 'candidates_token_count', None),
             getattr(uso, 'thoughts_token_count', None),
             getattr(uso, 'total_token_count', None),
@@ -86,6 +237,13 @@ def _registrar_tokens(resposta):
 
 async def gerar_conteudo_com_retry(prompt, tentativas=3, espera_inicial=2):
     """
+    Desde a PRO-111, tenta primeiro o DeepSeek (uma vez só, com o limite de
+    TEMPO_LIMITE_DEEPSEEK), quando a DEEPSEEK_API_KEY não está vazia e a IA
+    não foi injetada por definir_cliente_ia (D4). Se ele responde, devolve a
+    RespostaDeepSeek (com '.text', como a do Gemini). Se falha por qualquer
+    motivo, escreve a linha de reserva no log e segue para o Gemini, abaixo,
+    sem nada mudado.
+
     Chama a API do Gemini com retry automático (backoff exponencial) quando o
     modelo está sobrecarregado (erro 503/UNAVAILABLE) ou há limite de taxa (429).
     Para outros erros, propaga imediatamente sem tentar de novo.
@@ -96,9 +254,20 @@ async def gerar_conteudo_com_retry(prompt, tentativas=3, espera_inicial=2):
     fora da thread, e as novas tentativas, as esperas e as exceções são as
     mesmas de antes.
 
-    Desde a PRO-106 (D5), cada resposta recebida escreve no log só os números
-    de tokens (_registrar_tokens); o retorno é o mesmo objeto de antes.
+    Desde a PRO-106 (D5), cada resposta recebida escreve no log só o tempo e
+    os números de tokens; o retorno é o mesmo objeto de antes.
     """
+    chave = _chave_deepseek()
+    if chave:
+        inicio = time.monotonic()
+        resposta, codigo = await _tentar_deepseek(prompt, chave)
+        duracao = time.monotonic() - inicio
+        if resposta is not None:
+            _registrar_deepseek(resposta, duracao)
+            return resposta
+        _registrar_reserva(codigo, duracao)
+
+    inicio = time.monotonic()
     ultimo_erro = None
     for tentativa in range(tentativas):
         try:
@@ -116,7 +285,7 @@ async def gerar_conteudo_com_retry(prompt, tentativas=3, espera_inicial=2):
                 await asyncio.sleep(espera_inicial * (2 ** tentativa))
                 continue
             raise ultimo_erro
-        _registrar_tokens(resposta)
+        _registrar_tokens(resposta, time.monotonic() - inicio)
         return resposta
 
 

@@ -1941,7 +1941,9 @@ class TestLogDeTokens(unittest.TestCase):
         with self.assertLogs('registro', 'INFO') as logs:
             obtida = asyncio.run(registro.gerar_conteudo_com_retry(f"texto-do-usuario {UID}"))
         self.assertIs(obtida, resposta)
-        self.assertEqual(logs.output, ['INFO:registro:Tokens da IA: entrada=650 saida=100 pensamento=470 total=1220'])
+        self.assertEqual(len(logs.output), 1)
+        self.assertRegex(logs.output[0], r'^INFO:registro:IA: gemini tempo=\d+\.\d{2}s entrada=650 cache=None '
+                                         r'saida=100 pensamento=470 total=1220$')
         for proibido in ('texto-do-usuario', str(UID), 'segredo', 'resposta-da-ia'):
             self.assertNotIn(proibido, logs.output[0])
 
@@ -1971,7 +1973,8 @@ class TestLogDeTokens(unittest.TestCase):
         linhas = saida.getvalue().splitlines()
         self.assertEqual(len(linhas), 1)
         self.assertRegex(linhas[0], r'^\d{4}-\d{2}-\d{2} [\d:,]+ registro INFO '
-                                    r'Tokens da IA: entrada=650 saida=100 pensamento=470 total=1220$')
+                                    r'IA: gemini tempo=\d+\.\d{2}s entrada=650 cache=None saida=100 pensamento=470 '
+                                    r'total=1220$')
         for proibido in ('texto-do-usuario', str(UID), 'resposta-da-ia'):
             self.assertNotIn(proibido, linhas[0])
 
@@ -1983,7 +1986,9 @@ class TestLogDeTokens(unittest.TestCase):
             prompt_token_count=10, total_token_count=12))))
         with self.assertLogs('registro', 'INFO') as logs:
             asyncio.run(registro.gerar_conteudo_com_retry("prompt"))
-        self.assertEqual(logs.output, ['INFO:registro:Tokens da IA: entrada=10 saida=None pensamento=None total=12'])
+        self.assertEqual(len(logs.output), 1)
+        self.assertRegex(logs.output[0], r'^INFO:registro:IA: gemini tempo=\d+\.\d{2}s entrada=10 cache=None '
+                                         r'saida=None pensamento=None total=12$')
 
 
 if __name__ == "__main__":
