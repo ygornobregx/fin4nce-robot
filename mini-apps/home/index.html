@@ -48,6 +48,17 @@
       --cor-selo-anel: #FFFFFF1F;         /* anel de 3px do selo pressionado */
       --cor-selo-pro-tocado: #E4E4E6;     /* fundo do selo claro ("Pro" e "Assinar") pressionado */
       --cor-pausado-icone: #8A8A8A;       /* ícone de pausa de "Registros Pausados" */
+      /* Respiro de segurança (PRO-112): fora da tela cheia vale o mesmo de sempre (a área segura do aparelho). */
+      --respiro-topo: env(safe-area-inset-top, 0px);
+      --respiro-rodape: env(safe-area-inset-bottom, 0px);
+    }
+
+    /* PRO-112: só com a tela cheia ligada (a classe vem do JS, pelo tg.isFullscreen), o respiro soma a faixa do Telegram
+       (os botões fechar e "...", e a barra de gestos). O max() evita contar duas vezes a mesma faixa no iPhone. As
+       variáveis --tg-* são publicadas pelo telegram-web-app.js; sem elas, a reserva é 0px. */
+    html.tela-cheia-ativa {
+      --respiro-topo: calc(max(env(safe-area-inset-top, 0px), var(--tg-safe-area-inset-top, 0px)) + var(--tg-content-safe-area-inset-top, 0px));
+      --respiro-rodape: calc(max(env(safe-area-inset-bottom, 0px), var(--tg-safe-area-inset-bottom, 0px)) + var(--tg-content-safe-area-inset-bottom, 0px));
     }
 
     * { box-sizing: border-box; }
@@ -62,6 +73,9 @@
       font: 500 12px/16px "Manrope", system-ui, sans-serif;
       -webkit-font-smoothing: antialiased;
     }
+
+    /* PRO-112: na tela cheia, o fim da página também respeita o rodapé do aparelho. */
+    html.tela-cheia-ativa body { padding-bottom: calc(40px + var(--respiro-rodape)); }
 
     h1, h2, p { margin: 0; }
 
@@ -110,6 +124,8 @@
       background: var(--cor-grafite);
       color: var(--cor-branco);
     }
+    /* PRO-112: na tela cheia, o grafite sobe até a barra de status e o conteúdo desce o tanto do respiro. */
+    html.tela-cheia-ativa .cabecalho { padding-top: calc(16px + var(--respiro-topo)); }
 
     .cabecalho-linha {
       padding: 0 24px;
@@ -606,14 +622,14 @@
     /* Rodapé: campo, microfone, enviar, forma de pagamento e Confirmar */
     .rodape {
       flex-shrink: 0;
-      padding: 14px 16px calc(24px + env(safe-area-inset-bottom, 0px));
+      padding: 14px 16px calc(24px + var(--respiro-rodape));
       display: flex;
       flex-direction: column;
       gap: 12px;
       border-top: 1px solid var(--cor-divisoria);
       background: var(--cor-branco);
     }
-    .registro-receita .rodape { padding-bottom: calc(34px + env(safe-area-inset-bottom, 0px)); }
+    .registro-receita .rodape { padding-bottom: calc(34px + var(--respiro-rodape)); }
 
     .campo-linha { display: flex; align-items: flex-end; gap: 8px; }
     .campo {
@@ -721,7 +737,7 @@
     .aviso-topo {
       position: fixed;
       z-index: 20;
-      top: calc(12px + env(safe-area-inset-top, 0px));
+      top: calc(12px + var(--respiro-topo));
       left: 16px;
       right: 16px;
       overflow: hidden;
@@ -756,13 +772,13 @@
 
     .rodape-tela {
       margin-top: auto;
-      padding: 14px 16px calc(32px + env(safe-area-inset-bottom, 0px));
+      padding: 14px 16px calc(32px + var(--respiro-rodape));
       display: flex;
       flex-direction: column;
       gap: 10px;
       flex-shrink: 0;
     }
-    .rodape-tela.com-dica { padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
+    .rodape-tela.com-dica { padding-bottom: calc(20px + var(--respiro-rodape)); }
     .dica-rodape { text-align: center; font-size: 12px; line-height: 16px; font-weight: 500; color: var(--cor-texto-2); }
 
     /* Escolha inicial */
@@ -1012,7 +1028,7 @@
     .tour-exemplo-linha:last-child { border-bottom: 0; }
     .tour-exemplo-linha span + span { font-weight: 700; white-space: nowrap; }
     .tour-exemplo-linha .receita { color: var(--cor-receita); }
-    .tour-rodape { margin-top: auto; padding: 8px 16px calc(28px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 10px; }
+    .tour-rodape { margin-top: auto; padding: 8px 16px calc(28px + var(--respiro-rodape)); display: flex; flex-direction: column; gap: 10px; }
     .tour-bolinhas { padding-bottom: 6px; display: flex; justify-content: center; gap: 6px; }
     .tour-bolinhas span { width: 6px; height: 6px; border-radius: 3px; background: var(--cor-barra-fechado); }
     .tour-bolinhas span.atual { width: 20px; background: var(--cor-grafite); }
@@ -1188,7 +1204,7 @@
     .folha {
       position: relative;
       max-height: calc(var(--altura-tela, 100vh) - 24px);
-      padding: 12px 24px calc(32px + env(safe-area-inset-bottom, 0px));
+      padding: 12px 24px calc(32px + var(--respiro-rodape));
       display: flex;
       flex-direction: column;
       gap: 20px;
@@ -1196,6 +1212,8 @@
       border-radius: 24px 24px 0 0;
       background: var(--cor-branco);
     }
+    /* PRO-112: na tela cheia, a folha alta não sobe por baixo dos botões do Telegram. */
+    html.tela-cheia-ativa .folha { max-height: calc(var(--altura-tela, 100vh) - 24px - var(--respiro-topo)); }
     .folha.compacta { gap: 16px; }
     .folha > * { flex-shrink: 0; }
     .folha-alca { align-self: center; width: 36px; height: 4px; flex-shrink: 0; border-radius: 2px; background: var(--cor-divisoria); }
@@ -4185,6 +4203,34 @@
     function arrastoFechaAFolha(deslocamentoPx) {
       return Number.isFinite(deslocamentoPx) && deslocamentoPx >= ARRASTO_FECHAR_PX;
     }
+
+    // ---------- Tela cheia e atalho na tela inicial (PRO-112) ----------
+    // Lado maior da tela, em pixels, a partir do qual o app pede a tela cheia: deixa de fora o iPhone SE e os aparelhos com tela curta.
+    const ALTURA_MINIMA_TELA_CHEIA_PX = 700;
+    // Espera depois de a home aparecer até o aviso nativo do atalho (uma espera só, pelo 'esperar').
+    const ESPERA_AVISO_ATALHO_MS = 1500;
+
+    // Pede a tela cheia só no iPhone e no iPad ("ios"), com a versão 8.0+ e a função do Telegram ('versaoOk' já inclui as duas),
+    // ainda fora da tela cheia e com o lado maior da tela de pelo menos ALTURA_MINIMA_TELA_CHEIA_PX. Sem leitura da tela: não pede.
+    // Android, computador e Telegram Web ficam como sempre foram.
+    function deveEntrarEmTelaCheia(plataforma, versaoOk, jaEmTelaCheia, ladoMaiorDaTela) {
+      return plataforma === "ios" && versaoOk === true && jaEmTelaCheia !== true
+        && Number.isFinite(ladoMaiorDaTela) && ladoMaiorDaTela >= ALTURA_MINIMA_TELA_CHEIA_PX;
+    }
+
+    // A parte da decisão do atalho que vem antes de consultar o Telegram: só a abertura que terminou na home, fora do modo
+    // somente leitura, sem a marca de "já perguntou" neste aparelho e com suporte.
+    function devePerguntarAtalho(ctx) {
+      const c = ctx || {};
+      return c.destino === "home" && !c.modoLeitura && !c.jaPerguntou && c.suporta === true;
+    }
+
+    // Resposta do checkHomeScreenStatus: "missed" (atalho ainda não adicionado) e "unknown" (suportado, mas não dá para saber se
+    // já foi adicionado) pedem o aviso. No Telegram para iOS a resposta é sempre "unknown"; a marca do aparelho (localStorage)
+    // é que impede a repetição. "added", "unsupported" e qualquer outro valor não pedem.
+    function statusPedeAtalho(status) {
+      return status === "missed" || status === "unknown";
+    }
   </script>
   <!-- FIM FUNCOES PURAS -->
 
@@ -4511,6 +4557,69 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
       aplicarAssinatura(me.assinatura); // selo, modo somente leitura e dica das Categorias (sem a chave: nada muda)
       if (destinoAssinatura === "expirada") abrirExpiradaNaAbertura();
       else if (destinoAssinatura === "assinaturas") abrirAssinaturasNaAbertura();
+      // PRO-112: o aviso nativo do atalho só na abertura, e só se ela terminou na home (sem esperar: a home já está pronta).
+      else if (abertura) perguntarAtalhoDaTelaInicial(destinoAssinatura, me.assinatura);
+    }
+
+    // ---------- Atalho na tela inicial (PRO-112) ----------
+    const CHAVE_ATALHO_PERGUNTADO = "atalho_tela_inicial_perguntado";
+    const TEMPO_STATUS_ATALHO_MS = 2000;
+
+    // A marca fica só neste aparelho (o atalho é de cada aparelho; a nuvem do Telegram valeria para todos). Sem acesso: vale
+    // "já perguntou", e o aviso não aparece (sem a marca, ele repetiria em toda abertura).
+    function atalhoJaPerguntado() {
+      try { return window.localStorage.getItem(CHAVE_ATALHO_PERGUNTADO) === "1"; } catch (e) { return true; }
+    }
+
+    // Devolve false se não deu para gravar: nesse caso o aviso não aparece.
+    function gravarAtalhoPerguntado() {
+      try { window.localStorage.setItem(CHAVE_ATALHO_PERGUNTADO, "1"); return true; } catch (e) { return false; }
+    }
+
+    function telegramSuportaAtalho() {
+      try {
+        return !!tg && typeof tg.isVersionAtLeast === "function" && tg.isVersionAtLeast("8.0") === true
+          && typeof tg.checkHomeScreenStatus === "function" && typeof tg.addToHomeScreen === "function";
+      } catch (e) { return false; }
+    }
+
+    // O Telegram responde por callback; sem resposta em TEMPO_STATUS_ATALHO_MS, ou com erro, vale null (não pergunta).
+    function consultarStatusDoAtalho() {
+      return new Promise((resolver) => {
+        let resolvido = false;
+        const fim = (valor) => { if (!resolvido) { resolvido = true; resolver(valor); } };
+        try {
+          tg.checkHomeScreenStatus((status) => fim(status));
+          setTimeout(() => fim(null), TEMPO_STATUS_ATALHO_MS);
+        } catch (e) {
+          fim(null);
+        }
+      });
+    }
+
+    // A home continua sozinha na tela? Sem outra tela, sem folha aberta, sem aviso de erro e sem a logo.
+    function homeLivreParaOAviso() {
+      if ($("tela").hidden || !$("aviso").hidden || !$("tela-logo").hidden) return false;
+      if (Array.from(document.querySelectorAll("main")).some((m) => m.id !== "tela" && !m.hidden)) return false;
+      return !Array.from(document.querySelectorAll(".folha-camada")).some((f) => !f.hidden);
+    }
+
+    // Depois da abertura na home: confere o suporte e a marca, consulta o status ("missed" ou "unknown" pedem o aviso),
+    // espera ESPERA_AVISO_ATALHO_MS, confere que a home segue livre e só então grava a marca e chama o aviso nativo.
+    // Nada aqui muda a tela nem pode atrapalhar a home: tudo dentro de try.
+    async function perguntarAtalhoDaTelaInicial(destino, blocoAssinatura) {
+      try {
+        const decisao = {
+          destino: destino, modoLeitura: modoLeituraDoBloco(blocoAssinatura),
+          jaPerguntou: atalhoJaPerguntado(), suporta: telegramSuportaAtalho(),
+        };
+        if (!devePerguntarAtalho(decisao)) return;
+        if (!statusPedeAtalho(await consultarStatusDoAtalho())) return;
+        await esperar(ESPERA_AVISO_ATALHO_MS);
+        if (!homeLivreParaOAviso()) return; // abriu outra tela: fica para a próxima abertura, sem gravar a marca
+        if (!gravarAtalhoPerguntado()) return;
+        tg.addToHomeScreen(); // a marca já está gravada: nem fechar o app no meio repete o aviso
+      } catch (e) { /* nada nessa parte pode afetar a home */ }
     }
 
     // ---------- Telegram ----------
@@ -7104,10 +7213,49 @@ let anoMesDaHome = null; // ano_mes do último /resumo da home: o título das Ca
       FOLHAS_ASSINATURA.forEach(tornarFolhaArrastavel);
     }
 
+    // ---------- Tela cheia (PRO-112) ----------
+    // A classe tela-cheia-ativa no <html> liga os respiros do CSS que somam a faixa do Telegram; segue o tg.isFullscreen.
+    function atualizarClasseTelaCheia() {
+      let ativa = false;
+      try { ativa = !!tg && tg.isFullscreen === true; } catch (e) { ativa = false; }
+      document.documentElement.classList.toggle("tela-cheia-ativa", ativa);
+    }
+
+    function aoMudarATelaCheia() {
+      atualizarClasseTelaCheia();
+      ajustarAlturaTela();
+    }
+
+    // Lado maior da tela do aparelho; sem leitura vale null (e a tela cheia não é pedida).
+    function ladoMaiorDaTelaDoAparelho() {
+      try { return Math.max(window.screen.width, window.screen.height); } catch (e) { return null; }
+    }
+
+    // Pede a tela cheia (só iPhone e iPad, em tela grande: ver deveEntrarEmTelaCheia). Se o Telegram recusar
+    // (fullscreenFailed) ou der erro, nada muda para a pessoa.
+    function pedirTelaCheia() {
+      try {
+        const versaoOk = typeof tg.isVersionAtLeast === "function" && tg.isVersionAtLeast("8.0") === true
+          && typeof tg.requestFullscreen === "function";
+        if (deveEntrarEmTelaCheia(tg.platform, versaoOk, tg.isFullscreen === true, ladoMaiorDaTelaDoAparelho())) tg.requestFullscreen();
+      } catch (e) { /* versão antiga ou recusada */ }
+    }
+
+    function ligarEventosDaTelaCheia() {
+      ["fullscreenChanged", "safeAreaChanged", "contentSafeAreaChanged"].forEach((evento) => {
+        try { tg.onEvent(evento, aoMudarATelaCheia); } catch (e) { /* versão antiga */ }
+      });
+      try { tg.onEvent("viewportChanged", atualizarClasseTelaCheia); } catch (e) { /* versão antiga */ }
+    }
+
     function iniciar() {
       if (tg) {
         try { tg.ready(); } catch (e) { /* versão antiga */ }
         try { tg.expand(); } catch (e) { /* versão antiga */ }
+        // PRO-112: logo depois do expand, ainda com a logo na frente: a troca de tamanho acontece por baixo dela.
+        ligarEventosDaTelaCheia();
+        atualizarClasseTelaCheia();
+        pedirTelaCheia();
         try { tg.setHeaderColor("#2F3133"); } catch (e) { /* versão antiga */ }
         try { tg.setBackgroundColor("#FFFFFF"); } catch (e) { /* versão antiga */ }
       }

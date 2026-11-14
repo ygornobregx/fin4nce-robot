@@ -1764,14 +1764,16 @@ class TestEstruturaDosRecorrentes(unittest.TestCase):
                 self.assertIn(marca, corpo)
                 self.assertIn('try {', corpo)
                 self.assertIn('catch (e)', corpo)
-        # localStorage e CloudStorage só aparecem dentro dessas funções (nenhum acesso solto): as três do guia e, desde a
-        # PRO-108, as três do "dia em que a tela Expirada foi vista" (mesmo molde, chave própria).
+        # localStorage e CloudStorage só aparecem dentro dessas funções (nenhum acesso solto): as três do guia, desde a
+        # PRO-108 as três do "dia em que a tela Expirada foi vista" (mesmo molde, chave própria) e, desde a PRO-112, as duas
+        # da marca do atalho (só localStorage).
         def sem_comentarios(texto):
             return re.sub(r'//[^\n]*', '', texto)
         for marca in ('localStorage', 'CloudStorage'):
             dentro = sum(sem_comentarios(corpo_da_funcao(principal, f)).count(marca)
                          for f in ('function lerGuiaLocal', 'function lerGuiaNuvem', 'function marcarGuiaVisto',
-                                   'function lerExpiradaLocal', 'function lerExpiradaNuvem', 'function marcarExpiradaVista'))
+                                   'function lerExpiradaLocal', 'function lerExpiradaNuvem', 'function marcarExpiradaVista',
+                                   'function atalhoJaPerguntado', 'function gravarAtalhoPerguntado'))
             self.assertEqual(sem_comentarios(principal).count(marca), dentro, marca)
         self.assertNotIn('setInterval', HOME)
 
@@ -3187,7 +3189,7 @@ class TestCategoriasFuncoesPuras(unittest.TestCase):
 # <script> principal de verdade no node, sem rede e sem .env. O relógio é de mentira: setTimeout dispara na hora e soma a
 # espera pedida ao performance.now(), então "30 segundos" de espera passam em milissegundos.
 HARNESS_PAGINA = r"""
-const __log = { fetch: [], alertas: [], confirms: [], faturas: [], ligacoes: [] };
+const __log = { fetch: [], alertas: [], confirms: [], faturas: [], ligacoes: [], telaCheia: 0, status: 0, atalhos: [] };
 let __virtual = 0;
 const __stReal = setTimeout;
 // Esperas curtas disparam na hora (e somam ao relógio); as de 10 s ou mais (o aviso do topo, o tempo limite do fetch) nunca disparam.
@@ -3241,21 +3243,23 @@ function __criarEl(tag, info) {
 const __elementos = {};
 for (const [id, info] of Object.entries(ENTRADA.ids)) __elementos[id] = __criarEl(info.tag, Object.assign({ id }, info));
 const __mains = Object.values(__elementos).filter((e) => e.tagName === 'MAIN');
+const __folhas = Object.values(__elementos).filter((e) => e.classList.contains('folha-camada'));
 const __corpo = __criarEl('body', {});
 globalThis.document = {
   getElementById: (id) => { if (!__elementos[id]) throw new Error('id inexistente: ' + id); return __elementos[id]; },
-  querySelectorAll: (seletor) => (seletor === 'main' ? __mains : []),
+  querySelectorAll: (seletor) => (seletor === 'main' ? __mains : seletor === '.folha-camada' ? __folhas : []),
   createElement: (tag) => __criarEl(tag, {}), createElementNS: (ns, tag) => __criarEl(tag, {}),
   createTextNode: (t) => __texto(t),
   body: __corpo, documentElement: __criarEl('html', {}), activeElement: null,
 };
 
-// Armazenamento: 'ok' (guarda de verdade), 'quebrado' (toda leitura e escrita lança) ou 'sem' (não existe).
+// Armazenamento: 'ok' (guarda de verdade), 'quebrado' (toda leitura e escrita lança), 'sem-escrita' (lê, mas a escrita lança) ou 'sem' (não existe).
 const __hoje = diaDeBrasilia(Date.now(), 'America/Sao_Paulo');
 function __armazenamento(config, comCallback) {
   const modo = (config && config.modo) || 'ok';
   if (modo === 'sem') return undefined;
   if (modo === 'quebrado') return { getItem() { throw new Error('sem acesso'); }, setItem() { throw new Error('sem acesso'); } };
+  if (modo === 'sem-escrita') return { dados: {}, getItem() { return null; }, setItem() { throw new Error('sem escrita'); } };
   const dados = Object.assign({}, config && config.hoje ? { expirada_vista_em: __hoje } : {}, (config && config.dados) || {});
   if (comCallback) return { dados, getItem: (k, cb) => cb(null, k in dados ? dados[k] : null), setItem: (k, v, cb) => { dados[k] = String(v); cb(null, true); } };
   return { dados, getItem: (k) => (k in dados ? dados[k] : null), setItem: (k, v) => { dados[k] = String(v); } };
@@ -3282,7 +3286,7 @@ let __ultimoAlerta = null;
 let __ultimaFatura = null;
 const __webapp = {
   initData: 'dados-de-mentira', initDataUnsafe: { start_param: ENTRADA.startParam || undefined },
-  ready() {}, expand() {}, setHeaderColor() {}, setBackgroundColor() {}, onEvent() {},
+  ready() {}, expand() {}, setHeaderColor() {}, setBackgroundColor() {}, onEvent(nome, f) { (__eventos[nome] = __eventos[nome] || []).push(f); },
   viewportHeight: 800, viewportStableHeight: 800,
   BackButton: { show() { __log.ligacoes.push('show'); }, hide() { __log.ligacoes.push('hide'); }, onClick(f) { __voltar = f; } },
   showAlert(msg, cb) { __log.alertas.push(msg); __ultimoAlerta = { msg, cb }; },
@@ -3290,8 +3294,31 @@ const __webapp = {
   openInvoice(link, cb) { __log.faturas.push(link); __ultimaFatura = { link, cb }; },
 };
 if (__nuvem) __webapp.CloudStorage = __nuvem;
+// PRO-112: tela cheia e atalho. ENTRADA.telegram = { platform, versao, emTelaCheia, tela: [largura, altura], atalho: { status, abrir } }.
+// Sem ENTRADA.telegram, o Telegram de mentira não tem plataforma, versão, tela cheia nem atalho (como os testes antigos esperam).
+// atalho.status: o texto que o callback devolve (sem a chave: nunca responde); atalho.abrir: abre uma "folha" ou "tela" durante a espera.
+const __eventos = {};
+const __tgInfo = ENTRADA.telegram || null;
+if (__tgInfo) {
+  __webapp.platform = __tgInfo.platform;
+  __webapp.isFullscreen = !!__tgInfo.emTelaCheia;
+  if (__tgInfo.versao !== undefined) {
+    __webapp.isVersionAtLeast = (v) => __tgInfo.versao >= parseFloat(v);
+    if (__tgInfo.semTelaCheia !== true) __webapp.requestFullscreen = () => { __log.telaCheia++; };
+    if (__tgInfo.atalho) {
+      __webapp.checkHomeScreenStatus = (cb) => {
+        __log.status++;
+        if (ENTRADA.telegram.atalho.status !== undefined) cb(ENTRADA.telegram.atalho.status);
+        if (ENTRADA.telegram.atalho.abrir === 'folha') __elementos['folha-minha'].hidden = false;
+        if (ENTRADA.telegram.atalho.abrir === 'tela') __elementos['tela'].hidden = true;
+      };
+      __webapp.addToHomeScreen = () => { __log.atalhos.push(__local && __local.dados ? (__local.dados.atalho_tela_inicial_perguntado || null) : 'sem-local'); };
+    }
+  }
+}
 globalThis.window = { Telegram: { WebApp: __webapp }, location: { search: ENTRADA.busca || '' }, scrollY: 0, innerHeight: 800,
                       scrollTo() {}, addEventListener() {}, matchMedia: () => ({ matches: false }),
+                      screen: (__tgInfo && __tgInfo.tela) ? { width: __tgInfo.tela[0], height: __tgInfo.tela[1] } : undefined,
                       alert() {}, confirm: () => true };
 if (__local) globalThis.window.localStorage = __local;
 else Object.defineProperty(globalThis.window, 'localStorage', { get() { throw new Error('sem localStorage'); } });
@@ -4735,7 +4762,7 @@ class TestEstruturaDasAssinaturas(unittest.TestCase):
         self.assertIn('height: 44px', regra_css('.botao-texto'))
         self.assertIn('class="botao-texto ass-mais-tarde"', bloco_main('expirada'))
         # A folha é a mesma dos Recorrentes (raio 24, alça de 36x4, padding 12 24 32) e fica entre o aviso e a logo.
-        self.assertIn('padding: 12px 24px calc(32px + env(safe-area-inset-bottom, 0px))', regra_css('.folha'))
+        self.assertIn('padding: 12px 24px calc(32px + var(--respiro-rodape))', regra_css('.folha'))
         self.assertIn('border-radius: 24px 24px 0 0', regra_css('.folha'))
         for identificador in ('folha-plano', 'folha-minha', 'folha-termos'):
             self.assertIn('<div class="folha-alca"></div>', bloco_folha(identificador))
@@ -5183,6 +5210,415 @@ class TestTravaDeCadastroNaTela(unittest.TestCase):
         rotear = corpo_da_funcao(codigo_principal(HOME), 'function rotearAssinaturas')
         self.assertIn('if (modo === null || (assEstado.origem === "cadastro" && cadastroPulaAsAssinaturas(modo))) {', rotear)
         self.assertLess(rotear.index('abrirExpirada();'), rotear.index('cadastroPulaAsAssinaturas(modo)'))
+
+# ----------------------------------------------------------------------------
+# PRO-112: tela cheia (só iPhone e iPad, em tela grande), respiros de segurança e atalho na tela inicial
+# ----------------------------------------------------------------------------
+TG_IOS = {'platform': 'ios', 'versao': 8.0, 'tela': [390, 844]}
+TG_IOS_ATALHO = dict(TG_IOS, atalho={'status': 'missed'})
+ATALHO_MARCA = 'atalho_tela_inicial_perguntado'
+
+# Espera a abertura terminar e deixa passar mais voltas do laço de eventos (a espera de 1,5 s do atalho é um timer do relógio de mentira).
+ESPERAR_TUDO = """
+    await __ocioso();
+    for (let i = 0; i < 300; i++) await new Promise((r) => setImmediate(r));
+"""
+SAIDA_TELEGRAM = """
+    console.log(JSON.stringify({ telaCheia: __log.telaCheia, status: __log.status, atalhos: __log.atalhos,
+      marca: __local && __local.dados ? (__local.dados.%s || null) : null,
+      nuvem: __nuvem && __nuvem.dados ? Object.keys(__nuvem.dados) : null,
+      classe: document.documentElement.classList.contains('tela-cheia-ativa'), chamadas: __chamadas(),
+      home: __visivel('tela'), expirada: __visivel('expirada'), assinaturas: __visivel('assinaturas'),
+      escolha: __visivel('boas-vindas'), folha: __visivel('folha-minha') }));
+""" % ATALHO_MARCA
+
+
+def abrir_no_telegram(telegram, rotas=None, extras_entrada=None, cenario=''):
+    """Abre a home no navegador de mentira com 'telegram' (ver o harness) e devolve o resumo de SAIDA_TELEGRAM."""
+    entrada = {'rotas': rotas if rotas is not None else rotas_da_home()}
+    if telegram is not None:
+        entrada['telegram'] = telegram
+    entrada.update(extras_entrada or {})
+    return rodar_pagina(entrada, ESPERAR_TUDO + cenario + SAIDA_TELEGRAM)
+
+
+@unittest.skipUnless(NODE, 'node não encontrado')
+class TestTelaCheiaEAtalhoFuncoesPuras(unittest.TestCase):
+    def test_constantes_do_bloco_puro(self):
+        puro = codigo_puro(HOME)
+        self.assertIn('const ALTURA_MINIMA_TELA_CHEIA_PX = 700;', puro)
+        self.assertIn('const ESPERA_AVISO_ATALHO_MS = 1500;', puro)
+        for nome in ('deveEntrarEmTelaCheia', 'devePerguntarAtalho', 'statusPedeAtalho'):
+            self.assertIn('function %s(' % nome, puro)
+
+    def test_deve_entrar_em_tela_cheia(self):
+        casos = [
+            # (plataforma, versaoOk, jaEmTelaCheia, ladoMaior) -> esperado
+            (('ios', True, False, 844), True),
+            (('ios', True, False, 700), True),           # valor limite: 700 entra
+            (('ios', True, False, 699), False),          # 699 não entra
+            (('ios', True, False, 667), False),          # iPhone SE
+            (('ios', True, False, 1366), True),          # iPad
+            (('ios', True, False, None), False),         # sem leitura da tela
+            (('ios', True, False, 'x'), False),
+            (('ios', True, True, 844), False),           # já está em tela cheia
+            (('ios', False, False, 844), False),         # versão antiga ou sem a função
+            (('android', True, False, 900), False),      # Android não pede
+        ] + [((plataforma, True, False, 900), False)
+             for plataforma in ('tdesktop', 'macos', 'web', 'weba', 'webk', 'unigram', 'unknown', '', None, 'iOS')]
+        obtido = rodar_node(com_funcoes_puras("""
+            const casos = ENTRADA.casos.map((c) => c[0]);
+            const sem_lado = [['ios', true, false, NaN], ['ios', true, false, undefined], ['ios', true, false, Infinity]];
+            console.log(JSON.stringify({ casos: casos.map((c) => deveEntrarEmTelaCheia(...c)),
+                                          semLado: sem_lado.map((c) => deveEntrarEmTelaCheia(...c)),
+                                          vazio: deveEntrarEmTelaCheia() }));
+        """, ), {'casos': casos})
+        self.assertEqual(obtido['casos'], [esperado for _, esperado in casos])
+        self.assertEqual(obtido['semLado'], [False, False, False])
+        self.assertFalse(obtido['vazio'])
+
+    def test_deve_perguntar_atalho(self):
+        base = {'destino': 'home', 'modoLeitura': False, 'jaPerguntou': False, 'suporta': True}
+        variantes = [
+            base,
+            dict(base, destino='escolha'), dict(base, destino='aviso'), dict(base, destino='expirada'),
+            dict(base, destino='assinaturas'), dict(base, destino=None), dict(base, destino='Home'),
+            dict(base, modoLeitura=True), dict(base, jaPerguntou=True),
+            dict(base, suporta=False), dict(base, suporta=None), dict(base, suporta='sim'),
+        ]
+        obtido = rodar_node(com_funcoes_puras("""
+            console.log(JSON.stringify({ r: ENTRADA.v.map((c) => devePerguntarAtalho(c)), vazio: devePerguntarAtalho(), nulo: devePerguntarAtalho(null) }));
+        """), {'v': variantes})
+        self.assertEqual(obtido['r'], [True] + [False] * (len(variantes) - 1))
+        self.assertFalse(obtido['vazio'])
+        self.assertFalse(obtido['nulo'])
+
+    def test_status_pede_atalho_so_com_missed_ou_unknown(self):
+        valores = ['missed', 'unknown', 'added', 'unsupported', None, '', 'Missed', 'Unknown', 'missed ', 'qualquer', 1, True]
+        obtido = rodar_node(com_funcoes_puras("console.log(JSON.stringify(ENTRADA.v.map((v) => statusPedeAtalho(v)).concat([statusPedeAtalho()])));"),
+                            {'v': valores})
+        self.assertEqual(obtido, [True, True] + [False] * (len(valores) - 2 + 1))   # o último False é a chamada sem argumento
+
+
+@unittest.skipUnless(NODE, 'node não encontrado')
+class TestTelaCheiaNaPagina(unittest.TestCase):
+    def test_so_o_ios_em_tela_grande_com_suporte_pede_a_tela_cheia_uma_vez(self):
+        casos = [
+            ('ios 844', TG_IOS, 1),
+            ('ios deitado (lado maior = largura)', dict(TG_IOS, tela=[844, 390]), 1),
+            ('ios 700', dict(TG_IOS, tela=[393, 700]), 1),
+            ('ios 699', dict(TG_IOS, tela=[393, 699]), 0),
+            ('ios SE', dict(TG_IOS, tela=[375, 667]), 0),
+            ('ios sem leitura da tela', {'platform': 'ios', 'versao': 8.0}, 0),
+            ('ios versão antiga', dict(TG_IOS, versao=7.10), 0),
+            ('ios sem a função', dict(TG_IOS, semTelaCheia=True), 0),
+            ('ios já em tela cheia', dict(TG_IOS, emTelaCheia=True), 0),
+            ('android', dict(TG_IOS, platform='android'), 0),
+        ] + [(plataforma or 'vazio', dict(TG_IOS, platform=plataforma), 0)
+             for plataforma in ('tdesktop', 'macos', 'web', 'weba', 'webk', 'unigram', 'unknown', '')]
+        for nome, telegram, esperado in casos:
+            with self.subTest(caso=nome):
+                obtido = abrir_no_telegram(telegram)
+                self.assertEqual(obtido['telaCheia'], esperado)
+                self.assertTrue(obtido['home'])
+                self.assertEqual(obtido['chamadas'], ABERTURA)    # nada mudou na abertura
+
+    def test_sem_o_objeto_de_telegram_novo_nada_acontece(self):
+        obtido = abrir_no_telegram(None)
+        self.assertEqual(obtido['telaCheia'], 0)
+        self.assertFalse(obtido['classe'])
+        self.assertTrue(obtido['home'])
+
+    def test_a_classe_so_existe_com_a_tela_cheia_ligada(self):
+        # Pedir a tela cheia não liga a classe: ela segue o tg.isFullscreen (confirmado pelo evento fullscreenChanged).
+        obtido = abrir_no_telegram(TG_IOS)
+        self.assertEqual(obtido['telaCheia'], 1)
+        self.assertFalse(obtido['classe'])
+        obtido = rodar_pagina({'rotas': rotas_da_home(), 'telegram': TG_IOS}, ESPERAR_TUDO + """
+            const passos = [];
+            const classe = () => document.documentElement.classList.contains('tela-cheia-ativa');
+            passos.push(classe());
+            __webapp.isFullscreen = true;  (__eventos.fullscreenChanged || []).forEach((f) => f());
+            passos.push(classe());
+            __webapp.isFullscreen = false; (__eventos.safeAreaChanged || []).forEach((f) => f());
+            passos.push(classe());
+            __webapp.isFullscreen = true;  (__eventos.contentSafeAreaChanged || []).forEach((f) => f());
+            passos.push(classe());
+            __webapp.isFullscreen = false; (__eventos.viewportChanged || []).forEach((f) => f());
+            passos.push(classe());
+            console.log(JSON.stringify({ passos, eventos: Object.keys(__eventos).sort(),
+              ouvintes: ['fullscreenChanged', 'safeAreaChanged', 'contentSafeAreaChanged', 'viewportChanged'].map((e) => (__eventos[e] || []).length >= 1) }));
+        """)
+        self.assertEqual(obtido['passos'], [False, True, False, True, False])
+        self.assertEqual(obtido['ouvintes'], [True, True, True, True])
+        # Já aberto em tela cheia (qualquer plataforma): a classe liga na abertura, sem pedir nada.
+        for plataforma in ('ios', 'android', 'tdesktop'):
+            with self.subTest(plataforma=plataforma):
+                obtido = abrir_no_telegram(dict(TG_IOS, platform=plataforma, emTelaCheia=True))
+                self.assertTrue(obtido['classe'])
+                self.assertEqual(obtido['telaCheia'], 0)
+
+    def test_estrutura_da_chamada_no_iniciar(self):
+        principal = codigo_principal(HOME)
+        iniciar = corpo_da_funcao(principal, 'function iniciar()')
+        self.assertLess(iniciar.index('tg.expand()'), iniciar.index('pedirTelaCheia();'))
+        self.assertLess(iniciar.index('pedirTelaCheia();'), iniciar.index('carregar(true)'))
+        for ainda in ('tg.ready()', 'tg.setHeaderColor("#2F3133")', 'tg.setBackgroundColor("#FFFFFF")'):
+            self.assertIn(ainda, iniciar)
+        pedir = corpo_da_funcao(principal, 'function pedirTelaCheia')
+        self.assertIn('try {', pedir)
+        self.assertIn('typeof tg.requestFullscreen === "function"', pedir)
+        self.assertIn('tg.isVersionAtLeast("8.0")', pedir)
+        self.assertIn('deveEntrarEmTelaCheia(tg.platform, versaoOk, tg.isFullscreen === true, ladoMaiorDaTelaDoAparelho())', pedir)
+        self.assertIn('Math.max(window.screen.width, window.screen.height)', corpo_da_funcao(principal, 'function ladoMaiorDaTelaDoAparelho'))
+        self.assertIn('catch (e) { return null; }', corpo_da_funcao(principal, 'function ladoMaiorDaTelaDoAparelho'))
+        for evento in ('fullscreenChanged', 'safeAreaChanged', 'contentSafeAreaChanged'):
+            self.assertIn('"%s"' % evento, corpo_da_funcao(principal, 'function ligarEventosDaTelaCheia'))
+        aoMudar = corpo_da_funcao(principal, 'function aoMudarATelaCheia')
+        self.assertIn('atualizarClasseTelaCheia();', aoMudar)
+        self.assertIn('ajustarAlturaTela();', aoMudar)
+        self.assertIn('tg.isFullscreen === true', corpo_da_funcao(principal, 'function atualizarClasseTelaCheia'))
+
+
+@unittest.skipUnless(NODE, 'node não encontrado')
+class TestAtalhoNaTelaInicial(unittest.TestCase):
+    def test_missed_na_abertura_na_home_grava_a_marca_antes_e_pergunta_uma_vez(self):
+        for nome, assinatura in (('sem a chave', 'ausente'), ('teste', BLOCO_TESTE), ('pro', BLOCO_PRO), ('admin', BLOCO_ADMIN)):
+            with self.subTest(bloco=nome):
+                obtido = abrir_no_telegram(TG_IOS_ATALHO, rotas_da_home(assinatura))
+                self.assertTrue(obtido['home'])
+                self.assertEqual(obtido['status'], 1)
+                self.assertEqual(obtido['atalhos'], ['1'])    # uma chamada, e a marca já estava gravada nesse momento
+                self.assertEqual(obtido['marca'], '1')
+                self.assertNotIn(ATALHO_MARCA, obtido['nuvem'] or [])
+                self.assertEqual(obtido['chamadas'], ABERTURA)
+
+    def test_unknown_do_iphone_pergunta_uma_vez_e_a_segunda_abertura_nao(self):
+        # No Telegram para iOS o checkHomeScreenStatus responde sempre "unknown": o aviso aparece, e a marca do aparelho segura a repetição.
+        iphone = dict(TG_IOS, atalho={'status': 'unknown'})
+        obtido = abrir_no_telegram(iphone)
+        self.assertTrue(obtido['home'])
+        self.assertEqual(obtido['status'], 1)
+        self.assertEqual(obtido['atalhos'], ['1'])    # uma chamada, com a marca já gravada nesse momento
+        self.assertEqual(obtido['marca'], '1')
+        self.assertNotIn(ATALHO_MARCA, obtido['nuvem'] or [])
+        obtido = abrir_no_telegram(iphone, extras_entrada={'local': {'dados': {ATALHO_MARCA: '1'}}})
+        self.assertEqual(obtido['status'], 0)
+        self.assertEqual(obtido['atalhos'], [])
+        # Dentro da mesma sessão (carregar(true) de novo) também não repete.
+        obtido = rodar_pagina({'rotas': rotas_da_home(), 'telegram': iphone}, ESPERAR_TUDO + """
+            await carregar(true);
+            for (let i = 0; i < 300; i++) await new Promise((r) => setImmediate(r));
+            console.log(JSON.stringify({ atalhos: __log.atalhos.length, status: __log.status }));
+        """)
+        self.assertEqual((obtido['atalhos'], obtido['status']), (1, 1))
+
+    def test_vale_para_android_e_qualquer_plataforma_com_suporte(self):
+        for plataforma in ('android', 'ios', 'tdesktop'):
+            with self.subTest(plataforma=plataforma):
+                obtido = abrir_no_telegram(dict(TG_IOS_ATALHO, platform=plataforma))
+                self.assertEqual(obtido['atalhos'], ['1'])
+                self.assertEqual(obtido['telaCheia'], 1 if plataforma == 'ios' else 0)   # a tela cheia segue só o iOS
+
+    def test_segunda_abertura_com_a_marca_nao_consulta_nem_pergunta(self):
+        obtido = abrir_no_telegram(TG_IOS_ATALHO, extras_entrada={'local': {'dados': {ATALHO_MARCA: '1'}}})
+        self.assertEqual(obtido['status'], 0)
+        self.assertEqual(obtido['atalhos'], [])
+        # Marca com outro valor ("0", vazia) não vale como "já perguntou": a pergunta ainda vale.
+        obtido = abrir_no_telegram(TG_IOS_ATALHO, extras_entrada={'local': {'dados': {ATALHO_MARCA: '0'}}})
+        self.assertEqual(obtido['atalhos'], ['1'])
+
+    def test_a_pergunta_nao_se_repete_na_mesma_sessao_nem_na_seguinte(self):
+        obtido = rodar_pagina({'rotas': rotas_da_home(), 'telegram': TG_IOS_ATALHO}, ESPERAR_TUDO + """
+            const primeira = __log.atalhos.length;
+            await carregar(true);
+            for (let i = 0; i < 300; i++) await new Promise((r) => setImmediate(r));
+            console.log(JSON.stringify({ primeira, depois: __log.atalhos.length, status: __log.status }));
+        """)
+        self.assertEqual((obtido['primeira'], obtido['depois'], obtido['status']), (1, 1, 1))
+
+    def test_outros_status_e_falta_de_resposta_nao_perguntam_nem_gravam(self):
+        for nome, atalho in (('added', {'status': 'added'}), ('unsupported', {'status': 'unsupported'}),
+                             ('texto qualquer', {'status': 'qualquer'}), ('vazio', {'status': ''}), ('nulo', {'status': None}),
+                             ('sem resposta em 2 s', {})):
+            with self.subTest(status=nome):
+                obtido = abrir_no_telegram(dict(TG_IOS, atalho=atalho))
+                self.assertEqual(obtido['status'], 1)
+                self.assertEqual(obtido['atalhos'], [])
+                self.assertIsNone(obtido['marca'])
+                self.assertTrue(obtido['home'])
+
+    def test_sem_suporte_nem_consulta(self):
+        for nome, telegram in (('versão antiga', dict(TG_IOS_ATALHO, versao=7.10)), ('sem objeto novo', None)):
+            with self.subTest(caso=nome):
+                obtido = abrir_no_telegram(telegram)
+                self.assertEqual(obtido['status'], 0)
+                self.assertEqual(obtido['atalhos'], [])
+                self.assertIsNone(obtido['marca'])
+        # Sem uma das duas funções: nada.
+        for faltando in ('checkHomeScreenStatus', 'addToHomeScreen'):
+            with self.subTest(sem=faltando):
+                obtido = rodar_pagina({'rotas': rotas_da_home(), 'telegram': TG_IOS_ATALHO}, "delete __webapp.%s;\n" % faltando
+                                      + ESPERAR_TUDO + SAIDA_TELEGRAM)
+                self.assertEqual(obtido['atalhos'], [])
+                self.assertIsNone(obtido['marca'])
+
+    def test_localstorage_quebrado_ou_ausente_nao_pergunta(self):
+        for nome, local in (('quebrado', {'modo': 'quebrado'}), ('ausente', {'modo': 'sem'})):
+            with self.subTest(local=nome):
+                obtido = abrir_no_telegram(TG_IOS_ATALHO, extras_entrada={'local': local})
+                self.assertEqual(obtido['atalhos'], [])
+                self.assertEqual(obtido['status'], 0)         # a leitura com erro já basta: nem consulta
+                self.assertTrue(obtido['home'])
+        # Lê bem e a escrita dá erro: consulta, mas não pergunta (sem a marca, repetiria em toda abertura).
+        obtido = abrir_no_telegram(TG_IOS_ATALHO, extras_entrada={'local': {'modo': 'sem-escrita'}})
+        self.assertEqual(obtido['status'], 1)
+        self.assertEqual(obtido['atalhos'], [])
+        self.assertTrue(obtido['home'])
+
+    def test_nunca_na_escolha_inicial_expirada_assinaturas_nem_modo_leitura(self):
+        nao_cadastrado = rotas_da_home(extras={'GET /me': {'status': 404, 'body': {'detail': 'usuario_nao_cadastrado'}}})
+        casos = [
+            ('escolha', nao_cadastrado, {}, 'escolha'),
+            ('expirada', rotas_da_home(BLOCO_TESTE_VENCIDO), {}, 'expirada'),
+            ('expirada de pro', rotas_da_home(BLOCO_PRO_VENCIDO), {}, 'expirada'),
+            ('assinaturas (sem plano)', rotas_da_home(BLOCO_SEM_PLANO, extras={'GET /assinatura': {'status': 200, 'body': BLOCO_SEM_PLANO}}),
+             {}, 'assinaturas'),
+            ('assinaturas (link)', rotas_da_home(BLOCO_TESTE, extras={'GET /assinatura': {'status': 200, 'body': BLOCO_TESTE}}),
+             {'busca': '?tela=assinatura'}, 'assinaturas'),
+            ('modo leitura na home (Expirada já vista hoje)', rotas_da_home(BLOCO_TESTE_VENCIDO), {'local': {'hoje': True}}, 'home'),
+        ]
+        for nome, rotas, extras, tela in casos:
+            with self.subTest(caso=nome):
+                obtido = abrir_no_telegram(TG_IOS_ATALHO, rotas, extras)
+                self.assertTrue(obtido[tela if tela != 'escolha' else 'escolha'], nome)
+                self.assertEqual(obtido['status'], 0)
+                self.assertEqual(obtido['atalhos'], [])
+                self.assertIsNone(obtido['marca'])
+        # Erro no /me (aviso): idem.
+        obtido = abrir_no_telegram(TG_IOS_ATALHO, rotas_da_home(extras={'GET /me': {'status': 500, 'body': {'detail': 'x'}}}))
+        self.assertEqual((obtido['status'], obtido['atalhos']), (0, []))
+
+    def test_recargas_sem_abertura_nunca_perguntam(self):
+        # O fim do tour, o "Já Sou Amigo do Adm", o Registrar e o "Tentar de novo" chamam carregar() sem 'abertura'.
+        obtido = rodar_pagina({'rotas': rotas_da_home(), 'telegram': dict(TG_IOS, atalho={'status': 'added'})}, ESPERAR_TUDO + """
+            ENTRADA.telegram.atalho.status = 'missed';
+            const antes = { status: __log.status, atalhos: __log.atalhos.length };
+            await carregar();
+            for (let i = 0; i < 300; i++) await new Promise((r) => setImmediate(r));
+            await carregar(false);
+            for (let i = 0; i < 300; i++) await new Promise((r) => setImmediate(r));
+            console.log(JSON.stringify({ antes, status: __log.status, atalhos: __log.atalhos.length,
+              marca: __local.dados.%s || null }));
+        """ % ATALHO_MARCA)
+        self.assertEqual(obtido['antes'], {'status': 1, 'atalhos': 0})
+        self.assertEqual(obtido['status'], 1)       # nenhuma consulta nova
+        self.assertEqual(obtido['atalhos'], 0)
+        self.assertIsNone(obtido['marca'])
+
+    def test_se_a_home_nao_esta_mais_livre_depois_da_espera_nao_pergunta_nem_grava(self):
+        for nome, abrir in (('uma folha por cima da home', 'folha'), ('outra tela no lugar da home', 'tela')):
+            with self.subTest(caso=nome):
+                obtido = abrir_no_telegram(dict(TG_IOS, atalho={'status': 'missed', 'abrir': abrir}))
+                self.assertEqual(obtido['status'], 1)
+                self.assertEqual(obtido['atalhos'], [])
+                self.assertIsNone(obtido['marca'])
+        # Na próxima abertura (sem a marca), pergunta.
+        obtido = abrir_no_telegram(TG_IOS_ATALHO)
+        self.assertEqual(obtido['atalhos'], ['1'])
+
+    def test_estrutura_do_atalho(self):
+        principal = codigo_principal(HOME)
+        self.assertIn('const CHAVE_ATALHO_PERGUNTADO = "atalho_tela_inicial_perguntado";', principal)
+        # A chamada é só no fim do carregar, na abertura, depois dos outros destinos.
+        carregar = corpo_da_funcao(principal, 'async function carregar')
+        self.assertEqual(principal.count('perguntarAtalhoDaTelaInicial('), 2)    # a chamada e a definição
+        self.assertIn('else if (abertura) perguntarAtalhoDaTelaInicial(destinoAssinatura, me.assinatura);', carregar)
+        self.assertGreater(carregar.index('perguntarAtalhoDaTelaInicial('), carregar.index('abrirAssinaturasNaAbertura();'))
+        fluxo = corpo_da_funcao(principal, 'async function perguntarAtalhoDaTelaInicial')
+        self.assertIn('try {', fluxo)
+        self.assertIn('modoLeituraDoBloco(blocoAssinatura)', fluxo)
+        self.assertIn('await esperar(ESPERA_AVISO_ATALHO_MS);', fluxo)
+        self.assertLess(fluxo.index('await esperar(ESPERA_AVISO_ATALHO_MS);'), fluxo.index('homeLivreParaOAviso()'))
+        self.assertLess(fluxo.index('homeLivreParaOAviso()'), fluxo.index('gravarAtalhoPerguntado()'))
+        self.assertLess(fluxo.index('gravarAtalhoPerguntado()'), fluxo.index('tg.addToHomeScreen()'))
+        self.assertEqual(principal.count('addToHomeScreen()'), 1)
+        suporte = corpo_da_funcao(principal, 'function telegramSuportaAtalho')
+        for trecho in ('tg.isVersionAtLeast("8.0")', 'typeof tg.checkHomeScreenStatus === "function"',
+                       'typeof tg.addToHomeScreen === "function"', 'try {'):
+            self.assertIn(trecho, suporte)
+        # Tempo limite de 2 s num setTimeout só.
+        self.assertIn('const TEMPO_STATUS_ATALHO_MS = 2000;', principal)
+        self.assertIn('setTimeout(() => fim(null), TEMPO_STATUS_ATALHO_MS);', corpo_da_funcao(principal, 'function consultarStatusDoAtalho'))
+        # A marca: só localStorage, sempre em try, e nada de nuvem.
+        for assinatura in ('function atalhoJaPerguntado', 'function gravarAtalhoPerguntado'):
+            corpo = corpo_da_funcao(principal, assinatura)
+            self.assertIn('window.localStorage', corpo)
+            self.assertIn('try {', corpo)
+            self.assertIn('catch (e)', corpo)
+            self.assertNotIn('CloudStorage', corpo)
+        self.assertIn('catch (e) { return true; }', corpo_da_funcao(principal, 'function atalhoJaPerguntado'))   # erro de leitura: não pergunta
+        self.assertIn('catch (e) { return false; }', corpo_da_funcao(principal, 'function gravarAtalhoPerguntado'))  # erro de escrita: não pergunta
+        for tudo_fora in (re.sub(r'//[^\n]*', '', principal),):
+            self.assertNotIn('CloudStorage.setItem(CHAVE_ATALHO', tudo_fora)
+        self.assertNotIn('setInterval', HOME)
+        # Sem texto novo na tela: nenhum elemento novo no HTML além dos já existentes.
+        self.assertNotIn('addToHomeScreen', HOME[:HOME.index('INICIO FUNCOES PURAS')])
+
+
+class TestRespirosDeSegurancaNoCss(unittest.TestCase):
+    def test_variaveis_em_root_com_os_valores_de_hoje(self):
+        raiz = regra_css(':root')
+        self.assertIn('--respiro-topo: env(safe-area-inset-top, 0px);', raiz)
+        self.assertIn('--respiro-rodape: env(safe-area-inset-bottom, 0px);', raiz)
+
+    def test_bloco_da_tela_cheia(self):
+        bloco = regra_css('html.tela-cheia-ativa')
+        self.assertIn('--respiro-topo: calc(max(env(safe-area-inset-top, 0px), var(--tg-safe-area-inset-top, 0px)) '
+                      '+ var(--tg-content-safe-area-inset-top, 0px));', bloco)
+        self.assertIn('--respiro-rodape: calc(max(env(safe-area-inset-bottom, 0px), var(--tg-safe-area-inset-bottom, 0px)) '
+                      '+ var(--tg-content-safe-area-inset-bottom, 0px));', bloco)
+
+    def test_nenhum_env_da_area_segura_fora_das_variaveis(self):
+        linhas = [l for l in HOME.splitlines() if 'env(safe-area-inset-' in l]
+        self.assertEqual(len(linhas), 4)
+        for linha in linhas:
+            self.assertTrue(linha.strip().startswith('--respiro-'), linha)
+        self.assertNotIn('safe-area-inset', HOME[HOME.index('</style>'):])   # nem no JS nem no HTML
+
+    def test_rodapes_e_aviso_usam_as_variaveis_com_os_mesmos_numeros(self):
+        casos = [
+            ('.rodape', 'padding: 14px 16px calc(24px + var(--respiro-rodape))'),
+            ('.registro-receita .rodape', 'padding-bottom: calc(34px + var(--respiro-rodape))'),
+            ('.rodape-tela', 'padding: 14px 16px calc(32px + var(--respiro-rodape))'),
+            ('.rodape-tela.com-dica', 'padding-bottom: calc(20px + var(--respiro-rodape))'),
+            ('.tour-rodape', 'padding: 8px 16px calc(28px + var(--respiro-rodape))'),
+            ('.folha', 'padding: 12px 24px calc(32px + var(--respiro-rodape))'),
+            ('.aviso-topo', 'top: calc(12px + var(--respiro-topo))'),
+        ]
+        for seletor, texto in casos:
+            with self.subTest(seletor=seletor):
+                self.assertIn(texto, regra_css(seletor))
+
+    def test_cabecalho_body_e_folha_so_mudam_dentro_da_tela_cheia(self):
+        self.assertIn('padding-top: 16px;', regra_css('.cabecalho'))
+        self.assertNotIn('respiro', regra_css('.cabecalho'))
+        self.assertIn('padding-bottom: 40px;', regra_css('body'))
+        self.assertNotIn('respiro', regra_css('body'))
+        self.assertIn('max-height: calc(var(--altura-tela, 100vh) - 24px);', regra_css('.folha'))
+        self.assertNotIn('--respiro-topo', regra_css('.folha'))
+        self.assertIn('padding-top: calc(16px + var(--respiro-topo));', regra_css('html.tela-cheia-ativa .cabecalho'))
+        self.assertIn('padding-bottom: calc(40px + var(--respiro-rodape));', regra_css('html.tela-cheia-ativa body'))
+        self.assertIn('max-height: calc(var(--altura-tela, 100vh) - 24px - var(--respiro-topo));', regra_css('html.tela-cheia-ativa .folha'))
+
+    def test_sem_altura_fixa_para_o_recuo_e_sem_setinterval(self):
+        css = css_da_home()
+        for linha in css.splitlines():
+            if 'respiro' in linha and 'var(--respiro' not in linha and not linha.strip().startswith('--respiro-') and '/*' not in linha:
+                self.fail(linha)
+        self.assertNotRegex(css, r'--respiro-(topo|rodape):\s*\d')    # nenhum valor fixo em pixels
+        self.assertNotIn('setInterval', HOME)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
